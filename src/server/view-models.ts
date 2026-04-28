@@ -5,8 +5,12 @@ import {
 import {
   getMembershipById,
   getProfileByMembershipId,
+  getProfileById,
+  isFollowingMembership,
   listCommentsForPost,
+  listFollowsForMembership,
   listIntroRequestsForMembership,
+  listMatchesForMembership,
   listNotificationsForMembership,
   listPostsForOrg,
   listProfilesForOrg,
@@ -20,10 +24,84 @@ import type {
   MatchCardView,
   Membership,
   NotificationView,
+  OpportunitySource,
   Organization,
+  Post,
+  PostType,
   Profile,
   ProfileLink,
 } from "@/lib/domain";
+
+const opportunityTypes: PostType[] = [
+  "opportunity",
+  "looking_for_cofounder",
+  "looking_for_mentor",
+];
+
+export interface FeedFilters {
+  q?: string;
+  postType?: PostType | "all";
+  tag?: string;
+  authorAffiliation?: string;
+  authorStage?: string;
+  authorIndustry?: string;
+  roleNeeded?: string;
+  opportunitySource?: OpportunitySource | "all";
+  recommendedOnly?: boolean;
+}
+
+export interface FeedViewOptions {
+  viewerMembershipId?: string;
+  filters?: FeedFilters;
+  onlyOpportunities?: boolean;
+}
+
+interface FeedEntry {
+  view: FeedPostView;
+  membership: Membership;
+  profile: Profile;
+  post: Post;
+}
+
+function normalized(value?: string) {
+  return value?.toLowerCase().trim() ?? "";
+}
+
+function includesNormalized(values: string[], candidate?: string) {
+  const needle = normalized(candidate);
+  if (!needle) {
+    return true;
+  }
+
+  return values.some((value) => value.toLowerCase().includes(needle));
+}
+
+async function matchedMembershipIdsForViewer(viewerMembershipId?: string) {
+  if (!viewerMembershipId) {
+    return new Set<string>();
+  }
+
+  const matches = await listMatchesForMembership(viewerMembershipId);
+  const targetMembershipIds = await Promise.all(
+    matches.map(async (match) => (await getProfileById(match.targetProfileId))?.membershipId),
+  );
+
+  return new Set(
+    targetMembershipIds.filter((membershipId): membershipId is string => Boolean(membershipId)),
+  );
+}
+
+async function followedMembershipIdsForViewer(viewerMembershipId?: string) {
+  if (!viewerMembershipId) {
+    return new Set<string>();
+  }
+
+  return new Set(
+    (await listFollowsForMembership(viewerMembershipId)).map(
+      (follow) => follow.followedMembershipId,
+    ),
+  );
+}
 
 function displayName(profile: Profile) {
   if (profile.displayNamePreference === "first_name_last_initial") {
@@ -65,48 +143,125 @@ export function toFullAdminProfile(profile: Profile, membership: Membership): Fu
   };
 }
 
-export function getFeedViewsForOrg(org: Organization, search?: string, onlyOpportunities = false) {
-  const normalizedQuery = search?.toLowerCase().trim();
-  return listPostsForOrg(org.id)
+export async function getFeedViewsForOrg(org: Organization, options: FeedViewOptions = {}) {
+  const filters = options.filters ?? {};
+  const normalizedQuery = normalized(filters.q);
+  const followedIds = await followedMembershipIdsForViewer(options.viewerMembershipId);
+  const matchedIds = await matchedMembershipIdsForViewer(options.viewerMembershipId);
+
+  const entries = await Promise.all(
+    (await listPostsForOrg(org.id))
     .filter((post) => !post.hidden)
     .filter((post) =>
-      onlyOpportunities
-        ? ["opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(post.type)
+      options.onlyOpportunities
+        ? opportunityTypes.includes(post.type)
         : true,
     )
-    .filter((post) => {
-      if (!normalizedQuery) {
-        return true;
-      }
-
-      const haystack = `${post.title} ${post.body} ${post.tags.join(" ")}`.toLowerCase();
-      return haystack.includes(normalizedQuery);
-    })
-    .map((post) => {
-      const membership = getMembershipById(post.authorMembershipId);
-      const profile = membership ? getProfileByMembershipId(membership.id) : undefined;
+    .map(async (post) => {
+      const membership = await getMembershipById(post.authorMembershipId);
+      const profile = membership ? await getProfileByMembershipId(membership.id) : undefined;
 
       if (!membership || !profile) {
         return null;
       }
 
-      return {
+      const recommendationReasons: FeedPostView["recommendationReasons"] = [];
+      if (followedIds.has(membership.id)) {
+        recommendationReasons.push("Followed");
+      }
+      if (matchedIds.has(membership.id)) {
+        recommendationReasons.push("Matched");
+      }
+
+      const view: FeedPostView = {
         id: post.id,
         type: post.type,
+        opportunitySource: post.opportunitySource,
         title: post.title,
         body: post.body,
         tags: post.tags,
+        relatedRolesNeeded: post.relatedRolesNeeded,
         status: post.status,
         featured: post.featured,
         createdAt: post.createdAt,
         author: toLimitedProfileCard(profile, membership),
-        commentCount: listCommentsForPost(post.id).length,
-      } satisfies FeedPostView;
+        commentCount: (await listCommentsForPost(post.id)).length,
+        isFollowingAuthor: options.viewerMembershipId
+          ? await isFollowingMembership(options.viewerMembershipId, membership.id)
+          : false,
+        isRecommended: recommendationReasons.length > 0,
+        recommendationReasons,
+      };
+
+      return { view, membership, profile, post };
+    }),
+  );
+
+  return entries
+    .filter((entry): entry is FeedEntry => Boolean(entry))
+    .filter(({ view, membership, profile, post }) => {
+      if (filters.recommendedOnly && !view.isRecommended) {
+        return false;
+      }
+
+      if (filters.postType && filters.postType !== "all" && post.type !== filters.postType) {
+        return false;
+      }
+
+      if (
+        filters.opportunitySource &&
+        filters.opportunitySource !== "all" &&
+        post.opportunitySource !== filters.opportunitySource
+      ) {
+        return false;
+      }
+
+      if (
+        filters.authorAffiliation &&
+        membership.affiliationType !== filters.authorAffiliation
+      ) {
+        return false;
+      }
+
+      if (filters.authorStage && profile.stage !== filters.authorStage) {
+        return false;
+      }
+
+      if (!includesNormalized(profile.industryTags, filters.authorIndustry)) {
+        return false;
+      }
+
+      if (!includesNormalized(post.relatedRolesNeeded, filters.roleNeeded)) {
+        return false;
+      }
+
+      if (!includesNormalized(post.tags, filters.tag)) {
+        return false;
+      }
+
+      if (normalizedQuery) {
+        const haystack = [
+          post.title,
+          post.body,
+          post.tags.join(" "),
+          post.relatedRolesNeeded.join(" "),
+          profile.preferredName,
+          profile.headline,
+          profile.industryTags.join(" "),
+          membership.affiliationType,
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(normalizedQuery);
+      }
+
+      return true;
     })
-    .filter(Boolean) as FeedPostView[];
+    .map((entry) => entry.view);
 }
 
-export function getMatchViews(membershipId: string, matchRecords: Array<{
+export async function getMatchViews(membershipId: string, matchRecords: Array<{
   id: string;
   matchType: MatchCardView["matchType"];
   score: number;
@@ -115,15 +270,17 @@ export function getMatchViews(membershipId: string, matchRecords: Array<{
   overlapTags: string[];
   targetProfileId: string;
 }>) {
-  return matchRecords
-    .map((match) => {
-      const profile = listProfilesForOrg("org_wavespark").find(
+  const sourceMembership = await getMembershipById(membershipId);
+  const orgProfiles = sourceMembership ? await listProfilesForOrg(sourceMembership.orgId) : [];
+  const views = await Promise.all(
+    matchRecords.map(async (match) => {
+      const profile = orgProfiles.find(
         (candidate) => candidate.id === match.targetProfileId,
       );
       if (!profile) {
         return null;
       }
-      const membership = getMembershipById(profile.membershipId);
+      const membership = await getMembershipById(profile.membershipId);
       if (!membership) {
         return null;
       }
@@ -137,18 +294,20 @@ export function getMatchViews(membershipId: string, matchRecords: Array<{
         overlapTags: match.overlapTags,
         target: toLimitedProfileCard(profile, membership),
       } satisfies MatchCardView;
-    })
-    .filter(Boolean) as MatchCardView[];
+    }),
+  );
+
+  return views.filter(Boolean) as MatchCardView[];
 }
 
-export function getIntroRequestViews(membershipId: string) {
-  return listIntroRequestsForMembership(membershipId).map((request) => {
+export async function getIntroRequestViews(membershipId: string) {
+  return Promise.all((await listIntroRequestsForMembership(membershipId)).map(async (request) => {
     const isIncoming = request.receiverMembershipId === membershipId;
-    const otherMembership = getMembershipById(
+    const otherMembership = await getMembershipById(
       isIncoming ? request.requesterMembershipId : request.receiverMembershipId,
     );
     const otherProfile = otherMembership
-      ? getProfileByMembershipId(otherMembership.id)
+      ? await getProfileByMembershipId(otherMembership.id)
       : undefined;
 
     if (!otherMembership || !otherProfile) {
@@ -173,11 +332,11 @@ export function getIntroRequestViews(membershipId: string) {
       isIncoming,
       suggestedFirstMessage: request.suggestedFirstMessage,
     } satisfies IntroRequestView;
-  });
+  }));
 }
 
-export function getNotificationViews(membershipId: string) {
-  return listNotificationsForMembership(membershipId).map(
+export async function getNotificationViews(membershipId: string) {
+  return (await listNotificationsForMembership(membershipId)).map(
     (notification) =>
       ({
         id: notification.id,
@@ -190,6 +349,6 @@ export function getNotificationViews(membershipId: string) {
   );
 }
 
-export function getProfileLinks(profileId: string): ProfileLink[] {
+export async function getProfileLinks(profileId: string): Promise<ProfileLink[]> {
   return listProfileLinks(profileId);
 }

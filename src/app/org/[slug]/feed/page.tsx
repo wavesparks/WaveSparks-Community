@@ -1,12 +1,13 @@
-import { createPostAction } from "@/actions/member";
+import Link from "next/link";
+import { PlusCircle } from "lucide-react";
+
+import { FilterBar } from "@/components/community/filter-bar";
 import { AppShell } from "@/components/layout/app-shell";
 import { PostCard } from "@/components/community/post-card";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { getViewerContext } from "@/lib/auth";
+import { parseFeedFilters } from "@/lib/feed-filters";
 import { getFeedViewsForOrg } from "@/server/view-models";
 
 export default async function FeedPage({
@@ -28,61 +29,69 @@ export default async function FeedPage({
     return null;
   }
 
-  const q = typeof query.q === "string" ? query.q : undefined;
-  const posts = getFeedViewsForOrg(viewer.org, q);
-  const action = createPostAction.bind(null, slug, viewer.membership.id);
+  const filters = parseFeedFilters(query);
+  const allPosts = await getFeedViewsForOrg(viewer.org, {
+    viewerMembershipId: viewer.membership.id,
+    filters,
+  });
+  const recommendedPosts = filters.recommendedOnly
+    ? []
+    : (await getFeedViewsForOrg(viewer.org, {
+        viewerMembershipId: viewer.membership.id,
+        filters: { ...filters, recommendedOnly: true },
+      })).slice(0, 3);
+  const pinnedIds = new Set(recommendedPosts.map((post) => post.id));
+  const posts = filters.recommendedOnly
+    ? allPosts
+    : allPosts.filter((post) => !pinnedIds.has(post.id));
 
   return (
     <AppShell currentPath={`/org/${slug}/feed`} viewer={viewer}>
       <div className="space-y-8">
-        <SectionHeading
-          eyebrow="Feed"
-          title="What the community is building right now"
-          description="Posts are the visible surface area. Members discover each other through useful context, not open browsing."
-        />
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <SectionHeading
+            eyebrow="Feed"
+            title="What the community is building right now"
+            description="Posts are the visible surface area. Members discover each other through useful context, not open browsing."
+          />
+          <Button asChild size="sm">
+            <Link href={`/org/${slug}/compose?kind=feed`} title="Create post">
+              <PlusCircle className="size-4" />
+              Post
+            </Link>
+          </Button>
+        </div>
 
-        <div className="grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
-          <div className="space-y-6">
-            <Card className="space-y-4">
-              <form className="grid gap-4 md:grid-cols-[1fr_auto]">
-                <Input defaultValue={q} name="q" placeholder="Search posts, tags, opportunities" />
-                <button className="rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white" type="submit">
-                  Search
-                </button>
-              </form>
-            </Card>
+        <div className="space-y-6">
+          <FilterBar clearHref={`/org/${slug}/feed`} filters={filters} />
 
-            {posts.map((post) => (
-              <PostCard key={post.id} post={post} slug={slug} />
-            ))}
-          </div>
-
-          <div className="space-y-6">
-            <Card className="space-y-4">
+          {recommendedPosts.length ? (
+            <section className="space-y-4">
               <SectionHeading
-                eyebrow="Create post"
-                title="Share an ask, opportunity, or update"
+                eyebrow="Recommended for you"
+                title="New posts from followed and matched members"
               />
-              <form action={action} className="space-y-4">
-                <Select name="type">
-                  <option value="general_update">General update</option>
-                  <option value="ask">Ask</option>
-                  <option value="opportunity">Opportunity</option>
-                  <option value="looking_for_cofounder">Looking for cofounder</option>
-                  <option value="looking_for_mentor">Looking for mentor</option>
-                  <option value="resource">Resource</option>
-                </Select>
-                <Input name="title" placeholder="Title" required />
-                <Textarea name="body" placeholder="Give enough context for the community to help well." required />
-                <Input name="tags" placeholder="Tags, comma separated" />
-                <Input name="related_startup_name" placeholder="Related startup name (optional)" />
-                <Input name="related_roles_needed" placeholder="Roles needed, comma separated" />
-                <button className="w-full rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white" type="submit">
-                  Publish to the feed
-                </button>
-              </form>
-            </Card>
-          </div>
+              <div className="space-y-4">
+                {recommendedPosts.map((post) => (
+                  <PostCard
+                    key={post.id}
+                    post={post}
+                    slug={slug}
+                    viewerMembershipId={viewer.membership.id}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {posts.map((post) => (
+            <PostCard
+              key={post.id}
+              post={post}
+              slug={slug}
+              viewerMembershipId={viewer.membership.id}
+            />
+          ))}
         </div>
       </div>
     </AppShell>

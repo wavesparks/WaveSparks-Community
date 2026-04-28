@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
 import { onboardingSteps } from "@/lib/constants";
+import { AvatarUploadField } from "@/components/onboarding/avatar-upload-field";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -68,10 +69,10 @@ export function OnboardingForm({
             <option value="first_name_last_initial">First name + last initial</option>
           </Select>
         </div>
-        <div>
-          <Label htmlFor="profile_photo">Profile photo URL</Label>
-          <Input defaultValue={profile.profilePhoto} id="profile_photo" name="profile_photo" />
-        </div>
+        <AvatarUploadField
+          defaultValue={profile.profilePhoto}
+          displayName={profile.preferredName || profile.fullName}
+        />
         <div>
           <Label htmlFor="city">City</Label>
           <Input defaultValue={profile.city} id="city" name="city" />

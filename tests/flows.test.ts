@@ -18,11 +18,11 @@ describe("member flows", () => {
     resetStore();
   });
 
-  it("supports approval, posting, commenting, and intro acceptance", () => {
-    updateMembershipStatus("mem_priya", "approved", "Approved for invited brand support");
-    expect(getMembershipById("mem_priya")?.status).toBe("approved");
+  it("supports approval, posting, commenting, and intro acceptance", async () => {
+    await updateMembershipStatus("mem_priya", "approved", "Approved for invited brand support");
+    await expect(getMembershipById("mem_priya")).resolves.toMatchObject({ status: "approved" });
 
-    const post = createPost({
+    const post = await createPost({
       orgId: "org_wavespark",
       authorMembershipId: "mem_jules",
       type: "ask",
@@ -38,13 +38,13 @@ describe("member flows", () => {
       commentsLocked: false,
     });
 
-    createComment({
+    await createComment({
       postId: post.id,
       authorMembershipId: "mem_kai",
       body: "Happy to help on positioning and call structure.",
     });
 
-    const intro = createIntroRequest({
+    const intro = await createIntroRequest({
       orgId: "org_wavespark",
       requesterMembershipId: "mem_jules",
       receiverMembershipId: "mem_kai",
@@ -56,10 +56,10 @@ describe("member flows", () => {
       suggestedFirstMessage: "Thanks for being open to the intro.",
     });
 
-    const accepted = respondToIntroRequest(intro.id, "accepted")!;
+    const accepted = (await respondToIntroRequest(intro.id, "accepted"))!;
 
-    expect(listCommentsForPost(post.id)).toHaveLength(1);
-    expect(listIntroRequestsForMembership("mem_jules").some((request) => request.id === intro.id)).toBe(true);
+    expect(await listCommentsForPost(post.id)).toHaveLength(1);
+    expect((await listIntroRequestsForMembership("mem_jules")).some((request) => request.id === intro.id)).toBe(true);
     expect(accepted.status).toBe("accepted");
     expect(canViewContactDetails("mem_jules", accepted)).toBe(true);
   });

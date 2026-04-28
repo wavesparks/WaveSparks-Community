@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { AppShell } from "@/components/layout/app-shell";
+import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -24,17 +25,24 @@ export default async function ProfilePage({
     return null;
   }
 
-  const links = getProfileLinks(viewer.profile.id);
+  const links = await getProfileLinks(viewer.profile.id);
 
   return (
     <AppShell currentPath={`/org/${slug}/profile`} viewer={viewer}>
       <div className="space-y-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <SectionHeading
-            eyebrow="My profile"
-            title={viewer.profile.preferredName}
-            description={viewer.profile.headline}
-          />
+          <div className="flex min-w-0 items-start gap-4">
+            <Avatar
+              className="size-20"
+              name={viewer.profile.preferredName}
+              src={viewer.profile.profilePhoto}
+            />
+            <SectionHeading
+              eyebrow="My profile"
+              title={viewer.profile.preferredName}
+              description={viewer.profile.headline}
+            />
+          </div>
           <Link
             className="inline-flex items-center rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white"
             href={`/org/${slug}/onboarding`}
@@ -48,8 +56,8 @@ export default async function ProfilePage({
             <Card className="space-y-4">
               <p className="text-sm text-slate-700">{viewer.profile.longBio}</p>
               <div className="flex flex-wrap gap-2">
-                {[...viewer.profile.industryTags, ...viewer.profile.skillTags].map((tag) => (
-                  <Badge key={tag} variant="muted">
+                {[...viewer.profile.industryTags, ...viewer.profile.skillTags].map((tag, index) => (
+                  <Badge key={`profile-tag-${tag}-${index}`} variant="muted">
                     {tag}
                   </Badge>
                 ))}
@@ -66,8 +74,8 @@ export default async function ProfilePage({
               <h2 className="text-2xl font-semibold text-slate-950">What you’re looking for</h2>
               <p className="text-sm text-slate-700">{viewer.profile.idealMatchDescription}</p>
               <div className="flex flex-wrap gap-2">
-                {viewer.profile.desiredRoles.map((role) => (
-                  <Badge key={role}>{role}</Badge>
+                {viewer.profile.desiredRoles.map((role, index) => (
+                  <Badge key={`desired-role-${role}-${index}`}>{role}</Badge>
                 ))}
               </div>
             </Card>

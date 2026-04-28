@@ -26,16 +26,24 @@ export default async function AdminRequestsPage({
     return null;
   }
 
-  const requests = listIntroRequestsForOrg(viewer.org.id);
-  const members = listMembershipsForOrg(viewer.org.id).filter(
+  const requests = await listIntroRequestsForOrg(viewer.org.id);
+  const members = (await listMembershipsForOrg(viewer.org.id)).filter(
     (membership) => membership.status === "approved",
+  );
+  const userById = new Map(
+    await Promise.all(
+      members.map(async (membership) => [
+        membership.userId,
+        await getUserById(membership.userId),
+      ] as const),
+    ),
   );
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/requests`} viewer={viewer}>
       <div className="space-y-8">
         <SectionHeading
-          eyebrow="Admin · Requests"
+          eyebrow="Admin - Requests"
           title="Watch intro flow and create manual intros"
           description="Manual intros let admins catalyze obvious fits without opening the member graph to everyone."
         />
@@ -49,7 +57,7 @@ export default async function AdminRequestsPage({
             >
               <select className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm" name="receiver_membership_id">
                 {members.map((membership) => {
-                  const user = getUserById(membership.userId);
+                  const user = userById.get(membership.userId);
                   return (
                     <option key={membership.id} value={membership.id}>
                       {user?.name ?? membership.id}
@@ -71,8 +79,12 @@ export default async function AdminRequestsPage({
 
           <div className="space-y-4">
             {requests.map((request) => {
-              const requester = members.find((membership) => membership.id === request.requesterMembershipId);
-              const receiver = members.find((membership) => membership.id === request.receiverMembershipId);
+              const requester = members.find(
+                (membership) => membership.id === request.requesterMembershipId,
+              );
+              const receiver = members.find(
+                (membership) => membership.id === request.receiverMembershipId,
+              );
               return (
                 <Card className="space-y-3" key={request.id}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -82,8 +94,8 @@ export default async function AdminRequestsPage({
                     </Badge>
                   </div>
                   <p className="text-sm text-slate-600">
-                    {getUserById(requester?.userId ?? "")?.name ?? "Unknown"} →{" "}
-                    {getUserById(receiver?.userId ?? "")?.name ?? "Unknown"}
+                    {userById.get(requester?.userId ?? "")?.name ?? "Unknown"} to{" "}
+                    {userById.get(receiver?.userId ?? "")?.name ?? "Unknown"}
                   </p>
                   <p className="text-sm text-slate-700">{request.note}</p>
                 </Card>

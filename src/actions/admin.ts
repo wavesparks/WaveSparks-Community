@@ -18,8 +18,8 @@ import {
 } from "@/server/store";
 
 export async function updateMembershipAction(slug: string, membershipId: string, formData: FormData) {
-  const org = getOrganizationBySlug(slug);
-  const membership = updateMembershipStatus(
+  const org = await getOrganizationBySlug(slug);
+  const membership = await updateMembershipStatus(
     membershipId,
     String(formData.get("status") ?? "pending") as never,
     String(formData.get("approval_note") ?? ""),
@@ -30,7 +30,7 @@ export async function updateMembershipAction(slug: string, membershipId: string,
   }
 
   if (membership.status === "approved") {
-    addNotification(
+    await addNotification(
       buildNotification(
         `ntf_${nanoid(8)}`,
         org.id,
@@ -42,7 +42,7 @@ export async function updateMembershipAction(slug: string, membershipId: string,
       ),
     );
 
-    const profile = getProfileByMembershipId(membership.id);
+    const profile = await getProfileByMembershipId(membership.id);
     if (profile) {
       await sendNotificationEmail({
         to: profile.emailForIntro,
@@ -57,11 +57,13 @@ export async function updateMembershipAction(slug: string, membershipId: string,
 }
 
 export async function updatePostModerationAction(slug: string, postId: string, formData: FormData) {
-  updatePostModeration(postId, {
-    hidden: formData.get("hidden") === "true",
-    featured: formData.get("featured") === "true",
-    commentsLocked: formData.get("comments_locked") === "true",
-    status: (formData.get("status") as never) ?? undefined,
+  await updatePostModeration(postId, {
+    hidden: formData.has("hidden") ? formData.get("hidden") === "true" : undefined,
+    featured: formData.has("featured") ? formData.get("featured") === "true" : undefined,
+    commentsLocked: formData.has("comments_locked")
+      ? formData.get("comments_locked") === "true"
+      : undefined,
+    status: formData.has("status") ? (formData.get("status") as never) : undefined,
   });
 
   revalidatePath(`/org/${slug}/admin/posts`);
@@ -69,7 +71,7 @@ export async function updatePostModerationAction(slug: string, postId: string, f
 }
 
 export async function updateProfileFlagsAction(slug: string, profileId: string, formData: FormData) {
-  updateProfileFlags(profileId, {
+  await updateProfileFlags(profileId, {
     featured: formData.get("featured") === "true",
     stale: formData.get("stale") === "true",
   });
@@ -79,14 +81,14 @@ export async function updateProfileFlagsAction(slug: string, profileId: string, 
 }
 
 export async function createManualIntroAction(slug: string, requesterMembershipId: string, formData: FormData) {
-  const org = getOrganizationBySlug(slug);
+  const org = await getOrganizationBySlug(slug);
   if (!org) {
     return;
   }
 
   const receiverMembershipId = String(formData.get("receiver_membership_id") ?? "");
-  const receiverProfile = getProfileByMembershipId(receiverMembershipId);
-  createIntroRequest({
+  const receiverProfile = await getProfileByMembershipId(receiverMembershipId);
+  await createIntroRequest({
     orgId: org.id,
     requesterMembershipId,
     receiverMembershipId,
@@ -101,7 +103,7 @@ export async function createManualIntroAction(slug: string, requesterMembershipI
       "Happy to connect. I’d love to learn how your work is evolving and where we might be able to help one another.",
   });
 
-  addNotification(
+  await addNotification(
     buildNotification(
       `ntf_${nanoid(8)}`,
       org.id,
@@ -126,28 +128,28 @@ export async function createManualIntroAction(slug: string, requesterMembershipI
 }
 
 export async function recomputeMatchesAction(slug: string) {
-  const org = getOrganizationBySlug(slug);
+  const org = await getOrganizationBySlug(slug);
   if (!org) {
     return;
   }
 
-  recomputeMatchesForOrg(org.id);
+  await recomputeMatchesForOrg(org.id);
   revalidatePath(`/org/${slug}/matches`);
   revalidatePath(`/org/${slug}/admin/matches`);
 }
 
 export async function moderateCommentAction(slug: string, commentId: string, status: "visible" | "removed") {
-  updateCommentStatus(commentId, status);
+  await updateCommentStatus(commentId, status);
   revalidatePath(`/org/${slug}/admin/posts`);
 }
 
 export async function updateOrgSettingsAction(slug: string, formData: FormData) {
-  const org = getOrganizationBySlug(slug);
+  const org = await getOrganizationBySlug(slug);
   if (!org) {
     return;
   }
 
-  updateOrganizationSettings(org.id, {
+  await updateOrganizationSettings(org.id, {
     name: String(formData.get("name") ?? org.name),
     tagline: String(formData.get("tagline") ?? org.tagline),
     description: String(formData.get("description") ?? org.description),

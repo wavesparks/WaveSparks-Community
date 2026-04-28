@@ -20,7 +20,21 @@ const env = {
   supabaseUrl: process.env.SUPABASE_URL,
   supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
   supabaseBucket: process.env.SUPABASE_BUCKET ?? "wavesparks",
+  wavesparkAdminEmails: process.env.WAVESPARK_ADMIN_EMAILS ?? "",
 };
+
+export function isBootstrapAdminEmail(email?: string | null) {
+  if (!email) {
+    return false;
+  }
+
+  const adminEmails = env.wavesparkAdminEmails
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+  return adminEmails.includes(email.toLowerCase().trim());
+}
 
 export function isOAuthConfigured(provider: "google" | "github" | "linkedin") {
   switch (provider) {

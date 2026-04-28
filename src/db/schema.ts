@@ -44,6 +44,11 @@ export const postTypeEnum = pgEnum("post_type", [
   "resource",
   "announcement",
 ]);
+export const opportunitySourceEnum = pgEnum("opportunity_source", [
+  "member",
+  "mentor",
+  "official",
+]);
 export const postStatusEnum = pgEnum("post_status", ["active", "closed", "archived"]);
 export const commentStatusEnum = pgEnum("comment_status", ["visible", "removed"]);
 export const matchTypeEnum = pgEnum("match_type", ["cofounder_match", "mentor_match"]);
@@ -229,6 +234,7 @@ export const posts = pgTable("posts", {
   orgId: text("org_id").notNull(),
   authorMembershipId: text("author_membership_id").notNull(),
   type: postTypeEnum("type").notNull(),
+  opportunitySource: opportunitySourceEnum("opportunity_source"),
   title: text("title").notNull(),
   body: text("body").notNull(),
   tags: text("tags").array().notNull(),
@@ -242,6 +248,23 @@ export const posts = pgTable("posts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
+
+export const follows = pgTable(
+  "follows",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    followerMembershipId: text("follower_membership_id").notNull(),
+    followedMembershipId: text("followed_membership_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    followerFollowedIdx: uniqueIndex("follows_follower_followed_idx").on(
+      table.followerMembershipId,
+      table.followedMembershipId,
+    ),
+  }),
+);
 
 export const comments = pgTable("comments", {
   id: text("id").primaryKey(),

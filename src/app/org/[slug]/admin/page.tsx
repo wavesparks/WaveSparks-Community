@@ -23,9 +23,9 @@ export default async function AdminOverviewPage({
     return null;
   }
 
-  const analytics = getAnalyticsSnapshot(viewer.org.id);
-  const recentPosts = listPostsForOrg(viewer.org.id).slice(0, 4);
-  const recentRequests = listIntroRequestsForOrg(viewer.org.id).slice(0, 4);
+  const analytics = await getAnalyticsSnapshot(viewer.org.id);
+  const recentPosts = (await listPostsForOrg(viewer.org.id)).slice(0, 4);
+  const recentRequests = (await listIntroRequestsForOrg(viewer.org.id)).slice(0, 4);
 
   return (
     <AppShell currentPath={`/org/${slug}/admin`} viewer={viewer}>

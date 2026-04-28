@@ -20,7 +20,7 @@ export default async function OnboardingPage({
 
   const profile =
     viewer.profile ?? emptyProfileForMember(viewer.user, viewer.membership);
-  const links = viewer.profile ? getProfileLinks(viewer.profile.id) : [];
+  const links = viewer.profile ? await getProfileLinks(viewer.profile.id) : [];
   const action = saveOnboardingAction.bind(null, slug, viewer.membership.id);
 
   return (

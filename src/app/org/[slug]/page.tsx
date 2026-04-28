@@ -13,14 +13,14 @@ export default async function OrganizationLanding({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const org = getOrganizationBySlug(slug);
+  const org = await getOrganizationBySlug(slug);
   const viewer = await getViewerContext(slug);
 
   if (!org) {
     return null;
   }
 
-  const analytics = getAnalyticsSnapshot(org.id);
+  const analytics = await getAnalyticsSnapshot(org.id);
 
   const destination = !viewer
     ? `/org/${slug}/signin`

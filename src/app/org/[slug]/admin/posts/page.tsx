@@ -24,8 +24,18 @@ export default async function AdminPostsPage({
     return null;
   }
 
-  const posts = listPostsForOrg(viewer.org.id);
-  const comments = listAllCommentsForOrg(viewer.org.id);
+  const posts = await listPostsForOrg(viewer.org.id);
+  const comments = await listAllCommentsForOrg(viewer.org.id);
+  const postCards = await Promise.all(
+    posts.map(async (post) => {
+      const authorMembership = await getMembershipById(post.authorMembershipId);
+      const authorProfile = authorMembership
+        ? await getProfileByMembershipId(authorMembership.id)
+        : undefined;
+
+      return { authorProfile, post };
+    }),
+  );
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/posts`} viewer={viewer}>
@@ -37,12 +47,7 @@ export default async function AdminPostsPage({
         />
 
         <div className="space-y-6">
-          {posts.map((post) => {
-            const authorMembership = getMembershipById(post.authorMembershipId);
-            const authorProfile = authorMembership
-              ? getProfileByMembershipId(authorMembership.id)
-              : undefined;
-
+          {postCards.map(({ authorProfile, post }) => {
             return (
               <Card className="space-y-4" key={post.id}>
                 <div className="flex flex-wrap items-center justify-between gap-3">

@@ -19,6 +19,7 @@ export type PostType =
   | "looking_for_mentor"
   | "resource"
   | "announcement";
+export type OpportunitySource = "member" | "mentor" | "official";
 export type PostStatus = "active" | "closed" | "archived";
 export type CommentStatus = "visible" | "removed";
 export type MatchType = "cofounder_match" | "mentor_match";
@@ -166,6 +167,7 @@ export interface Post {
   orgId: string;
   authorMembershipId: string;
   type: PostType;
+  opportunitySource?: OpportunitySource;
   title: string;
   body: string;
   tags: string[];
@@ -178,6 +180,14 @@ export interface Post {
   commentsLocked: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Follow {
+  id: string;
+  orgId: string;
+  followerMembershipId: string;
+  followedMembershipId: string;
+  createdAt: string;
 }
 
 export interface Comment {
@@ -276,14 +286,19 @@ export interface FullAdminProfile extends LimitedProfileCard {
 export interface FeedPostView {
   id: string;
   type: PostType;
+  opportunitySource?: OpportunitySource;
   title: string;
   body: string;
   tags: string[];
+  relatedRolesNeeded: string[];
   status: PostStatus;
   featured: boolean;
   createdAt: string;
   author: LimitedProfileCard;
   commentCount: number;
+  isFollowingAuthor: boolean;
+  isRecommended: boolean;
+  recommendationReasons: Array<"Followed" | "Matched">;
 }
 
 export interface MatchCardView {

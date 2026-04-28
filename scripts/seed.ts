@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import {
   seedAnalyticsEvents,
   seedComments,
+  seedFollows,
   seedIntroRequests,
   seedMemberships,
   seedNotifications,
@@ -18,6 +19,7 @@ import {
   adminActions,
   analyticsEvents,
   comments,
+  follows,
   introRequests,
   matchRuns,
   matches,
@@ -64,6 +66,11 @@ const seededComments = seedComments.map((comment) => ({
   updatedAt: new Date(comment.updatedAt),
 }));
 
+const seededFollows = seedFollows.map((follow) => ({
+  ...follow,
+  createdAt: new Date(follow.createdAt),
+}));
+
 const seededIntroRequests = seedIntroRequests.map((request) => ({
   ...request,
   createdAt: new Date(request.createdAt),
@@ -97,6 +104,7 @@ async function main() {
   await db.delete(matches);
   await db.delete(matchRuns);
   await db.delete(comments);
+  await db.delete(follows);
   await db.delete(posts);
   await db.delete(profileLinks);
   await db.delete(profiles);
@@ -124,6 +132,9 @@ async function main() {
   await db.insert(profiles).values(seededProfiles);
   await db.insert(profileLinks).values(seedProfileLinks);
   await db.insert(posts).values(seededPosts);
+  if (seededFollows.length) {
+    await db.insert(follows).values(seededFollows);
+  }
   await db.insert(comments).values(seededComments);
   await db.insert(introRequests).values(seededIntroRequests);
   await db.insert(notifications).values(seededNotifications);

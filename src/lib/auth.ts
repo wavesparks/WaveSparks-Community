@@ -23,7 +23,7 @@ export async function getViewerContext(
   slug: string,
   options: ViewerOptions = {},
 ): Promise<ViewerContext | null> {
-  const org = getOrganizationBySlug(slug);
+  const org = await getOrganizationBySlug(slug);
   if (!org) {
     notFound();
   }
@@ -37,15 +37,15 @@ export async function getViewerContext(
     return null;
   }
 
-  const user = upsertSessionUser({
+  const user = await upsertSessionUser({
     email: session.user.email,
     name: session.user.name,
     imageUrl: session.user.image ?? undefined,
   });
 
   const membership =
-    getMembershipByUserAndOrg(user.id, org.id) ?? ensureMembership(user.id, org.id);
-  const profile = getProfileByMembershipId(membership.id);
+    (await getMembershipByUserAndOrg(user.id, org.id)) ?? (await ensureMembership(user.id, org.id));
+  const profile = await getProfileByMembershipId(membership.id);
   const canAdmin = canAdminOrganization(user, membership);
 
   if (options.requireAdmin && !canAdmin) {

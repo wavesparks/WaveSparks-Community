@@ -1,0 +1,10 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "pnpm build",
+  "crons": [
+    {
+      "path": "/api/internal/matches/recompute",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

@@ -28,8 +28,8 @@ export default async function AdminProfilesPage({
     return null;
   }
 
-  const memberships = listMembershipsForOrg(viewer.org.id);
-  const profiles = listProfilesForOrg(viewer.org.id)
+  const memberships = await listMembershipsForOrg(viewer.org.id);
+  const profiles = (await listProfilesForOrg(viewer.org.id))
     .map((profile) => {
       const membership = memberships.find((candidate) => candidate.id === profile.membershipId);
       return membership ? toFullAdminProfile(profile, membership) : null;

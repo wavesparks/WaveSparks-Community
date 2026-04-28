@@ -25,7 +25,14 @@ export default async function AdminMembersPage({
     return null;
   }
 
-  const memberships = listMembershipsForOrg(viewer.org.id);
+  const memberships = await listMembershipsForOrg(viewer.org.id);
+  const memberCards = await Promise.all(
+    memberships.map(async (membership) => ({
+      membership,
+      user: await getUserById(membership.userId),
+      profile: await getProfileByMembershipId(membership.id),
+    })),
+  );
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/members`} viewer={viewer}>
@@ -36,9 +43,7 @@ export default async function AdminMembersPage({
           description="Approve, waitlist, suspend, and annotate members without exposing the full org to regular users."
         />
         <div className="space-y-6">
-          {memberships.map((membership) => {
-            const user = getUserById(membership.userId);
-            const profile = getProfileByMembershipId(membership.id);
+          {memberCards.map(({ membership, profile, user }) => {
             return (
               <Card className="space-y-4" key={membership.id}>
                 <div className="flex flex-wrap items-center justify-between gap-3">

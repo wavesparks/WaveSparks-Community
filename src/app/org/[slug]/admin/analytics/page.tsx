@@ -22,7 +22,7 @@ export default async function AdminAnalyticsPage({
     return null;
   }
 
-  const analytics = getAnalyticsSnapshot(viewer.org.id);
+  const analytics = await getAnalyticsSnapshot(viewer.org.id);
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/analytics`} viewer={viewer}>

@@ -19,21 +19,21 @@ export async function GET(
 ) {
   const { slug } = await context.params;
   const session = await getServerSession(authOptions);
-  const org = getOrganizationBySlug(slug);
+  const org = await getOrganizationBySlug(slug);
 
   if (!org || !session?.user?.email) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const user = getUserByEmail(session.user.email);
-  const membership = user ? getMembershipByUserAndOrg(user.id, org.id) : undefined;
+  const user = await getUserByEmail(session.user.email);
+  const membership = user ? await getMembershipByUserAndOrg(user.id, org.id) : undefined;
 
   if (!user || !membership || !canAdminOrganization(user, membership)) {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const memberships = listMembershipsForOrg(org.id);
-  const profiles = listProfilesForOrg(org.id)
+  const memberships = await listMembershipsForOrg(org.id);
+  const profiles = (await listProfilesForOrg(org.id))
     .map((profile) => {
       const membership = memberships.find((candidate) => candidate.id === profile.membershipId);
       return membership ? toFullAdminProfile(profile, membership) : null;

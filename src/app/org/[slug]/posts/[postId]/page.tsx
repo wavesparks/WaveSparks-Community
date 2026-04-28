@@ -32,16 +32,24 @@ export default async function PostDetailPage({
     return null;
   }
 
-  const post = getPostById(postId);
+  const post = await getPostById(postId);
   if (!post) {
     return null;
   }
 
-  const authorMembership = getMembershipById(post.authorMembershipId);
+  const authorMembership = await getMembershipById(post.authorMembershipId);
   const authorProfile = authorMembership
-    ? getProfileByMembershipId(authorMembership.id)
+    ? await getProfileByMembershipId(authorMembership.id)
     : undefined;
-  const comments = listCommentsForPost(post.id);
+  const comments = await listCommentsForPost(post.id);
+  const commentCards = await Promise.all(
+    comments.map(async (comment) => {
+      const membership = await getMembershipById(comment.authorMembershipId);
+      const profile = membership ? await getProfileByMembershipId(membership.id) : undefined;
+      const card = membership && profile ? toLimitedProfileCard(profile, membership) : null;
+      return { card, comment };
+    }),
+  );
 
   if (!authorMembership || !authorProfile) {
     return null;
@@ -62,8 +70,8 @@ export default async function PostDetailPage({
             </div>
             <SectionHeading title={post.title} description={post.body} />
             <div className="flex flex-wrap gap-2">
-              {post.tags.map((tag) => (
-                <Badge key={tag} variant="muted">
+              {post.tags.map((tag, index) => (
+                <Badge key={`post-tag-${tag}-${index}`} variant="muted">
                   {tag}
                 </Badge>
               ))}
@@ -77,10 +85,7 @@ export default async function PostDetailPage({
           <Card className="space-y-4">
             <SectionHeading title="Comments" />
             <div className="space-y-4">
-              {comments.map((comment) => {
-                const membership = getMembershipById(comment.authorMembershipId);
-                const profile = membership ? getProfileByMembershipId(membership.id) : undefined;
-                const card = membership && profile ? toLimitedProfileCard(profile, membership) : null;
+              {commentCards.map(({ card, comment }) => {
                 return (
                   <div className="rounded-[24px] bg-slate-50 p-4" key={comment.id}>
                     <p className="font-semibold text-slate-900">{card?.displayName}</p>

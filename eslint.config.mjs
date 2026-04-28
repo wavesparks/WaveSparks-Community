@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "package/**",
+    ".pnpm-store/**",
+    ".pnpm-home/**",
+    "demo-server*.log",
   ]),
 ]);
 

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { nanoid } from "nanoid";
 
 import { buildNotification, sendNotificationEmail } from "@/server/notifications";
+import { isOpportunityPostType, opportunitySourceForPost } from "@/lib/opportunities";
 import { profileFromFormData } from "@/lib/profile-form";
 import { parseTags } from "@/lib/utils";
 import {
@@ -12,28 +13,30 @@ import {
   createComment,
   createIntroRequest,
   createPost,
+  followMembership,
   getMembershipById,
   getOrganizationBySlug,
   getProfileByMembershipId,
   getUserById,
   respondToIntroRequest,
+  unfollowMembership,
   upsertProfile,
 } from "@/server/store";
-import type { IntroStatus } from "@/lib/domain";
+import type { IntroStatus, PostType } from "@/lib/domain";
 
 export async function saveOnboardingAction(slug: string, membershipId: string, formData: FormData) {
-  const org = getOrganizationBySlug(slug);
-  const membership = getMembershipById(membershipId);
+  const org = await getOrganizationBySlug(slug);
+  const membership = await getMembershipById(membershipId);
   if (!org || !membership) {
     return;
   }
 
-  const baseUser = getUserById(membership.userId);
+  const baseUser = await getUserById(membership.userId);
   if (!baseUser) {
     return;
   }
 
-  const existingProfile = getProfileByMembershipId(membership.id);
+  const existingProfile = await getProfileByMembershipId(membership.id);
   const result = profileFromFormData({
     formData,
     membership,
@@ -47,7 +50,7 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
     existingProfile,
   });
 
-  upsertProfile(result.profile, result.links);
+  await upsertProfile(result.profile, result.links);
   revalidatePath(`/org/${slug}/profile`);
   revalidatePath(`/org/${slug}/matches`);
   redirect(
@@ -56,15 +59,22 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
 }
 
 export async function createPostAction(slug: string, membershipId: string, formData: FormData) {
-  const org = getOrganizationBySlug(slug);
-  if (!org) {
+  const org = await getOrganizationBySlug(slug);
+  const membership = await getMembershipById(membershipId);
+  if (!org || !membership) {
     return;
   }
 
-  createPost({
+  const type = String(formData.get("type") ?? "general_update") as PostType;
+  const post = await createPost({
     orgId: org.id,
     authorMembershipId: membershipId,
-    type: String(formData.get("type") ?? "general_update") as never,
+    type,
+    opportunitySource: opportunitySourceForPost(
+      type,
+      membership,
+      formData.get("opportunity_source"),
+    ),
     title: String(formData.get("title") ?? ""),
     body: String(formData.get("body") ?? ""),
     tags: parseTags(formData.get("tags")),
@@ -79,10 +89,38 @@ export async function createPostAction(slug: string, membershipId: string, formD
 
   revalidatePath(`/org/${slug}/feed`);
   revalidatePath(`/org/${slug}/opportunities`);
+  redirect(isOpportunityPostType(post.type) ? `/org/${slug}/opportunities` : `/org/${slug}/feed`);
+}
+
+export async function followMembershipAction(
+  slug: string,
+  followerMembershipId: string,
+  followedMembershipId: string,
+) {
+  const org = await getOrganizationBySlug(slug);
+  if (!org) {
+    return;
+  }
+
+  await followMembership(org.id, followerMembershipId, followedMembershipId);
+  revalidatePath(`/org/${slug}/feed`);
+  revalidatePath(`/org/${slug}/opportunities`);
+  revalidatePath(`/org/${slug}/matches`);
+}
+
+export async function unfollowMembershipAction(
+  slug: string,
+  followerMembershipId: string,
+  followedMembershipId: string,
+) {
+  await unfollowMembership(followerMembershipId, followedMembershipId);
+  revalidatePath(`/org/${slug}/feed`);
+  revalidatePath(`/org/${slug}/opportunities`);
+  revalidatePath(`/org/${slug}/matches`);
 }
 
 export async function addCommentAction(slug: string, membershipId: string, postId: string, formData: FormData) {
-  createComment({
+  await createComment({
     postId,
     authorMembershipId: membershipId,
     body: String(formData.get("body") ?? ""),
@@ -93,14 +131,14 @@ export async function addCommentAction(slug: string, membershipId: string, postI
 }
 
 export async function requestIntroAction(slug: string, requesterMembershipId: string, formData: FormData) {
-  const org = getOrganizationBySlug(slug);
+  const org = await getOrganizationBySlug(slug);
   if (!org) {
     return;
   }
 
   const receiverMembershipId = String(formData.get("receiver_membership_id") ?? "");
-  const receiverProfile = getProfileByMembershipId(receiverMembershipId);
-  createIntroRequest({
+  const receiverProfile = await getProfileByMembershipId(receiverMembershipId);
+  await createIntroRequest({
     orgId: org.id,
     requesterMembershipId,
     receiverMembershipId,
@@ -114,7 +152,7 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
       "Excited to connect and learn more about what you’re building.",
   });
 
-  addNotification(
+  await addNotification(
     buildNotification(
       `ntf_${nanoid(8)}`,
       org.id,
@@ -139,18 +177,18 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
 }
 
 export async function respondIntroAction(slug: string, introRequestId: string, responderMembershipId: string, status: IntroStatus) {
-  const org = getOrganizationBySlug(slug);
+  const org = await getOrganizationBySlug(slug);
   if (!org || (status !== "accepted" && status !== "declined")) {
     return;
   }
 
-  const updated = respondToIntroRequest(introRequestId, status);
+  const updated = await respondToIntroRequest(introRequestId, status);
   if (!updated) {
     return;
   }
 
-  const requesterProfile = getProfileByMembershipId(updated.requesterMembershipId);
-  addNotification(
+  const requesterProfile = await getProfileByMembershipId(updated.requesterMembershipId);
+  await addNotification(
     buildNotification(
       `ntf_${nanoid(8)}`,
       org.id,

@@ -24,8 +24,8 @@ export default async function RequestsPage({
     return null;
   }
 
-  const requests = getIntroRequestViews(viewer.membership.id);
-  const notifications = getNotificationViews(viewer.membership.id);
+  const requests = await getIntroRequestViews(viewer.membership.id);
+  const notifications = await getNotificationViews(viewer.membership.id);
 
   return (
     <AppShell currentPath={`/org/${slug}/requests`} viewer={viewer}>

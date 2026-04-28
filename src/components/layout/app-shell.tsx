@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Bell, Compass, LayoutDashboard, Shield, Sparkles, UserCircle2 } from "lucide-react";
 import type { CSSProperties } from "react";
 
+import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { SignOutButton } from "@/components/layout/sign-out-button";
 import type { ViewerContext } from "@/lib/domain";
@@ -116,10 +117,19 @@ export function AppShell({
             </div>
           ) : null}
 
-          <div className="mt-8 flex items-center justify-between rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div>
-              <p className="text-sm font-semibold">{viewer.profile?.preferredName ?? viewer.user.name}</p>
-              <p className="text-xs text-slate-300">{viewer.membership.status}</p>
+          <div className="mt-8 flex items-center justify-between gap-3 rounded-3xl border border-white/10 bg-white/5 p-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <Avatar
+                className="size-11 ring-white/20"
+                name={viewer.profile?.preferredName ?? viewer.user.name}
+                src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold">
+                  {viewer.profile?.preferredName ?? viewer.user.name}
+                </p>
+                <p className="text-xs text-slate-300">{viewer.membership.status}</p>
+              </div>
             </div>
             <SignOutButton />
           </div>

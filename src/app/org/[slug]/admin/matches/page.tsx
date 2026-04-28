@@ -24,7 +24,14 @@ export default async function AdminMatchesPage({
     return null;
   }
 
-  const matches = listMatchesForOrg(viewer.org.id).slice(0, 20);
+  const matches = (await listMatchesForOrg(viewer.org.id)).slice(0, 20);
+  const matchCards = await Promise.all(
+    matches.map(async (match) => ({
+      match,
+      sourceProfile: await getProfileById(match.sourceProfileId),
+      targetProfile: await getProfileById(match.targetProfileId),
+    })),
+  );
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/matches`} viewer={viewer}>
@@ -41,10 +48,7 @@ export default async function AdminMatchesPage({
         </div>
 
         <div className="space-y-4">
-          {matches.map((match) => {
-            const sourceProfile = getProfileById(match.sourceProfileId);
-            const targetProfile = getProfileById(match.targetProfileId);
-
+          {matchCards.map(({ match, sourceProfile, targetProfile }) => {
             return (
               <Card className="space-y-4" key={match.id}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
