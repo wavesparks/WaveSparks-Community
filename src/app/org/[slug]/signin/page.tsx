@@ -2,12 +2,11 @@ import { redirect } from "next/navigation";
 
 import { ProviderSignInButtons } from "@/components/auth/provider-signin-buttons";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { SectionHeading } from "@/components/ui/section-heading";
-import {
-  configuredProviderButtons,
-  demoProviderButtons,
-} from "@/lib/auth-options";
+import { configuredProviderButtons, demoProviderButtons } from "@/lib/auth-options";
 import { getViewerContext } from "@/lib/auth";
+import Link from "next/link";
 
 export default async function SignInPage({
   params,
@@ -18,11 +17,15 @@ export default async function SignInPage({
   const viewer = await getViewerContext(slug);
 
   if (viewer) {
-    redirect(
-      viewer.membership.status === "approved" && viewer.profile?.onboardingComplete
-        ? `/org/${slug}/feed`
-        : `/org/${slug}/pending`,
-    );
+    if (viewer.membership.status !== "approved") {
+      redirect(`/org/${slug}/pending`);
+    }
+
+    if (!viewer.profile?.onboardingComplete) {
+      redirect(`/org/${slug}/onboarding`);
+    }
+
+    redirect(`/org/${slug}/feed`);
   }
 
   return (
@@ -50,17 +53,26 @@ export default async function SignInPage({
               />
               <ProviderSignInButtons slug={slug} providers={configuredProviderButtons} />
             </div>
-          ) : null}
+          ) : (
+            <Card className="space-y-3">
+              <SectionHeading
+                eyebrow="Production providers"
+                title="OAuth providers are not configured"
+                description="Add provider credentials in the environment to enable Google, GitHub, and LinkedIn sign-in."
+              />
+            </Card>
+          )}
 
           {demoProviderButtons.length ? (
-            <div className="space-y-4">
-              <SectionHeading
-                eyebrow="Local preview"
-                title="Use seeded demo personas"
-                description="These are dev-only fallbacks so the full product can be exercised without external OAuth credentials."
-              />
-              <ProviderSignInButtons slug={slug} providers={demoProviderButtons} />
-            </div>
+            <Card className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">Demo mode is available</p>
+                <p className="text-sm text-slate-600">Use the separate demo entrance for seeded preview personas.</p>
+              </div>
+              <Button asChild variant="secondary">
+                <Link href={`/org/${slug}/demo`}>Open demo</Link>
+              </Button>
+            </Card>
           ) : null}
         </div>
       </div>

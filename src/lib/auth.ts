@@ -5,7 +5,6 @@ import { authOptions } from "@/lib/auth-options";
 import { canAdminOrganization, canAccessFeed } from "@/server/permissions";
 import {
   ensureMembership,
-  getMembershipByUserAndOrg,
   getOrganizationBySlug,
   getProfileByMembershipId,
   upsertSessionUser,
@@ -43,8 +42,7 @@ export async function getViewerContext(
     imageUrl: session.user.image ?? undefined,
   });
 
-  const membership =
-    (await getMembershipByUserAndOrg(user.id, org.id)) ?? (await ensureMembership(user.id, org.id));
+  const membership = await ensureMembership(user.id, org.id);
   const profile = await getProfileByMembershipId(membership.id);
   const canAdmin = canAdminOrganization(user, membership);
 
