@@ -8,4 +8,5 @@ node_modules
 .pnpm-home
 package
 screenshots
+deliverables
 demo-server*.log
