@@ -4,7 +4,7 @@ import { ProviderSignInButtons } from "@/components/auth/provider-signin-buttons
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { demoProviderButtons } from "@/lib/auth-options";
+import { demoProviderButtons } from "@/lib/auth-buttons";
 
 export default async function DemoPage({
   params,

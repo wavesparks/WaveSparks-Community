@@ -16,7 +16,6 @@ export default async function AdminPostsPage({
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
     requireApproved: true,
-    requireCompleteProfile: true,
     requireAdmin: true,
   });
 

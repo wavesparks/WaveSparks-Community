@@ -26,7 +26,7 @@ export function ProviderSignInButtons({
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {providers.map((provider) => (
-        <Card className="space-y-4" key={`${provider.id}-${provider.email ?? "oauth"}`}>
+        <Card className="space-y-4" key={`${provider.id}-${provider.email ?? "credential"}`}>
           <div className="space-y-2">
             <h3 className="text-lg font-semibold text-slate-950">{provider.label}</h3>
             <p className="text-sm text-slate-600">{provider.description}</p>

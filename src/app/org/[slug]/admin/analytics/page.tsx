@@ -14,7 +14,6 @@ export default async function AdminAnalyticsPage({
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
     requireApproved: true,
-    requireCompleteProfile: true,
     requireAdmin: true,
   });
 

@@ -20,7 +20,6 @@ export default async function AdminProfilesPage({
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
     requireApproved: true,
-    requireCompleteProfile: true,
     requireAdmin: true,
   });
 

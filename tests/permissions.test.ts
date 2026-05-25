@@ -1,12 +1,17 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
 import { canAccessFeed, canViewAdminRoute, canViewContactDetails } from "@/server/permissions";
+import { seedOrganization } from "@/data/seed-data";
 import {
+  authorizePasswordUser,
+  createManagedAccount,
+  ensureMembership,
   getMembershipById,
   getProfileByMembershipId,
   getUserById,
   listIntroRequestsForMembership,
   resetStore,
+  upsertSessionUser,
 } from "@/server/store";
 
 describe("permission guards", () => {
@@ -22,6 +27,54 @@ describe("permission guards", () => {
 
     expect(canViewAdminRoute(adminUser, adminMembership)).toBe(true);
     expect(canViewAdminRoute(memberUser, memberMembership)).toBe(false);
+  });
+
+  it("bootstraps the letsbuild account as an approved admin", async () => {
+    const user = await upsertSessionUser({
+      email: "letsbuild@wavesparks.co",
+      name: "Lets Build",
+    });
+    const membership = await ensureMembership(user.id, seedOrganization.id);
+
+    expect(user.platformRole).toBe("platform_owner");
+    expect(membership).toMatchObject({
+      role: "org_admin",
+      status: "approved",
+      programName: "Wavespark Admin",
+    });
+    expect(canViewAdminRoute(user, membership)).toBe(true);
+  });
+
+  it("authenticates the bootstrap admin with the built-in password provider", async () => {
+    const user = await authorizePasswordUser({
+      email: "letsbuild@wavesparks.co",
+      password: "wavespark-admin-dev",
+    });
+
+    expect(user).toMatchObject({
+      email: "letsbuild@wavesparks.co",
+      platformRole: "platform_owner",
+    });
+  });
+
+  it("creates managed accounts that can sign in with email and password", async () => {
+    const { user, membership } = await createManagedAccount({
+      orgId: seedOrganization.id,
+      email: "new.member@example.com",
+      name: "New Member",
+      password: "temporary-password",
+      role: "member",
+      status: "approved",
+    });
+
+    const authenticated = await authorizePasswordUser({
+      email: "new.member@example.com",
+      password: "temporary-password",
+    });
+
+    expect(user.email).toBe("new.member@example.com");
+    expect(membership).toMatchObject({ role: "member", status: "approved" });
+    expect(authenticated?.id).toBe(user.id);
   });
 
   it("only grants feed access to approved members with onboarding complete", async () => {

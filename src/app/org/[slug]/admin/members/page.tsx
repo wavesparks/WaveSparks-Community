@@ -1,9 +1,11 @@
-import { updateMembershipAction } from "@/actions/admin";
+import { createManagedAccountAction, updateMembershipAction } from "@/actions/admin";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getViewerContext } from "@/lib/auth";
 import { getUserById, listMembershipsForOrg, getProfileByMembershipId } from "@/server/store";
@@ -17,7 +19,6 @@ export default async function AdminMembersPage({
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
     requireApproved: true,
-    requireCompleteProfile: true,
     requireAdmin: true,
   });
 
@@ -39,9 +40,50 @@ export default async function AdminMembersPage({
       <div className="space-y-8">
         <SectionHeading
           eyebrow="Admin · Members"
-          title="Approval queue and membership states"
-          description="Approve, waitlist, suspend, and annotate members without exposing the full org to regular users."
+          title="Accounts and membership states"
+          description="Create built-in accounts, approve members, and control who can reach admin surfaces."
         />
+        <Card className="space-y-5">
+          <SectionHeading eyebrow="Built-in account" title="Create or update an account" />
+          <form
+            action={createManagedAccountAction.bind(null, slug)}
+            className="grid gap-4 lg:grid-cols-2"
+          >
+            <div>
+              <Label htmlFor="name">Name</Label>
+              <Input id="name" name="name" placeholder="Member name" />
+            </div>
+            <div>
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" name="email" placeholder="member@company.com" required type="email" />
+            </div>
+            <div>
+              <Label htmlFor="password">Temporary password</Label>
+              <Input id="password" minLength={8} name="password" required type="password" />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="role">Role</Label>
+                <Select defaultValue="member" id="role" name="role">
+                  <option value="member">Member</option>
+                  <option value="org_admin">Org admin</option>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="status">Status</Label>
+                <Select defaultValue="approved" id="status" name="status">
+                  <option value="approved">Approved</option>
+                  <option value="pending">Pending</option>
+                  <option value="waitlist">Waitlist</option>
+                  <option value="suspended">Suspended</option>
+                </Select>
+              </div>
+            </div>
+            <div className="lg:col-span-2">
+              <Button type="submit">Save account</Button>
+            </div>
+          </form>
+        </Card>
         <div className="space-y-6">
           {memberCards.map(({ membership, profile, user }) => {
             return (

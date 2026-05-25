@@ -1,21 +1,64 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getServerSession } from "next-auth";
 import { nanoid } from "nanoid";
 
+import { authOptions } from "@/lib/auth-options";
+import { canViewAdminRoute } from "@/server/permissions";
 import { buildNotification, sendNotificationEmail } from "@/server/notifications";
 import {
   addNotification,
+  createManagedAccount,
   createIntroRequest,
+  ensureMembership,
   getOrganizationBySlug,
   getProfileByMembershipId,
   recomputeMatchesForOrg,
+  upsertSessionUser,
   updateCommentStatus,
   updateMembershipStatus,
   updateOrganizationSettings,
   updatePostModeration,
   updateProfileFlags,
 } from "@/server/store";
+
+async function requireAdminForAction(slug: string) {
+  const org = await getOrganizationBySlug(slug);
+  const session = await getServerSession(authOptions);
+
+  if (!org || !session?.user?.email) {
+    throw new Error("Unauthorized.");
+  }
+
+  const user = await upsertSessionUser({
+    email: session.user.email,
+    name: session.user.name ?? session.user.email,
+    imageUrl: session.user.image ?? undefined,
+  });
+  const membership = await ensureMembership(user.id, org.id);
+
+  if (!canViewAdminRoute(user, membership)) {
+    throw new Error("Unauthorized.");
+  }
+
+  return { org, user, membership };
+}
+
+export async function createManagedAccountAction(slug: string, formData: FormData) {
+  const { org } = await requireAdminForAction(slug);
+
+  await createManagedAccount({
+    orgId: org.id,
+    email: String(formData.get("email") ?? ""),
+    name: String(formData.get("name") ?? ""),
+    password: String(formData.get("password") ?? ""),
+    role: String(formData.get("role") ?? "member") as never,
+    status: String(formData.get("status") ?? "approved") as never,
+  });
+
+  revalidatePath(`/org/${slug}/admin/members`);
+}
 
 export async function updateMembershipAction(slug: string, membershipId: string, formData: FormData) {
   const org = await getOrganizationBySlug(slug);

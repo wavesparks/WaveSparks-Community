@@ -4,13 +4,11 @@ import { nanoid } from "nanoid";
 import { seedOrganization } from "@/data/seed-data";
 import { getDb, getSqlClient } from "@/db/client";
 import { memberships, organizations, users } from "@/db/schema";
-import { env } from "@/lib/env";
+import { env, getBootstrapAdminEmails, getBootstrapAdminPassword } from "@/lib/env";
+import { setPasswordCredential } from "@/server/store";
 
 function adminEmails() {
-  return env.wavesparkAdminEmails
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
+  return getBootstrapAdminEmails();
 }
 
 function displayNameForEmail(email: string) {
@@ -29,8 +27,12 @@ async function main() {
   }
 
   const emails = adminEmails();
+  const bootstrapPassword = getBootstrapAdminPassword();
   if (!emails.length) {
     console.info("WAVESPARK_ADMIN_EMAILS is empty. Created org only.");
+  }
+  if (!bootstrapPassword) {
+    console.info("WAVESPARK_ADMIN_PASSWORD is empty. Admin password credentials will not be created.");
   }
 
   const db = getDb();
@@ -83,6 +85,10 @@ async function main() {
         .update(users)
         .set({ platformRole: "platform_owner", updatedAt: now })
         .where(eq(users.id, user.id));
+    }
+
+    if (bootstrapPassword) {
+      await setPasswordCredential(user.id, email, bootstrapPassword);
     }
 
     const [existingMembership] = await db

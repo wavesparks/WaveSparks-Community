@@ -116,7 +116,7 @@ export default async function OrganizationLanding({
         />
         <div className="grid gap-4 md:grid-cols-4">
           {[
-            "Sign in with Google, GitHub, or LinkedIn",
+            "Sign in with a built-in Wavespark account",
             "Complete a structured profile for matching",
             "Wait for admin approval to unlock the community",
             "Discover people through feed, AI matches, and intros",

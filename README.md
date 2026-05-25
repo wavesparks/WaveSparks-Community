@@ -5,7 +5,7 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 ## What’s in this MVP
 
 - Multi-tenant org routing under `/org/[slug]`
-- Social sign-in via Auth.js with Google, GitHub, LinkedIn, plus demo personas for local development
+- Built-in email/password accounts via Auth.js credentials, plus demo personas for local development
 - Structured onboarding and profile completion flow
 - Community feed, opportunities, post detail, comments, and intro requests
 - AI-assisted cofounder and mentor matches with explainable scoring
@@ -17,7 +17,7 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 - Next.js App Router
 - TypeScript
 - Tailwind CSS v4
-- Auth.js / NextAuth
+- Auth.js / NextAuth credentials
 - Drizzle ORM + drizzle-kit
 - PostgreSQL-ready schema with `pgvector`
 - Vitest + Playwright
@@ -46,9 +46,11 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 
 ## Auth behavior
 
-- If real OAuth credentials are configured, the sign-in page shows Google, GitHub, and/or LinkedIn.
+- The production sign-in page uses built-in email/password accounts.
 - If `AUTH_DEV_DEMO_ENABLED=true`, the sign-in page also shows seeded demo personas so the product can be exercised locally without external auth setup.
-- First sign-in creates a pending membership if the user is not already known to the org.
+- Admins can create or update built-in accounts from `/org/wavespark/admin/members`.
+- `letsbuild@wavesparks.co` is a default bootstrap admin. Add more comma-separated admin emails with `WAVESPARK_ADMIN_EMAILS`.
+- Set `WAVESPARK_ADMIN_PASSWORD` before running production bootstrap so the bootstrap admin can sign in.
 
 ## Database workflow
 

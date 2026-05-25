@@ -1,40 +1,39 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import GitHubProvider from "next-auth/providers/github";
-import GoogleProvider from "next-auth/providers/google";
-import LinkedInProvider from "next-auth/providers/linkedin";
 
-import { demoPersonas, findSeedUserByEmail } from "@/data/seed-data";
-import { env, isOAuthConfigured } from "@/lib/env";
+import { findSeedUserByEmail } from "@/data/seed-data";
+import { env } from "@/lib/env";
+import { authorizePasswordUser } from "@/server/store";
 
 const providers: NextAuthOptions["providers"] = [];
 
-if (isOAuthConfigured("google")) {
-  providers.push(
-    GoogleProvider({
-      clientId: env.googleClientId!,
-      clientSecret: env.googleClientSecret!,
-    }),
-  );
-}
+providers.push(
+  CredentialsProvider({
+    id: "password",
+    name: "Email and password",
+    credentials: {
+      email: { label: "Email", type: "email" },
+      password: { label: "Password", type: "password" },
+    },
+    async authorize(credentials) {
+      const user = await authorizePasswordUser({
+        email: credentials?.email,
+        password: credentials?.password,
+      });
 
-if (isOAuthConfigured("github")) {
-  providers.push(
-    GitHubProvider({
-      clientId: env.githubId!,
-      clientSecret: env.githubSecret!,
-    }),
-  );
-}
+      if (!user) {
+        return null;
+      }
 
-if (isOAuthConfigured("linkedin")) {
-  providers.push(
-    LinkedInProvider({
-      clientId: env.linkedinClientId!,
-      clientSecret: env.linkedinClientSecret!,
-    }),
-  );
-}
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        image: user.imageUrl,
+      };
+    },
+  }),
+);
 
 if (env.authDevDemoEnabled) {
   providers.push(
@@ -72,9 +71,13 @@ export const authOptions: NextAuthOptions = {
   },
   secret: env.nextAuthSecret,
   providers,
+  pages: {
+    signIn: "/org/wavespark/signin",
+  },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        token.sub = user.id;
         token.email = user.email;
         token.name = user.name;
         token.picture = user.image;
@@ -97,25 +100,3 @@ export const authOptions: NextAuthOptions = {
     },
   },
 };
-
-export const configuredProviderButtons = [
-  isOAuthConfigured("google")
-    ? { id: "google", label: "Continue with Google", description: "Most convenient for current Wavespark members." }
-    : null,
-  isOAuthConfigured("github")
-    ? { id: "github", label: "Continue with GitHub", description: "Great for technical founders and operators." }
-    : null,
-  isOAuthConfigured("linkedin")
-    ? { id: "linkedin", label: "Continue with LinkedIn", description: "Useful for mentors and invited outsiders." }
-    : null,
-]
-  .filter(Boolean) as Array<{ id: string; label: string; description: string }>;
-
-export const demoProviderButtons = env.authDevDemoEnabled
-  ? demoPersonas.map((persona) => ({
-      id: "demo",
-      label: persona.label,
-      description: persona.description,
-      email: persona.email,
-    }))
-  : [];

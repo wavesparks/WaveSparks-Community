@@ -16,7 +16,7 @@ import {
   seedProfiles,
   seedUsers,
 } from "@/data/seed-data";
-import { env, isBootstrapAdminEmail } from "@/lib/env";
+import { env, getBootstrapAdminPassword, isBootstrapAdminEmail } from "@/lib/env";
 import { buildOrgAnalyticsSnapshot } from "@/server/analytics";
 import { recomputeMatchesForProfiles } from "@/server/matching";
 import type {
@@ -26,6 +26,7 @@ import type {
   IntroRequest,
   MatchRecord,
   Membership,
+  MembershipRole,
   MembershipStatus,
   Notification,
   Organization,
@@ -35,9 +36,20 @@ import type {
   User,
 } from "@/lib/domain";
 
+interface PasswordCredential {
+  id: string;
+  userId: string;
+  email: string;
+  passwordHash: string;
+  passwordSalt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface StoreState {
   organizations: Organization[];
   users: User[];
+  passwordCredentials: PasswordCredential[];
   memberships: Membership[];
   profiles: Profile[];
   profileLinks: ProfileLink[];
@@ -60,6 +72,7 @@ function initializeStore(): StoreState {
   const base: StoreState = {
     organizations: structuredClone([seedOrganization]),
     users: structuredClone(seedUsers),
+    passwordCredentials: [],
     memberships: structuredClone(seedMemberships),
     profiles: structuredClone(seedProfiles),
     profileLinks: structuredClone(seedProfileLinks),
@@ -83,6 +96,7 @@ function initializeStore(): StoreState {
 
 function ensureStoreShape(store: StoreState) {
   store.follows ??= structuredClone(seedFollows);
+  store.passwordCredentials ??= [];
   return store;
 }
 
@@ -484,10 +498,205 @@ export async function getUserById(userId: string) {
   return row ? userFromRow(row) : undefined;
 }
 
+const passwordProvider = "password";
+const passwordIterations = 310000;
+const passwordKeyLength = 32;
+const passwordDigest = "SHA-256";
+
+function normalizeEmailAddress(email: string) {
+  return email.toLowerCase().trim();
+}
+
+function displayNameForEmail(email: string) {
+  return (
+    email
+      .split("@")[0]
+      .split(/[._-]/)
+      .filter(Boolean)
+      .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+      .join(" ") || email
+  );
+}
+
+function randomSalt() {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return bytesToHex(bytes);
+}
+
+function bytesToHex(bytes: Uint8Array) {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function hexToBytes(hex: string) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function timingSafeHexEqual(left: string, right: string) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  let diff = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return diff === 0;
+}
+
+async function hashPassword(password: string, salt = randomSalt()) {
+  const passwordKey = await globalThis.crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const derivedBits = await globalThis.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: hexToBytes(salt),
+      iterations: passwordIterations,
+      hash: passwordDigest,
+    },
+    passwordKey,
+    passwordKeyLength * 8,
+  );
+
+  return {
+    passwordHash: bytesToHex(new Uint8Array(derivedBits)),
+    passwordSalt: salt,
+  };
+}
+
+async function verifyPassword(password: string, credential: PasswordCredential) {
+  const { passwordHash } = await hashPassword(password, credential.passwordSalt);
+  return timingSafeHexEqual(credential.passwordHash, passwordHash);
+}
+
+function passwordCredentialFromAccountRow(
+  row: typeof dbSchema.accounts.$inferSelect,
+): PasswordCredential | null {
+  const metadata = row.metadata as Record<string, unknown>;
+  const passwordHash = typeof metadata.passwordHash === "string" ? metadata.passwordHash : "";
+  const passwordSalt = typeof metadata.passwordSalt === "string" ? metadata.passwordSalt : "";
+
+  if (!passwordHash || !passwordSalt) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    userId: row.userId,
+    email: normalizeEmailAddress(row.providerAccountId),
+    passwordHash,
+    passwordSalt,
+    createdAt: String(metadata.createdAt ?? ""),
+    updatedAt: String(metadata.updatedAt ?? ""),
+  };
+}
+
+async function getPasswordCredentialByEmail(email: string) {
+  const normalizedEmail = normalizeEmailAddress(email);
+
+  if (!usesDatabase) {
+    return getStore().passwordCredentials.find(
+      (credential) => credential.email === normalizedEmail,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.accounts)
+    .where(
+      and(
+        eq(dbSchema.accounts.provider, passwordProvider),
+        sql`lower(${dbSchema.accounts.providerAccountId}) = ${normalizedEmail}`,
+      ),
+    )
+    .limit(1);
+
+  return row ? passwordCredentialFromAccountRow(row) : undefined;
+}
+
+export async function setPasswordCredential(userId: string, email: string, password: string) {
+  const normalizedEmail = normalizeEmailAddress(email);
+  const now = new Date().toISOString();
+  const passwordFields = await hashPassword(password);
+  const metadata = {
+    ...passwordFields,
+    algorithm: "pbkdf2",
+    digest: passwordDigest,
+    iterations: passwordIterations,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const existing = store.passwordCredentials.find(
+      (credential) => credential.email === normalizedEmail,
+    );
+
+    if (existing) {
+      Object.assign(existing, {
+        userId,
+        ...passwordFields,
+        updatedAt: now,
+      });
+      return existing;
+    }
+
+    const credential: PasswordCredential = {
+      id: `cred_${nanoid(8)}`,
+      userId,
+      email: normalizedEmail,
+      ...passwordFields,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.passwordCredentials.unshift(credential);
+    return credential;
+  }
+
+  const db = getDb();
+  const existing = await getPasswordCredentialByEmail(normalizedEmail);
+
+  if (existing) {
+    await db
+      .update(dbSchema.accounts)
+      .set({
+        userId,
+        providerAccountId: normalizedEmail,
+        metadata: {
+          ...metadata,
+          createdAt: existing.createdAt || now,
+        },
+      })
+      .where(eq(dbSchema.accounts.id, existing.id));
+    return;
+  }
+
+  await db.insert(dbSchema.accounts).values({
+    id: `acct_${nanoid(8)}`,
+    userId,
+    provider: passwordProvider,
+    providerAccountId: normalizedEmail,
+    metadata,
+  });
+}
+
 export async function upsertSessionUser(input: { email: string; name: string; imageUrl?: string }) {
   const now = new Date().toISOString();
-  const existing = await getUserByEmail(input.email);
-  const platformRole = isBootstrapAdminEmail(input.email)
+  const email = normalizeEmailAddress(input.email);
+  const existing = await getUserByEmail(email);
+  const platformRole = isBootstrapAdminEmail(email)
     ? "platform_owner"
     : existing?.platformRole ?? "standard";
 
@@ -503,7 +712,7 @@ export async function upsertSessionUser(input: { email: string; name: string; im
 
     const next: User = {
       id: `usr_${nanoid(8)}`,
-      email: input.email,
+      email,
       name: input.name,
       imageUrl: input.imageUrl ?? `https://api.dicebear.com/9.x/notionists/svg?seed=${input.name}`,
       platformRole,
@@ -532,7 +741,7 @@ export async function upsertSessionUser(input: { email: string; name: string; im
 
   const user: User = {
     id: `usr_${nanoid(8)}`,
-    email: input.email,
+    email,
     name: input.name,
     imageUrl: input.imageUrl ?? `https://api.dicebear.com/9.x/notionists/svg?seed=${input.name}`,
     platformRole,
@@ -609,6 +818,119 @@ export async function ensureMembership(userId: string, orgId: string) {
     .values(membershipInsert(membership))
     .returning();
   return membershipFromRow(row);
+}
+
+export async function authorizePasswordUser(input: { email?: string; password?: string }) {
+  const email = normalizeEmailAddress(input.email ?? "");
+  const password = input.password ?? "";
+
+  if (!email || !password) {
+    return null;
+  }
+
+  const credential = await getPasswordCredentialByEmail(email);
+  if (credential) {
+    if (!(await verifyPassword(password, credential))) {
+      return null;
+    }
+
+    return getUserById(credential.userId);
+  }
+
+  const bootstrapPassword = getBootstrapAdminPassword();
+  if (!isBootstrapAdminEmail(email) || !bootstrapPassword || password !== bootstrapPassword) {
+    return null;
+  }
+
+  const user = await upsertSessionUser({
+    email,
+    name: displayNameForEmail(email),
+  });
+  await setPasswordCredential(user.id, email, password);
+  return user;
+}
+
+export async function createManagedAccount(input: {
+  orgId: string;
+  email: string;
+  name: string;
+  password: string;
+  role: MembershipRole;
+  status: MembershipStatus;
+}) {
+  const email = normalizeEmailAddress(input.email);
+  const name = input.name.trim() || displayNameForEmail(email);
+  const password = input.password.trim();
+
+  if (!email.includes("@")) {
+    throw new Error("A valid email is required.");
+  }
+
+  if (password.length < 8) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+
+  const user = await upsertSessionUser({ email, name });
+  await setPasswordCredential(user.id, email, password);
+
+  const existing = await getMembershipByUserAndOrg(user.id, input.orgId);
+  const now = new Date().toISOString();
+  const role = input.role;
+  const status = input.status;
+  const managedMembership: Membership = {
+    id: existing?.id ?? `mem_${nanoid(8)}`,
+    orgId: input.orgId,
+    userId: user.id,
+    role,
+    affiliationType: role === "org_admin" ? "current participant" : "invited outsider",
+    status,
+    archetypes: role === "org_admin" ? ["operator"] : ["invited_outsider"],
+    programName: role === "org_admin" ? "Wavespark Admin" : "Guest Network",
+    cohortNameOrYear: role === "org_admin" ? "Core" : "Rolling",
+    approvalNote: existing?.approvalNote ?? "Managed account.",
+    approvedAt:
+      status === "approved"
+        ? existing?.approvedAt ?? now
+        : existing?.approvedAt,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+
+  if (!usesDatabase) {
+    const store = getStore();
+    if (existing) {
+      Object.assign(existing, managedMembership);
+      return { user, membership: existing };
+    }
+
+    store.memberships.unshift(managedMembership);
+    return { user, membership: managedMembership };
+  }
+
+  if (existing) {
+    const [row] = await getDb()
+      .update(dbSchema.memberships)
+      .set({
+        role: managedMembership.role,
+        affiliationType: managedMembership.affiliationType,
+        status: managedMembership.status,
+        archetypes: managedMembership.archetypes,
+        programName: managedMembership.programName,
+        cohortNameOrYear: managedMembership.cohortNameOrYear,
+        approvalNote: managedMembership.approvalNote,
+        approvedAt: maybeDate(managedMembership.approvedAt),
+        updatedAt: new Date(managedMembership.updatedAt),
+      })
+      .where(eq(dbSchema.memberships.id, existing.id))
+      .returning();
+    return { user, membership: membershipFromRow(row) };
+  }
+
+  const [row] = await getDb()
+    .insert(dbSchema.memberships)
+    .values(membershipInsert(managedMembership))
+    .returning();
+  return { user, membership: membershipFromRow(row) };
 }
 
 export async function getMembershipByUserAndOrg(userId: string, orgId: string) {
