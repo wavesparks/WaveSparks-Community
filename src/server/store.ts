@@ -1047,17 +1047,31 @@ export async function authorizePasswordUser(input: { email?: string; password?: 
     return null;
   }
 
+  const bootstrapPassword = getBootstrapAdminPassword();
+  const usesBootstrapPassword =
+    isBootstrapAdminEmail(email) &&
+    Boolean(bootstrapPassword) &&
+    password === bootstrapPassword;
+
   const credential = await getPasswordCredentialByEmail(email);
   if (credential) {
     if (!(await verifyPassword(password, credential))) {
-      return null;
+      if (!usesBootstrapPassword) {
+        return null;
+      }
+
+      const user = await upsertSessionUser({
+        email,
+        name: displayNameForEmail(email),
+      });
+      await setPasswordCredential(user.id, email, password);
+      return user;
     }
 
     return getUserById(credential.userId);
   }
 
-  const bootstrapPassword = getBootstrapAdminPassword();
-  if (!isBootstrapAdminEmail(email) || !bootstrapPassword || password !== bootstrapPassword) {
+  if (!usesBootstrapPassword) {
     return null;
   }
 

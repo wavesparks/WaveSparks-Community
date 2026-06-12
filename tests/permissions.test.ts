@@ -97,6 +97,32 @@ describe("permission guards", () => {
     });
   });
 
+  it("lets the bootstrap admin password recover an existing local credential", async () => {
+    await createManagedAccount({
+      orgId: seedOrganization.id,
+      email: "letsbuild@wavesparks.co",
+      name: "Lets Build",
+      password: "old-admin-password",
+      role: "org_admin",
+      status: "approved",
+    });
+
+    const recovered = await authorizePasswordUser({
+      email: "letsbuild@wavesparks.co",
+      password: "wavespark-admin-dev",
+    });
+    const oldPassword = await authorizePasswordUser({
+      email: "letsbuild@wavesparks.co",
+      password: "old-admin-password",
+    });
+
+    expect(recovered).toMatchObject({
+      email: "letsbuild@wavesparks.co",
+      platformRole: "platform_owner",
+    });
+    expect(oldPassword).toBeNull();
+  });
+
   it("creates managed accounts that can sign in with email and password", async () => {
     const { user, membership } = await createManagedAccount({
       orgId: seedOrganization.id,
