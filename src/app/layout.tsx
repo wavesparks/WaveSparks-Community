@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
 import { Host_Grotesk, Urbanist } from "next/font/google";
 import "./globals.css";
 
@@ -32,18 +31,23 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const content = isClerkConfigured() ? (
-    <ClerkProvider>{children}</ClerkProvider>
-  ) : (
-    children
-  );
-
   return (
     <html
       lang="en"
       className={`${headingFont.variable} ${bodyFont.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{content}</body>
+      <body className="min-h-full flex flex-col">
+        <ClerkBoundary>{children}</ClerkBoundary>
+      </body>
     </html>
   );
+}
+
+async function ClerkBoundary({ children }: { children: React.ReactNode }) {
+  if (!isClerkConfigured()) {
+    return children;
+  }
+
+  const { ClerkProvider } = await import("@clerk/nextjs");
+  return <ClerkProvider>{children}</ClerkProvider>;
 }

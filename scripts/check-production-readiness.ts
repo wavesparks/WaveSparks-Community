@@ -1,5 +1,4 @@
 const requiredEnv = [
-  "NEXT_PUBLIC_APP_URL",
   "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",
   "DATABASE_URL",
@@ -53,17 +52,43 @@ function checkUrl(
     return;
   }
 
+  checkUrlValue(key, value, errors, options);
+}
+
+function checkUrlValue(
+  label: string,
+  value: string,
+  errors: string[],
+  options: { requireHttps?: boolean; disallowLocal?: boolean } = {},
+) {
   try {
-    const url = new URL(value);
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
     if (options.requireHttps !== false && url.protocol !== "https:") {
-      errors.push(`${key} must use https in production.`);
+      errors.push(`${label} must use https in production.`);
     }
     if (options.disallowLocal !== false && isLocalHostname(url.hostname)) {
-      errors.push(`${key} must not point to localhost in production.`);
+      errors.push(`${label} must not point to localhost in production.`);
     }
   } catch {
-    errors.push(`${key} must be a valid URL.`);
+    errors.push(`${label} must be a valid URL.`);
   }
+}
+
+function checkAppUrl(env: NodeJS.ProcessEnv, errors: string[]) {
+  const candidates = [
+    "NEXT_PUBLIC_APP_URL",
+    "VERCEL_PROJECT_PRODUCTION_URL",
+    "VERCEL_URL",
+    "NEXTAUTH_URL",
+  ] as const;
+  const key = candidates.find((candidate) => !isMissing(env, candidate));
+
+  if (!key) {
+    errors.push("NEXT_PUBLIC_APP_URL or VERCEL_URL is required.");
+    return;
+  }
+
+  checkUrlValue(key, readEnv(env, key), errors);
 }
 
 function checkPathOrHttpsUrl(env: NodeJS.ProcessEnv, key: string, errors: string[]) {
@@ -193,7 +218,7 @@ export function checkProductionReadiness(
     }
   }
 
-  checkUrl(env, "NEXT_PUBLIC_APP_URL", errors);
+  checkAppUrl(env, errors);
   checkUrl(env, "SUPABASE_URL", errors);
   checkPathOrHttpsUrl(env, "NEXT_PUBLIC_CLERK_SIGN_IN_URL", errors);
   checkPathOrHttpsUrl(env, "NEXT_PUBLIC_CLERK_SIGN_UP_URL", errors);
@@ -224,7 +249,9 @@ export function checkProductionReadiness(
   return { errors, warnings };
 }
 
-function main() {
+async function main() {
+  const { loadScriptEnv } = await import("./load-script-env");
+  loadScriptEnv("production");
   const { errors, warnings } = checkProductionReadiness();
 
   if (warnings.length) {
@@ -246,5 +273,8 @@ function main() {
 }
 
 if (process.env.NODE_ENV !== "test") {
-  main();
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
 }

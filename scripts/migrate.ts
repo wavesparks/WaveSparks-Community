@@ -1,10 +1,13 @@
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
-import { env } from "@/lib/env";
-import { getMigrationDb, getSqlClient } from "@/db/client";
+import { loadScriptEnv } from "./load-script-env";
 
 async function main() {
+  loadScriptEnv("production");
+  const { env } = await import("@/lib/env");
+  const { getMigrationDb, getSqlClient } = await import("@/db/client");
+
   if (!env.databaseUrl) {
     console.info("DATABASE_URL not configured. Skipping migrations.");
     return;

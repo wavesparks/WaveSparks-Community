@@ -1,12 +1,12 @@
-import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth-options";
 import { isClerkConfigured } from "@/lib/env";
 
-type ClerkAuth = Awaited<ReturnType<typeof auth>>;
+type ClerkServer = typeof import("@clerk/nextjs/server");
+type ClerkAuth = Awaited<ReturnType<ClerkServer["auth"]>>;
 type ClerkSessionClaims = NonNullable<ClerkAuth["sessionClaims"]>;
-type ClerkClient = Awaited<ReturnType<typeof clerkClient>>;
+type ClerkClient = Awaited<ReturnType<ClerkServer["clerkClient"]>>;
 type ClerkUser = Awaited<ReturnType<ClerkClient["users"]["getUser"]>>;
 
 export interface AuthIdentity {
@@ -88,6 +88,7 @@ function identityFromClerkClaims(
 export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
   if (isClerkConfigured()) {
     try {
+      const { auth, clerkClient } = await import("@clerk/nextjs/server");
       const clerkAuth = await auth();
 
       if (clerkAuth.userId) {

@@ -1,15 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
-import { seedOrganization } from "@/data/seed-data";
-import { getDb, getSqlClient } from "@/db/client";
-import { memberships, organizations, users } from "@/db/schema";
-import { env, getBootstrapAdminEmails, getBootstrapAdminPassword } from "@/lib/env";
-import { setPasswordCredential } from "@/server/store";
-
-function adminEmails() {
-  return getBootstrapAdminEmails();
-}
+import { loadScriptEnv } from "./load-script-env";
 
 function displayNameForEmail(email: string) {
   return email
@@ -21,12 +13,19 @@ function displayNameForEmail(email: string) {
 }
 
 async function main() {
+  loadScriptEnv("production");
+  const { seedOrganization } = await import("@/data/seed-data");
+  const { getDb, getSqlClient } = await import("@/db/client");
+  const { memberships, organizations, users } = await import("@/db/schema");
+  const { env, getBootstrapAdminEmails, getBootstrapAdminPassword } = await import("@/lib/env");
+  const { setPasswordCredential } = await import("@/server/store");
+
   if (!env.databaseUrl) {
     console.info("DATABASE_URL not configured. Skipping production bootstrap.");
     return;
   }
 
-  const emails = adminEmails();
+  const emails = getBootstrapAdminEmails();
   const bootstrapPassword = getBootstrapAdminPassword();
   if (!emails.length) {
     console.info("WAVESPARK_ADMIN_EMAILS is empty. Created org only.");

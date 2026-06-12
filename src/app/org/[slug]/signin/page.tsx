@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { SignIn } from "@clerk/nextjs";
 import { ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 
@@ -23,6 +22,9 @@ export default async function SignInPage({
   const { slug } = await params;
   const viewer = await getViewerContext(slug);
   const clerkConfigured = isClerkConfigured();
+  const ClerkSignIn = clerkConfigured
+    ? (await import("@clerk/nextjs")).SignIn
+    : null;
 
   if (viewer) {
     redirect(`/org/${slug}`);
@@ -97,7 +99,7 @@ export default async function SignInPage({
               </div>
             </Card>
 
-            {clerkConfigured ? (
+            {ClerkSignIn ? (
               <Card className="space-y-5">
                 <SectionHeading
                   eyebrow="Managed identity"
@@ -105,7 +107,7 @@ export default async function SignInPage({
                   description="Use Clerk when the managed identity service is available."
                 />
                 <div className="flex justify-center">
-                  <SignIn
+                  <ClerkSignIn
                     fallbackRedirectUrl={`/org/${slug}`}
                     path={`/org/${slug}/signin`}
                     routing="path"

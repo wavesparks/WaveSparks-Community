@@ -63,6 +63,16 @@ describe("production readiness checks", () => {
     expect(result.errors).toContain("NEXTAUTH_SECRET is required for email/password sign-in.");
   });
 
+  it("accepts Vercel's system URL when the explicit app URL is not configured", () => {
+    const result = checkProductionReadiness({
+      ...baseProductionEnv,
+      NEXT_PUBLIC_APP_URL: undefined,
+      VERCEL_URL: "wavesparks-community.vercel.app",
+    });
+
+    expect(result.errors).toEqual([]);
+  });
+
   it("accepts Vercel Clerk integration keys without optional route overrides", () => {
     const result = checkProductionReadiness({
       ...baseProductionEnv,

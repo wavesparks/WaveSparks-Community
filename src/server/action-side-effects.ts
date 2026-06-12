@@ -1,5 +1,4 @@
 import { after } from "next/server";
-import { clerkClient } from "@clerk/nextjs/server";
 
 import type { AnalyticsEvent, Notification } from "@/lib/domain";
 import { sendNotificationEmail } from "@/server/notifications";
@@ -69,6 +68,7 @@ export function enqueueClerkInvitation(input: {
 }) {
   after(async () => {
     try {
+      const { clerkClient } = await import("@clerk/nextjs/server");
       const client = await clerkClient();
       await client.invitations.createInvitation({
         emailAddress: input.emailAddress,

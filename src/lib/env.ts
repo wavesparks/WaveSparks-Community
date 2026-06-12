@@ -7,40 +7,60 @@ function parseEmailList(value?: string | null) {
     .filter(Boolean);
 }
 
+function withHttps(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function nonEmpty(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+const authDevDemoEnabled = nonEmpty(process.env.AUTH_DEV_DEMO_ENABLED);
+const fallbackNextAuthSecret =
+  process.env.NODE_ENV === "production" ? undefined : "development-secret";
+
 const env = {
   appUrl:
-    process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.NEXTAUTH_URL ??
+    withHttps(process.env.NEXT_PUBLIC_APP_URL) ??
+    withHttps(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
+    withHttps(process.env.VERCEL_URL) ??
+    withHttps(process.env.NEXTAUTH_URL) ??
     "http://localhost:3000",
-  nextAuthSecret: process.env.NEXTAUTH_SECRET ?? "development-secret",
-  clerkPublishableKey: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
-  clerkSecretKey: process.env.CLERK_SECRET_KEY,
+  nextAuthSecret: nonEmpty(process.env.NEXTAUTH_SECRET) ?? fallbackNextAuthSecret,
+  clerkPublishableKey: nonEmpty(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY),
+  clerkSecretKey: nonEmpty(process.env.CLERK_SECRET_KEY),
   clerkSignInUrl:
-    process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL ?? "/org/wavespark/signin",
+    nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL) ?? "/org/wavespark/signin",
   clerkSignUpUrl:
-    process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL ?? "/org/wavespark/sign-up",
+    nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL) ?? "/org/wavespark/sign-up",
   clerkSignInFallbackRedirectUrl:
-    process.env.NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL ??
+    nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL) ??
     "/org/wavespark",
   clerkSignUpFallbackRedirectUrl:
-    process.env.NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL ??
+    nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL) ??
     "/org/wavespark",
-  databaseUrl: process.env.DATABASE_URL,
-  openAiApiKey: process.env.OPENAI_API_KEY,
-  resendApiKey: process.env.RESEND_API_KEY,
+  databaseUrl: nonEmpty(process.env.DATABASE_URL),
+  openAiApiKey: nonEmpty(process.env.OPENAI_API_KEY),
+  resendApiKey: nonEmpty(process.env.RESEND_API_KEY),
   resendFromEmail:
-    process.env.RESEND_FROM_EMAIL ?? "hello@wavespark.community",
-  cronSecret: process.env.CRON_SECRET,
+    nonEmpty(process.env.RESEND_FROM_EMAIL) ?? "hello@wavespark.community",
+  cronSecret: nonEmpty(process.env.CRON_SECRET),
   authDevDemoEnabled:
-    process.env.AUTH_DEV_DEMO_ENABLED === undefined
-      ? true
-      : process.env.AUTH_DEV_DEMO_ENABLED === "true",
-  supabaseUrl: process.env.SUPABASE_URL,
-  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  supabaseBucket: process.env.SUPABASE_BUCKET ?? "wavesparks",
-  wavesparkAdminEmails: process.env.WAVESPARK_ADMIN_EMAILS ?? "",
+    authDevDemoEnabled === undefined
+      ? process.env.NODE_ENV !== "production"
+      : authDevDemoEnabled === "true",
+  supabaseUrl: nonEmpty(process.env.SUPABASE_URL),
+  supabaseServiceRoleKey: nonEmpty(process.env.SUPABASE_SERVICE_ROLE_KEY),
+  supabaseBucket: nonEmpty(process.env.SUPABASE_BUCKET) ?? "wavesparks",
+  wavesparkAdminEmails: nonEmpty(process.env.WAVESPARK_ADMIN_EMAILS) ?? "",
   wavesparkAdminPassword:
-    process.env.WAVESPARK_ADMIN_PASSWORD ??
+    nonEmpty(process.env.WAVESPARK_ADMIN_PASSWORD) ??
     (process.env.NODE_ENV === "production" ? "" : "wavespark-admin-dev"),
 };
 
