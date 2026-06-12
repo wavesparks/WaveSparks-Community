@@ -43,17 +43,32 @@ export default async function SignInPage({
 
         <div className="space-y-6">
           {clerkConfigured ? (
-            <Card className="space-y-5">
-              <SectionHeading eyebrow="Account" title="Sign in with Clerk" />
-              <div className="flex justify-center">
-                <SignIn
-                  fallbackRedirectUrl={`/org/${slug}`}
-                  path={`/org/${slug}/signin`}
-                  routing="path"
-                  signUpUrl={`/org/${slug}/sign-up`}
+            <>
+              <Card className="space-y-5">
+                <SectionHeading
+                  eyebrow="Account"
+                  title="Sign in with Clerk"
+                  description="Use Clerk when the managed identity service is available."
                 />
-              </div>
-            </Card>
+                <div className="flex justify-center">
+                  <SignIn
+                    fallbackRedirectUrl={`/org/${slug}`}
+                    path={`/org/${slug}/signin`}
+                    routing="path"
+                    signUpUrl={`/org/${slug}/sign-up`}
+                  />
+                </div>
+              </Card>
+
+              <Card className="space-y-5">
+                <SectionHeading
+                  eyebrow="Backup"
+                  title="Email sign in"
+                  description="Use the account credentials created by the Wavespark admin."
+                />
+                <PasswordSignInForm slug={slug} />
+              </Card>
+            </>
           ) : (
             <>
               <Card className="space-y-5">
