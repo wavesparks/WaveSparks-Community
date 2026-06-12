@@ -9,7 +9,9 @@ const baseProductionEnv: NodeJS.ProcessEnv = {
   CLERK_SECRET_KEY: "sk_live_wavesparks",
   DATABASE_URL: "postgres://wavespark:secret@db.wavesparks.co:5432/wavespark",
   CRON_SECRET: "cron-secret-with-enough-production-entropy",
+  NEXTAUTH_SECRET: "next-auth-secret-with-enough-production-entropy",
   WAVESPARK_ADMIN_EMAILS: "letsbuild@wavesparks.co",
+  WAVESPARK_ADMIN_PASSWORD: "admin-password-with-enough-entropy",
   AUTH_DEV_DEMO_ENABLED: "false",
   NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/org/wavespark/signin",
   NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/org/wavespark/sign-up",
@@ -47,24 +49,18 @@ describe("production readiness checks", () => {
         "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must use a Clerk live key in production.",
         "CLERK_SECRET_KEY must use a Clerk live key in production.",
         "DATABASE_URL must not point to localhost in production.",
-        "NEXTAUTH_SECRET is required when local fallback auth is enabled.",
         "AUTH_DEV_DEMO_ENABLED must be set to false in production.",
       ]),
     );
   });
 
-  it("does not require NextAuth secret when Clerk owns production auth", () => {
+  it("requires NextAuth secret because email/password sign-in stays available", () => {
     const result = checkProductionReadiness({
       ...baseProductionEnv,
       NEXTAUTH_SECRET: undefined,
     });
 
-    expect(result.errors).not.toContain("NEXTAUTH_SECRET is required.");
-    expect(result.warnings).not.toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("NEXTAUTH_SECRET"),
-      ]),
-    );
+    expect(result.errors).toContain("NEXTAUTH_SECRET is required for email/password sign-in.");
   });
 
   it("accepts Vercel Clerk integration keys without optional route overrides", () => {

@@ -106,6 +106,7 @@ describe("admin server actions", () => {
     const formData = formDataFromEntries({
       email: "new.clerk.member@example.com",
       name: "New Clerk Member",
+      password: "temporary-password",
       role: "member",
       status: "approved",
     });
@@ -126,6 +127,16 @@ describe("admin server actions", () => {
       role: "member",
       status: "approved",
     });
+    await expect(
+      import("@/server/store").then(({ authorizePasswordUser }) =>
+        authorizePasswordUser({
+          email: "new.clerk.member@example.com",
+          password: "temporary-password",
+        }),
+      ),
+    ).resolves.toMatchObject({
+      email: "new.clerk.member@example.com",
+    });
     expect(createInvitationMock).not.toHaveBeenCalled();
     expect(afterMock).toHaveBeenCalledTimes(1);
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/admin/members");
@@ -134,7 +145,7 @@ describe("admin server actions", () => {
 
     expect(createInvitationMock).toHaveBeenCalledWith({
       emailAddress: "new.clerk.member@example.com",
-      redirectUrl: "http://localhost:3000/org/wavespark/sign-up",
+      redirectUrl: "http://localhost:3000/org/wavespark/signin",
       ignoreExisting: true,
       publicMetadata: {
         orgSlug: "wavespark",

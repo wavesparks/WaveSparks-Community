@@ -55,6 +55,14 @@ test("sign-in surface loads", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+test("sign-up route explains invitation-only access", async ({ page }) => {
+  await page.goto("/org/wavespark/sign-up");
+  await expect(page.getByRole("heading", { name: "Join Wavespark by invitation" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Use the credentials your admin sent" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to forum" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
+});
+
 test("demo founder lands in the feed with an activation checklist", async ({ page }) => {
   await signInDemo(page, "jules@example.com");
 

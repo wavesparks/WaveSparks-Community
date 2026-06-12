@@ -67,18 +67,18 @@ export default async function AdminMembersPage({
           title="Accounts and membership states"
           description={
             clerkConfigured
-              ? "Invite users through Clerk, approve members, and control who can reach admin surfaces."
+              ? "Create email-password access, optionally send Clerk invitations, approve members, and control who can reach admin surfaces."
               : "Create local fallback accounts, approve members, and control who can reach admin surfaces."
           }
         />
         <StatusBanner status={singleQueryValue(query.status)} />
         <Card className="space-y-5">
           <SectionHeading
-            eyebrow={clerkConfigured ? "Clerk invitation" : "Local fallback account"}
-            title={clerkConfigured ? "Invite or update a member" : "Create or update an account"}
+            eyebrow={clerkConfigured ? "Member access" : "Local fallback account"}
+            title={clerkConfigured ? "Create access and invite a member" : "Create or update an account"}
             description={
               clerkConfigured
-                ? "Clerk sends the account invitation. Wavespark stores the member role, status, and approval state."
+                ? "Wavespark creates an email-password account first, then attempts a Clerk invitation for managed identity."
                 : "Used only when Clerk keys are not configured in this environment."
             }
           />
@@ -94,12 +94,10 @@ export default async function AdminMembersPage({
               <Label htmlFor="email">Email</Label>
               <Input id="email" name="email" placeholder="member@company.com" required type="email" />
             </div>
-            {clerkConfigured ? null : (
-              <div>
-                <Label htmlFor="password">Temporary password</Label>
-                <Input id="password" minLength={8} name="password" required type="password" />
-              </div>
-            )}
+            <div>
+              <Label htmlFor="password">Temporary password</Label>
+              <Input id="password" minLength={8} name="password" required type="password" />
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <Label htmlFor="role">Role</Label>
@@ -122,7 +120,7 @@ export default async function AdminMembersPage({
               <SubmitButton
                 pendingLabel={clerkConfigured ? "Sending invitation" : "Saving account"}
               >
-                {clerkConfigured ? "Send invitation" : "Save account"}
+                {clerkConfigured ? "Create access and invite" : "Save account"}
               </SubmitButton>
             </div>
           </form>

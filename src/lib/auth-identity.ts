@@ -2,7 +2,7 @@ import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth-options";
-import { env, isClerkConfigured } from "@/lib/env";
+import { isClerkConfigured } from "@/lib/env";
 
 type ClerkAuth = Awaited<ReturnType<typeof auth>>;
 type ClerkSessionClaims = NonNullable<ClerkAuth["sessionClaims"]>;
@@ -13,7 +13,7 @@ export interface AuthIdentity {
   email: string;
   name: string;
   imageUrl?: string;
-  provider: "clerk" | "demo";
+  provider: "clerk" | "password";
 }
 
 function nameForClerkUser(user: NonNullable<ClerkUser>, email: string) {
@@ -87,24 +87,22 @@ function identityFromClerkClaims(
 
 export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
   if (isClerkConfigured()) {
-    const clerkAuth = await auth();
+    try {
+      const clerkAuth = await auth();
 
-    if (!clerkAuth.userId) {
-      return null;
+      if (clerkAuth.userId) {
+        const claimsIdentity = identityFromClerkClaims(clerkAuth.sessionClaims);
+
+        if (claimsIdentity) {
+          return claimsIdentity;
+        }
+
+        const client = await clerkClient();
+        return identityFromClerkUser(await client.users.getUser(clerkAuth.userId));
+      }
+    } catch (error) {
+      console.warn("[wavesparks] Clerk auth unavailable; falling back to email session.", error);
     }
-
-    const claimsIdentity = identityFromClerkClaims(clerkAuth.sessionClaims);
-
-    if (claimsIdentity) {
-      return claimsIdentity;
-    }
-
-    const client = await clerkClient();
-    return identityFromClerkUser(await client.users.getUser(clerkAuth.userId));
-  }
-
-  if (!env.authDevDemoEnabled) {
-    return null;
   }
 
   const session = await getServerSession(authOptions);
@@ -118,6 +116,6 @@ export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
     email,
     name: session.user.name ?? email,
     imageUrl: session.user.image ?? undefined,
-    provider: "demo",
+    provider: "password",
   };
 }

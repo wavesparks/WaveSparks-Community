@@ -73,7 +73,7 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
     email,
     name,
     password: String(formData.get("password") ?? ""),
-    createPasswordCredential: !clerkConfigured,
+    createPasswordCredential: true,
     role,
     status,
   });
@@ -81,7 +81,7 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   if (clerkConfigured) {
     enqueueClerkInvitation({
       emailAddress: email,
-      redirectUrl: absoluteAppUrl(`/org/${slug}/sign-up`),
+      redirectUrl: absoluteAppUrl(`/org/${slug}/signin`),
       publicMetadata: {
         orgSlug: slug,
         membershipId: membership.id,

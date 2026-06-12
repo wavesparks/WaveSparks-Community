@@ -5,6 +5,7 @@ const requiredEnv = [
   "DATABASE_URL",
   "CRON_SECRET",
   "WAVESPARK_ADMIN_EMAILS",
+  "WAVESPARK_ADMIN_PASSWORD",
 ] as const;
 
 const optionalButExpectedEnv = [
@@ -198,10 +199,9 @@ export function checkProductionReadiness(
   checkPathOrHttpsUrl(env, "NEXT_PUBLIC_CLERK_SIGN_UP_URL", errors);
   checkPathOrHttpsUrl(env, "NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL", errors);
   checkPathOrHttpsUrl(env, "NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL", errors);
-  if (readEnv(env, "AUTH_DEV_DEMO_ENABLED") !== "false") {
-    if (isMissing(env, "NEXTAUTH_SECRET")) {
-      errors.push("NEXTAUTH_SECRET is required when local fallback auth is enabled.");
-    }
+  if (isMissing(env, "NEXTAUTH_SECRET")) {
+    errors.push("NEXTAUTH_SECRET is required for email/password sign-in.");
+  } else {
     checkProductionSecret(env, "NEXTAUTH_SECRET", errors, warnings, 32);
   }
   checkProductionSecret(env, "CRON_SECRET", errors, warnings, 32);
