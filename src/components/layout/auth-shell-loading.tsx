@@ -1,7 +1,7 @@
 import { Card } from "@/components/ui/card";
 
 function SkeletonBlock({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded-md bg-slate-200 ${className}`} />;
+  return <div className={`animate-pulse rounded-md bg-[var(--line)] ${className}`} />;
 }
 
 export function AuthShellLoading() {
@@ -12,9 +12,9 @@ export function AuthShellLoading() {
         className="grid w-full gap-8 lg:grid-cols-[0.9fr_1.1fr]"
         role="status"
       >
-        <Card className="border-slate-800 bg-[#111827] text-white">
+        <Card className="border-0 bg-[var(--night)] text-white">
           <div className="space-y-5">
-            <div className="h-3 w-20 animate-pulse rounded bg-orange-100/70" />
+            <div className="h-3 w-20 animate-pulse rounded bg-white/30" />
             <div className="space-y-3">
               <div className="h-9 w-full max-w-sm animate-pulse rounded bg-white/20" />
               <div className="h-9 w-4/5 max-w-xs animate-pulse rounded bg-white/20" />
@@ -29,13 +29,13 @@ export function AuthShellLoading() {
 
         <Card className="space-y-5">
           <div className="space-y-3">
-            <SkeletonBlock className="h-3 w-24 bg-orange-200" />
+            <SkeletonBlock className="h-3 w-24 bg-[var(--accent-soft)]" />
             <SkeletonBlock className="h-7 w-48" />
           </div>
-          <div className="mx-auto w-full max-w-md space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="mx-auto w-full max-w-md space-y-4 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
             <SkeletonBlock className="h-10 w-full" />
             <SkeletonBlock className="h-10 w-full" />
-            <SkeletonBlock className="h-10 w-full bg-orange-200" />
+            <SkeletonBlock className="h-10 w-full bg-[var(--flame-soft)]" />
           </div>
         </Card>
       </div>

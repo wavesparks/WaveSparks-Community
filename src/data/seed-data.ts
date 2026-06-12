@@ -49,10 +49,10 @@ export const seedOrganization: Organization = {
   slug: "wavespark",
   logoUrl: "https://images.unsplash.com/photo-1545239351-1141bd82e8a6?auto=format&fit=crop&w=300&q=80",
   theme: {
-    accent: "#ff785a",
-    accentSoft: "#ffd8cb",
-    canvas: "#fff6ef",
-    ink: "#1f1d2b",
+    accent: "#6f4bff",
+    accentSoft: "#eee8ff",
+    canvas: "#f8f7f3",
+    ink: "#01020a",
   },
   tagline: "The warm founder network for serious early-stage builders.",
   description:

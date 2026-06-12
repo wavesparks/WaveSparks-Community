@@ -1,18 +1,20 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import { Fraunces, Manrope } from "next/font/google";
+import { Host_Grotesk, Urbanist } from "next/font/google";
 import "./globals.css";
 
 import { isClerkConfigured } from "@/lib/env";
 
-const headingFont = Fraunces({
+const headingFont = Host_Grotesk({
   variable: "--font-heading",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const bodyFont = Manrope({
+const bodyFont = Urbanist({
   variable: "--font-body",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {

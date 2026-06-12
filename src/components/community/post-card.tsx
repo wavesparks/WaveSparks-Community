@@ -35,7 +35,7 @@ export function PostCard({
     : followMembershipAction.bind(null, slug, viewerMembershipId ?? "", post.author.membershipId);
 
   return (
-    <Card className="space-y-4">
+    <Card className="group space-y-4 transition hover:-translate-y-0.5 hover:border-[var(--accent)]/30 hover:shadow-[0_22px_55px_rgba(1,2,10,0.10)]">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant={post.featured ? "accent" : "default"}>
           {post.type.replaceAll("_", " ")}
@@ -48,13 +48,15 @@ export function PostCard({
             {reason}
           </Badge>
         ))}
-        <span className="ml-auto text-xs font-medium text-slate-500">
+        <span className="ml-auto text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ink-soft)]">
           {formatDate(post.createdAt)}
         </span>
       </div>
       <div className="space-y-2">
-        <h3 className="text-xl font-semibold leading-tight text-slate-950">{post.title}</h3>
-        <p className="text-sm leading-6 text-slate-600">{post.body}</p>
+        <h3 className="text-2xl font-semibold leading-tight text-[var(--ink)]">
+          {post.title}
+        </h3>
+        <p className="text-sm leading-6 text-[var(--ink-soft)]">{post.body}</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {post.tags.map((tag, index) => (
@@ -68,16 +70,16 @@ export function PostCard({
           </Badge>
         ))}
       </div>
-      <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-t border-[var(--line)] pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <Avatar name={post.author.displayName} src={post.author.photo} />
           <div className="min-w-0 space-y-0.5">
-            <p className="text-sm font-semibold text-slate-900">{post.author.displayName}</p>
-            <p className="line-clamp-1 text-sm text-slate-600">{post.author.headline}</p>
+            <p className="text-sm font-semibold text-[var(--ink)]">{post.author.displayName}</p>
+            <p className="line-clamp-1 text-sm text-[var(--ink-soft)]">{post.author.headline}</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <span className="text-sm text-slate-500">{post.commentCount} comments</span>
+          <span className="text-sm font-medium text-[var(--ink-soft)]">{post.commentCount} comments</span>
           {canFollow ? (
             <form action={followAction}>
               {returnPath ? <input name="return_to" type="hidden" value={returnPath} /> : null}

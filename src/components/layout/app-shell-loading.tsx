@@ -1,14 +1,14 @@
 function SkeletonBlock({ className = "" }: { className?: string }) {
   return (
     <div
-      className={`animate-pulse rounded-md bg-slate-200 ${className}`}
+      className={`animate-pulse rounded-md bg-[var(--line)] ${className}`}
     />
   );
 }
 
 function SidebarSkeleton() {
   return (
-    <aside className="border-b border-slate-800 bg-[#111827] text-white lg:min-h-screen lg:border-b-0 lg:border-r">
+    <aside className="border-b border-white/10 bg-[var(--night)] text-white lg:min-h-screen lg:border-b-0 lg:border-r">
       <div className="flex h-full flex-col gap-3 p-3 sm:p-4 lg:gap-6 lg:p-5">
         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 lg:p-4">
           <div className="flex items-start gap-3">
@@ -67,7 +67,7 @@ function ContentSkeleton() {
       <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
         <div className="space-y-8" role="status" aria-label="Loading page">
           <div className="space-y-3">
-            <SkeletonBlock className="h-3 w-24 bg-orange-200" />
+            <SkeletonBlock className="h-3 w-24 bg-[var(--accent-soft)]" />
             <SkeletonBlock className="h-8 w-full max-w-xl" />
             <SkeletonBlock className="h-4 w-full max-w-2xl" />
             <SkeletonBlock className="h-4 w-3/4 max-w-xl" />
@@ -77,7 +77,7 @@ function ContentSkeleton() {
             <div className="space-y-6">
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
-                  className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+                  className="rounded-lg border border-[var(--line)] bg-white p-5 shadow-[0_18px_45px_rgba(1,2,10,0.06)]"
                   key={`primary-card-skeleton-${index}`}
                 >
                   <div className="flex items-start justify-between gap-4">
@@ -101,7 +101,7 @@ function ContentSkeleton() {
             <div className="space-y-6">
               {Array.from({ length: 2 }).map((_, index) => (
                 <div
-                  className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+                  className="rounded-lg border border-[var(--line)] bg-white p-5 shadow-[0_18px_45px_rgba(1,2,10,0.06)]"
                   key={`secondary-card-skeleton-${index}`}
                 >
                   <div className="space-y-3">
@@ -122,7 +122,7 @@ function ContentSkeleton() {
 
 export function AppShellLoading() {
   return (
-    <div className="min-h-screen bg-[#f6f7fb] text-slate-950">
+    <div className="min-h-screen bg-[var(--canvas)] text-[var(--ink)]">
       <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-[280px_1fr]">
         <SidebarSkeleton />
         <ContentSkeleton />

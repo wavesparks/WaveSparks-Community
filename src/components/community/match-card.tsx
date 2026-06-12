@@ -21,26 +21,26 @@ export function MatchCard({
             src={match.target.photo}
           />
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
               {match.matchType.replaceAll("_", " ")}
             </p>
-            <h3 className="mt-1 text-xl font-semibold leading-tight text-slate-950">
+            <h3 className="mt-1 text-xl font-semibold leading-tight text-[var(--ink)]">
               {match.target.displayName}
             </h3>
-            <p className="mt-1 line-clamp-2 text-sm leading-5 text-slate-600">
+            <p className="mt-1 line-clamp-2 text-sm leading-5 text-[var(--ink-soft)]">
               {match.target.headline}
             </p>
           </div>
         </div>
         <div className="w-full rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-4 py-3 sm:w-auto sm:min-w-28 sm:text-right">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
             Score
           </p>
           <p className="text-2xl font-semibold text-[var(--ink)]">{match.score}</p>
-          <p className="text-sm text-slate-600">{match.scoreBand}</p>
+          <p className="text-sm text-[var(--ink-soft)]">{match.scoreBand}</p>
         </div>
       </div>
-      <p className="text-sm leading-6 text-slate-700">{match.explanationText}</p>
+      <p className="text-sm leading-6 text-[var(--ink-soft)]">{match.explanationText}</p>
       <div className="flex flex-wrap gap-2">
         {match.overlapTags.map((tag, index) => (
           <Badge key={`overlap-${tag}-${index}`} variant="muted">
@@ -48,8 +48,8 @@ export function MatchCard({
           </Badge>
         ))}
       </div>
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
-        <p className="font-semibold text-slate-900">What they’re building / offering</p>
+      <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm leading-6 text-[var(--ink-soft)]">
+        <p className="font-semibold text-[var(--ink)]">What they’re building / offering</p>
         <p className="mt-2">{match.target.whatTheyAreBuilding}</p>
       </div>
       {children ?? <Button className="w-full">Request intro</Button>}

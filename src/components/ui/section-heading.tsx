@@ -24,7 +24,7 @@ export function SectionHeading({
         <p
           className={cn(
             "text-xs font-semibold uppercase tracking-[0.18em]",
-            inverse ? "text-orange-100" : "text-[var(--accent)]",
+            inverse ? "text-white/75" : "text-[var(--accent)]",
           )}
         >
           {eyebrow}
@@ -34,7 +34,7 @@ export function SectionHeading({
         <Heading
           className={cn(
             "text-2xl font-semibold leading-tight sm:text-3xl",
-            inverse ? "text-white" : "text-slate-950",
+            inverse ? "text-white" : "text-[var(--ink)]",
           )}
         >
           {title}
@@ -43,7 +43,7 @@ export function SectionHeading({
           <p
             className={cn(
               "max-w-2xl text-sm leading-6",
-              inverse ? "text-slate-200" : "text-slate-600",
+              inverse ? "text-white/75" : "text-[var(--ink-soft)]",
             )}
           >
             {description}

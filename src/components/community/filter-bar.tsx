@@ -49,16 +49,16 @@ export function FilterBar({
             />
           </label>
           <details className="group">
-            <summary className="inline-flex h-10 cursor-pointer list-none items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-semibold text-slate-900 ring-1 ring-slate-200 transition hover:bg-slate-50">
+            <summary className="inline-flex h-11 cursor-pointer list-none items-center justify-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-[var(--ink)] ring-1 ring-[var(--line)] transition hover:bg-[var(--surface-muted)]">
               <SlidersHorizontal className="size-4" />
               Filters
               {activeCount ? (
-                <span className="rounded-md bg-[var(--accent)] px-2 py-0.5 text-xs text-white">
+                <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-xs text-white">
                   {activeCount}
                 </span>
               ) : null}
             </summary>
-            <div className="mt-3 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-3 grid gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 md:grid-cols-2 xl:grid-cols-3">
               {opportunityMode ? (
                 <Select
                   defaultValue={filters.opportunitySource ?? defaultOpportunitySource ?? "all"}
@@ -110,7 +110,7 @@ export function FilterBar({
               <Input defaultValue={filters.authorIndustry} name="industry" placeholder="Industry" />
               <Input defaultValue={filters.roleNeeded} name="role" placeholder="Role needed" />
               {showRecommendedFilter ? (
-                <label className="flex h-10 items-center gap-2 rounded-lg bg-white px-3 text-sm text-slate-700 ring-1 ring-slate-200">
+                <label className="flex h-11 items-center gap-2 rounded-full bg-white px-3 text-sm text-[var(--ink-soft)] ring-1 ring-[var(--line)]">
                   <input
                     defaultChecked={filters.recommendedOnly}
                     name="recommended"
@@ -124,14 +124,16 @@ export function FilterBar({
             </div>
           </details>
           {hasFilters ? (
-            <Button asChild type="button" variant="ghost">
+            <Button asChild className="w-full sm:w-auto" type="button" variant="ghost">
               <Link href={clearHref}>
                 <X className="size-4" />
                 Clear
               </Link>
             </Button>
           ) : null}
-          <SubmitButton pendingLabel="Searching">Search</SubmitButton>
+          <SubmitButton className="w-full sm:w-auto" pendingLabel="Searching">
+            Search
+          </SubmitButton>
         </div>
       </Form>
     </Card>

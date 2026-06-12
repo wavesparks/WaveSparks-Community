@@ -1,13 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  --accent: #f15f3d;
-  --accent-soft: #fff0eb;
-  --canvas: #f6f7fb;
-  --ink: #172033;
+  --accent: #6f4bff;
+  --accent-soft: #eee8ff;
+  --flame: #f36f4c;
+  --flame-soft: #fff0e8;
+  --canvas: #f8f7f3;
+  --ink: #01020a;
+  --ink-soft: #30313a;
   --surface: #ffffff;
-  --surface-muted: #f1f4f8;
-  --line: #d9e1ec;
+  --surface-muted: #f1f0eb;
+  --line: #dedbd2;
+  --night: #05050d;
 }
 
 @theme inline {
@@ -26,7 +30,7 @@ body {
   min-height: 100vh;
   background: var(--canvas);
   color: var(--ink);
-  font-family: var(--font-body), sans-serif;
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
   text-rendering: optimizeLegibility;
 }
 
@@ -34,12 +38,12 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: var(--font-heading), serif;
+  font-family: var(--font-heading), ui-sans-serif, system-ui, sans-serif;
   letter-spacing: 0;
 }
 
 ::selection {
-  background: rgba(241, 95, 61, 0.22);
+  background: rgba(111, 75, 255, 0.22);
 }
 
 :focus-visible {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { wavesparksBrand } from "@/lib/brand";
 
 export default async function SignUpPage({
   params,
@@ -23,14 +24,23 @@ export default async function SignUpPage({
         </Button>
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <Card className="border-slate-800 bg-[#111827] text-white">
-            <SectionHeading
-              eyebrow="Create account"
-              level={1}
-              title="Join Wavespark by invitation"
-              description="The public forum is open to read. Member accounts are created by an admin so posting, replies, follows, and intro requests stay inside the approved community."
-              tone="inverse"
-            />
+          <Card
+            className="min-h-[350px] overflow-hidden border-0 bg-[var(--night)] p-0 text-white"
+            style={{
+              backgroundImage: `linear-gradient(180deg, rgba(1,2,10,0.25), rgba(1,2,10,0.88)), url(${wavesparksBrand.heroImageUrl})`,
+              backgroundPosition: "center",
+              backgroundSize: "cover",
+            }}
+          >
+            <div className="flex min-h-[350px] flex-col justify-end p-6 sm:p-7">
+              <SectionHeading
+                eyebrow="Create account"
+                level={1}
+                title="Join Wavespark by invitation"
+                description="The public forum is open to read. Member accounts are created by an admin so posting, replies, follows, and intro requests stay inside the approved community."
+                tone="inverse"
+              />
+            </div>
           </Card>
 
           <Card className="space-y-5">

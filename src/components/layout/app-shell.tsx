@@ -1,6 +1,5 @@
 import {
   Bell,
-  Building2,
   Compass,
   LayoutDashboard,
   Shield,
@@ -11,6 +10,7 @@ import type { CSSProperties } from "react";
 
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { NavLink } from "@/components/layout/nav-link";
 import { SignOutButton } from "@/components/layout/sign-out-button";
 import type { ViewerContext } from "@/lib/domain";
@@ -55,27 +55,27 @@ export function AppShell({
         {
           "--accent": viewer.org.theme.accent,
           "--accent-soft": viewer.org.theme.accentSoft,
-          "--canvas": "#f6f7fb",
+          "--canvas": viewer.org.theme.canvas,
           "--ink": viewer.org.theme.ink,
         } as CSSProperties
       }
     >
       <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-[280px_1fr]">
-        <aside className="border-b border-slate-800 bg-[#111827] text-white lg:min-h-screen lg:border-b-0 lg:border-r">
+        <aside className="border-b border-white/10 bg-[var(--night)] text-white lg:min-h-screen lg:border-b-0 lg:border-r">
           <div className="flex h-full flex-col gap-3 p-3 sm:p-4 lg:gap-6 lg:p-5">
             <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 lg:p-4">
               <div className="flex items-start gap-3">
-                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-white">
-                  <Building2 className="size-5" />
+                <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-white">
+                  <BrandLogo className="h-5" />
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{viewer.org.name}</p>
+                  <p className="truncate text-sm font-semibold">{viewer.org.name} Community</p>
                   <p className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-slate-300">
                     {viewer.org.tagline}
                   </p>
                 </div>
               </div>
-              <Badge className="mt-3 bg-white/10 text-slate-100 ring-white/10 lg:mt-4">
+              <Badge className="mt-3 bg-white/10 text-white ring-white/10 lg:mt-4">
                 {viewer.membership.affiliationType}
               </Badge>
             </div>
@@ -94,7 +94,7 @@ export function AppShell({
                     className={cn(
                       "flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm transition",
                       active
-                        ? "bg-white text-slate-950 shadow-sm"
+                        ? "bg-white text-[var(--ink)] shadow-sm"
                         : "text-slate-300 hover:bg-white/10 hover:text-white",
                     )}
                     href={href}
@@ -123,7 +123,7 @@ export function AppShell({
                         className={cn(
                           "flex min-h-9 items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
                           active
-                            ? "bg-white text-slate-950 shadow-sm"
+                            ? "bg-white text-[var(--ink)] shadow-sm"
                             : "text-slate-300 hover:bg-white/10 hover:text-white",
                         )}
                         href={href}

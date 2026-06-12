@@ -29,12 +29,12 @@ export function StatusBanner({ status }: { status?: string }) {
   return (
     <div
       aria-live="polite"
-      className="flex gap-3 rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] p-4 text-sm text-slate-800"
+      className="flex gap-3 rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] p-4 text-sm text-[var(--ink)]"
       role="status"
     >
       <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
       <div>
-        <p className="font-semibold text-slate-950">{copy.title}</p>
+        <p className="font-semibold text-[var(--ink)]">{copy.title}</p>
         <p className="mt-1 leading-6">{copy.body}</p>
       </div>
     </div>

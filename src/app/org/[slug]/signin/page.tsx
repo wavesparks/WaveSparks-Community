@@ -5,10 +5,12 @@ import Link from "next/link";
 
 import { PasswordSignInForm } from "@/components/auth/password-signin-form";
 import { Card } from "@/components/ui/card";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { demoProviderButtons } from "@/lib/auth-buttons";
 import { getViewerContext } from "@/lib/auth";
+import { wavesparksBrand } from "@/lib/brand";
 import { isClerkConfigured } from "@/lib/env";
 
 export default async function SignInPage({
@@ -37,30 +39,42 @@ export default async function SignInPage({
         </div>
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
-          <Card className="border-slate-800 bg-[#111827] text-white">
-            <SectionHeading
-              eyebrow="Sign in"
-              level={1}
-              title="Enter the Wavespark application flow"
-              description="Use the built-in account your admin created for this community."
-              tone="inverse"
-            />
-            <div className="mt-6 space-y-4 text-sm text-slate-300">
-              <p>Regular members cannot browse a people directory.</p>
-              <p>Profiles become more visible through posts, match cards, and accepted intros.</p>
-              <p>Contact details stay hidden until both sides agree.</p>
+          <Card
+            className="min-h-[430px] overflow-hidden border-0 bg-[var(--night)] p-0 text-white"
+            style={{
+              backgroundImage: `linear-gradient(180deg, rgba(1,2,10,0.32), rgba(1,2,10,0.9)), url(${wavesparksBrand.huddleImageUrl})`,
+              backgroundPosition: "center",
+              backgroundSize: "cover",
+            }}
+          >
+            <div className="flex min-h-[430px] flex-col justify-between p-6 sm:p-7">
+              <BrandLogo className="h-8 w-fit rounded bg-white/90 px-2 py-1" />
+              <div>
+                <SectionHeading
+                  eyebrow="Sign in"
+                  level={1}
+                  title="Enter the Wavespark application flow"
+                  description="Use the account your admin created for this community."
+                  tone="inverse"
+                />
+                <div className="mt-6 grid gap-3 text-sm text-white/80">
+                  <p>Browse first; interact only when you are ready.</p>
+                  <p>Profiles surface through posts, match cards, and accepted intros.</p>
+                  <p>Contact details stay hidden until both sides agree.</p>
+                </div>
+              </div>
             </div>
           </Card>
 
           <div className="space-y-4">
-            <Card className="space-y-5 border-[var(--accent)]/30 shadow-md">
+            <Card className="space-y-5 border-[var(--accent)]/30">
               <SectionHeading
                 eyebrow="Account"
                 title="Email sign in"
                 description="Use the account credentials created by the Wavespark admin."
               />
               <PasswordSignInForm slug={slug} />
-              <div className="flex gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <div className="flex gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--ink-soft)]">
                 <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" />
                 <p>Members can browse first. Sign in is only needed to post, reply, follow, or request intros.</p>
               </div>

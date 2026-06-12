@@ -15,16 +15,16 @@ export function ActivationChecklistCard({
   compact?: boolean;
 }) {
   return (
-    <Card className="space-y-4">
+    <Card className="space-y-4 border-[var(--accent)]/25 bg-white">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
             Activation
           </p>
-          <h2 className="mt-1 text-xl font-semibold text-slate-950">
+          <h2 className="mt-1 text-xl font-semibold text-[var(--ink)]">
             {activation.isComplete ? "You’re fully activated" : "Make your first loop count"}
           </h2>
-          <p className="mt-1 text-sm leading-6 text-slate-600">
+          <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
             {activation.completedCount} of {activation.totalCount} core steps complete.
           </p>
         </div>
@@ -43,7 +43,7 @@ export function ActivationChecklistCard({
                 "rounded-lg border p-4",
                 item.complete
                   ? "border-[var(--accent)]/20 bg-[var(--accent-soft)]"
-                  : "border-slate-200 bg-slate-50",
+                  : "border-[var(--line)] bg-[var(--surface-muted)]",
               )}
               key={item.id}
             >
@@ -55,8 +55,8 @@ export function ActivationChecklistCard({
                   )}
                 />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-slate-950">{item.label}</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                  <p className="text-sm font-semibold text-[var(--ink)]">{item.label}</p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
                     {item.description}
                   </p>
                   <Button

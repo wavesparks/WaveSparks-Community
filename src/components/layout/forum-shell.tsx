@@ -10,6 +10,7 @@ import type { CSSProperties, ReactNode } from "react";
 
 import { SignOutButton } from "@/components/layout/sign-out-button";
 import { Avatar } from "@/components/ui/avatar";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import type { Organization, ViewerContext } from "@/lib/domain";
 import { cn } from "@/lib/utils";
@@ -49,23 +50,23 @@ export function ForumShell({
         {
           "--accent": org.theme.accent,
           "--accent-soft": org.theme.accentSoft,
-          "--canvas": "#f6f7fb",
+          "--canvas": org.theme.canvas,
           "--ink": org.theme.ink,
         } as CSSProperties
       }
     >
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b border-black/10 bg-white/92 backdrop-blur">
         <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <Link
             className="flex min-w-0 items-center gap-3"
             href={`/org/${org.slug}/feed`}
           >
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-sm font-bold text-white">
-              WS
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-950">{org.name}</p>
-              <p className="hidden truncate text-xs text-slate-500 sm:block">{org.tagline}</p>
+            <BrandLogo className="shrink-0" />
+            <div className="hidden min-w-0 sm:block">
+              <p className="truncate text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
+                Community
+              </p>
+              <p className="hidden truncate text-xs text-[var(--ink-soft)] sm:block">{org.tagline}</p>
             </div>
           </Link>
 
@@ -83,8 +84,8 @@ export function ForumShell({
                   className={cn(
                     "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition",
                     currentPath === href
-                      ? "bg-slate-950 text-white"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
+                      ? "bg-[var(--ink)] text-white"
+                      : "text-[var(--ink-soft)] hover:bg-black/5 hover:text-[var(--ink)]",
                   )}
                   href={href}
                   key={href}
@@ -138,7 +139,7 @@ export function ForumShell({
             )}
 
             {viewer ? (
-              <div className="hidden items-center gap-2 border-l border-slate-200 pl-2 lg:flex">
+              <div className="hidden items-center gap-2 border-l border-black/10 pl-2 lg:flex">
                 <Avatar
                   className="size-8"
                   name={viewer.profile?.preferredName ?? viewer.user.name}
@@ -151,7 +152,7 @@ export function ForumShell({
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+      <main className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
         {children}
       </main>
     </div>
