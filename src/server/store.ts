@@ -32,6 +32,7 @@ import type {
   IntroStatus,
   MatchRecord,
   MatchType,
+  AffiliationType,
   Membership,
   MembershipRole,
   MembershipStatus,
@@ -1091,6 +1092,11 @@ export async function createManagedAccount(input: {
   createPasswordCredential?: boolean;
   role: MembershipRole;
   status: MembershipStatus;
+  affiliationType?: AffiliationType;
+  archetypes?: string[];
+  programName?: string;
+  cohortNameOrYear?: string;
+  approvalNote?: string;
 }) {
   const email = normalizeEmailAddress(input.email);
   const name = input.name.trim() || displayNameForEmail(email);
@@ -1114,17 +1120,22 @@ export async function createManagedAccount(input: {
   const now = new Date().toISOString();
   const role = input.role;
   const status = input.status;
+  const affiliationType =
+    input.affiliationType ?? (role === "org_admin" ? "current participant" : "invited outsider");
+  const archetypes = input.archetypes ?? (role === "org_admin" ? ["operator"] : ["invited_outsider"]);
+  const programName = input.programName ?? (role === "org_admin" ? "Wavespark Admin" : "Guest Network");
+  const cohortNameOrYear = input.cohortNameOrYear ?? (role === "org_admin" ? "Core" : "Rolling");
   const managedMembership: Membership = {
     id: existing?.id ?? `mem_${nanoid(8)}`,
     orgId: input.orgId,
     userId: user.id,
     role,
-    affiliationType: role === "org_admin" ? "current participant" : "invited outsider",
+    affiliationType,
     status,
-    archetypes: role === "org_admin" ? ["operator"] : ["invited_outsider"],
-    programName: role === "org_admin" ? "Wavespark Admin" : "Guest Network",
-    cohortNameOrYear: role === "org_admin" ? "Core" : "Rolling",
-    approvalNote: existing?.approvalNote ?? "Managed account.",
+    archetypes,
+    programName,
+    cohortNameOrYear,
+    approvalNote: input.approvalNote ?? existing?.approvalNote ?? "Managed account.",
     approvedAt:
       status === "approved"
         ? existing?.approvedAt ?? now

@@ -75,6 +75,17 @@ pnpm db:seed
 
 If `DATABASE_URL` is absent, the app still runs with the in-memory seeded community dataset used by the UI and tests.
 
+Provision production-style preview accounts for role testing:
+
+```bash
+pnpm db:preview-accounts
+```
+
+This creates or updates one approved admin, mentor, and founder account. Set
+`WAVESPARK_PREVIEW_PASSWORD` to control the shared temporary password; otherwise
+the script generates one and writes the credentials to
+`/tmp/wavesparks-preview-accounts.txt`.
+
 ## Useful scripts
 
 ```bash
@@ -100,6 +111,7 @@ DATABASE_URL=<postgres-url-with-pgvector>
 CRON_SECRET=<long-random-secret>
 AUTH_DEV_DEMO_ENABLED=false
 WAVESPARK_ADMIN_EMAILS=letsbuild@wavesparks.co
+WAVESPARK_PREVIEW_PASSWORD=<strong-shared-preview-password>
 RESEND_API_KEY=<resend-key>
 RESEND_FROM_EMAIL=<verified-sender>
 SUPABASE_URL=<supabase-url>

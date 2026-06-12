@@ -4,6 +4,7 @@ import { ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 
 import { PasswordSignInForm } from "@/components/auth/password-signin-form";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { demoProviderButtons } from "@/lib/auth-buttons";
 import { getViewerContext } from "@/lib/auth";
 import { wavesparksBrand } from "@/lib/brand";
 import { isClerkConfigured } from "@/lib/env";
+import { previewAccountSpecs } from "@/server/preview-accounts";
 
 export default async function SignInPage({
   params,
@@ -77,6 +79,21 @@ export default async function SignInPage({
               <div className="flex gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--ink-soft)]">
                 <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" />
                 <p>Members can browse first. Sign in is only needed to post, reply, follow, or request intros.</p>
+              </div>
+            </Card>
+
+            <Card className="space-y-4">
+              <SectionHeading
+                eyebrow="Preview roles"
+                title="Admin, mentor, and founder test accounts"
+                description="Preview accounts use the email-password form. The temporary password is generated outside source control."
+              />
+              <div className="flex flex-wrap gap-2">
+                {previewAccountSpecs.map((account) => (
+                  <Badge key={account.kind} variant={account.kind === "admin" ? "accent" : "muted"}>
+                    {account.label}
+                  </Badge>
+                ))}
               </div>
             </Card>
 
