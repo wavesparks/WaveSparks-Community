@@ -1,6 +1,11 @@
 import Link from "next/link";
-import { PlusCircle } from "lucide-react";
-import type { CSSProperties } from "react";
+import {
+  ArrowRight,
+  LockKeyhole,
+  MessageSquarePlus,
+  SearchX,
+  Sparkles,
+} from "lucide-react";
 
 import { ActivationChecklistCard } from "@/components/community/activation-checklist-card";
 import { FilterBar } from "@/components/community/filter-bar";
@@ -11,8 +16,12 @@ import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getOrganizationViewerContext } from "@/lib/auth";
-import { wavesparksBrand } from "@/lib/brand";
-import { parseFeedFilters, pathWithQuery, singleQueryValue } from "@/lib/feed-filters";
+import {
+  hasFeedFilters,
+  parseFeedFilters,
+  pathWithQuery,
+  singleQueryValue,
+} from "@/lib/feed-filters";
 import { canAccessFeed } from "@/server/permissions";
 import { getFeedViewsForOrg, getMemberActivationState } from "@/server/view-models";
 
@@ -52,49 +61,71 @@ export default async function FeedPage({
     ? allPosts
     : allPosts.filter((post) => !pinnedIds.has(post.id));
   const returnPath = pathWithQuery(`/org/${slug}/feed`, query);
+  const activeFilterCount = hasFeedFilters(filters);
+  const totalDisplayedPosts = recommendedPosts.length + posts.length;
+  const memberSetupHref = viewer
+    ? viewer.membership.status === "approved"
+      ? `/org/${slug}/onboarding`
+      : `/org/${slug}/pending`
+    : `/org/${slug}/signin`;
+  const primaryAction = viewerCanInteract
+    ? {
+        href: `/org/${slug}/compose?kind=feed`,
+        label: "Create post",
+        icon: MessageSquarePlus,
+      }
+    : viewer
+      ? {
+          href: memberSetupHref,
+          label: viewer.membership.status === "approved" ? "Complete profile" : "View application",
+          icon: ArrowRight,
+        }
+      : {
+          href: `/org/${slug}/signin`,
+          label: "Unlock interaction",
+          icon: LockKeyhole,
+        };
+  const PrimaryActionIcon = primaryAction.icon;
 
   return (
     <ForumShell currentPath={`/org/${slug}/feed`} org={org} viewer={viewer}>
-      <div className="space-y-8">
-        <section
-          className="overflow-hidden rounded-lg bg-[var(--night)] text-white shadow-[0_24px_70px_rgba(1,2,10,0.22)]"
-          style={
-            {
-              backgroundImage: `linear-gradient(90deg, rgba(1,2,10,0.88), rgba(1,2,10,0.66), rgba(1,2,10,0.22)), url(${wavesparksBrand.heroImageUrl})`,
-              backgroundPosition: "center",
-              backgroundSize: "cover",
-            } as CSSProperties
-          }
-        >
-          <div className="flex min-h-[310px] flex-col justify-end p-6 sm:p-8 lg:p-10">
-            <div className="max-w-3xl space-y-5">
-              <SectionHeading
-                eyebrow="Asia’s launchpad · community signal"
-                level={1}
-                title="Wavespark Forum"
-                description="Browse founder signals from the Wavesparks network. Members sign in only when they’re ready to post, reply, follow builders, or request warm intros."
-                tone="inverse"
-              />
-              <div className="flex flex-wrap gap-3">
-                {viewerCanInteract ? (
-                  <Button asChild>
-                    <Link href={`/org/${slug}/compose?kind=feed`} title="Create post">
-                      <PlusCircle className="size-4" />
-                      Post
-                    </Link>
-                  </Button>
-                ) : (
-                  <Button asChild>
-                    <Link href="#latest-posts">Read latest posts</Link>
-                  </Button>
-                )}
+      <div className="space-y-5">
+        <section className="border-b border-[var(--line)] pb-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <SectionHeading
+              eyebrow="Community signal"
+              level={1}
+              title="Wavespark Forum"
+              description="Read founder asks, updates, opportunities, and warm-intro signals directly. Sign in is only required when you post, follow, reply, or request an intro."
+            />
+            <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
+              <Button asChild>
+                <Link href={primaryAction.href}>
+                  <PrimaryActionIcon className="size-4" />
+                  {primaryAction.label}
+                </Link>
+              </Button>
+              {viewerCanInteract ? (
                 <Button asChild variant="secondary">
-                  <Link href={viewerCanInteract ? `/org/${slug}/matches` : `/org/${slug}/signin`}>
-                    {viewerCanInteract ? "Open matches" : "Member access"}
+                  <Link href={`/org/${slug}/matches`}>
+                    <Sparkles className="size-4" />
+                    Matches
                   </Link>
                 </Button>
-              </div>
+              ) : null}
             </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ink-soft)]">
+            <span className="rounded-full bg-white px-3 py-1 ring-1 ring-[var(--line)]">
+              {totalDisplayedPosts || allPosts.length} visible posts
+            </span>
+            <span className="rounded-full bg-white px-3 py-1 ring-1 ring-[var(--line)]">
+              {viewerCanInteract
+                ? "Posting enabled"
+                : viewer
+                  ? "Profile required to interact"
+                  : "Public reading enabled"}
+            </span>
           </div>
         </section>
 
@@ -138,11 +169,43 @@ export default async function FeedPage({
             />
           ))}
           {!recommendedPosts.length && !posts.length ? (
-            <Card>
-              <p className="text-sm font-semibold text-slate-950">No posts found</p>
-              <p className="mt-1 text-sm text-slate-600">
-                Try clearing filters or publish the first useful update for this view.
-              </p>
+            <Card className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex gap-3">
+                <SearchX className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
+                <div>
+                  <p className="text-sm font-semibold text-[var(--ink)]">
+                    {activeFilterCount
+                      ? "No posts match these filters"
+                      : viewerCanInteract
+                        ? "No posts have been published yet"
+                        : viewer
+                          ? "Complete your profile to unlock interaction"
+                          : "The public forum is ready for posts"}
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+                    {activeFilterCount
+                      ? "Clear the filters to return to the main forum view."
+                      : viewerCanInteract
+                        ? "Start the first useful thread for this community."
+                        : viewer
+                          ? "You can browse now. Finish your profile when you want to post, follow, reply, or request intros."
+                          : "You can browse without an account. Sign in when you are ready to interact."}
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                {activeFilterCount ? (
+                  <Button asChild variant="secondary">
+                    <Link href={`/org/${slug}/feed`}>Clear filters</Link>
+                  </Button>
+                ) : null}
+                <Button asChild>
+                  <Link href={primaryAction.href}>
+                    <PrimaryActionIcon className="size-4" />
+                    {primaryAction.label}
+                  </Link>
+                </Button>
+              </div>
             </Card>
           ) : null}
         </div>
