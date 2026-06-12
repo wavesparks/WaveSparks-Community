@@ -1,20 +1,26 @@
 import Link from "next/link";
 
+import { ActivationChecklistCard } from "@/components/community/activation-checklist-card";
 import { AppShell } from "@/components/layout/app-shell";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
+import { singleQueryValue } from "@/lib/feed-filters";
 import { formatPercent } from "@/lib/utils";
-import { getProfileLinks } from "@/server/view-models";
+import { getMemberActivationState, getProfileLinks } from "@/server/view-models";
 
 export default async function ProfilePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { slug } = await params;
+  const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
     requireApproved: true,
@@ -25,11 +31,20 @@ export default async function ProfilePage({
     return null;
   }
 
-  const links = await getProfileLinks(viewer.profile.id);
+  const [links, activation] = await Promise.all([
+    getProfileLinks(viewer.profile.id),
+    getMemberActivationState(
+      viewer.org.id,
+      viewer.membership.id,
+      viewer.profile,
+      slug,
+    ),
+  ]);
 
   return (
     <AppShell currentPath={`/org/${slug}/profile`} viewer={viewer}>
       <div className="space-y-8">
+        <StatusBanner status={singleQueryValue(query.status)} />
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-4">
             <Avatar
@@ -39,12 +54,13 @@ export default async function ProfilePage({
             />
             <SectionHeading
               eyebrow="My profile"
+              level={1}
               title={viewer.profile.preferredName}
               description={viewer.profile.headline}
             />
           </div>
           <Link
-            className="inline-flex items-center rounded-full bg-[var(--accent)] px-5 py-3 text-sm font-semibold text-white"
+            className="inline-flex h-10 items-center rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
             href={`/org/${slug}/onboarding`}
           >
             Edit profile
@@ -53,6 +69,7 @@ export default async function ProfilePage({
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="space-y-6">
+            <ActivationChecklistCard activation={activation} compact />
             <Card className="space-y-4">
               <p className="text-sm text-slate-700">{viewer.profile.longBio}</p>
               <div className="flex flex-wrap gap-2">
@@ -65,13 +82,13 @@ export default async function ProfilePage({
             </Card>
 
             <Card className="space-y-4">
-              <h2 className="text-2xl font-semibold text-slate-950">What you’re building</h2>
+              <h2 className="text-xl font-semibold text-slate-950">What you’re building</h2>
               <p className="text-sm text-slate-700">{viewer.profile.startupOneLiner}</p>
               <p className="text-sm text-slate-600">{viewer.profile.startupDescription}</p>
             </Card>
 
             <Card className="space-y-4">
-              <h2 className="text-2xl font-semibold text-slate-950">What you’re looking for</h2>
+              <h2 className="text-xl font-semibold text-slate-950">What you’re looking for</h2>
               <p className="text-sm text-slate-700">{viewer.profile.idealMatchDescription}</p>
               <div className="flex flex-wrap gap-2">
                 {viewer.profile.desiredRoles.map((role, index) => (
@@ -83,7 +100,7 @@ export default async function ProfilePage({
 
           <div className="space-y-6">
             <Card className="space-y-4">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
                 Profile completion
               </p>
               <p className="text-4xl font-semibold text-slate-950">

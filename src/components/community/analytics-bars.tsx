@@ -10,10 +10,10 @@ export function AnalyticsBars({
   return (
     <Card className="space-y-4">
       <div>
-        <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
           30 day activity
         </p>
-        <h3 className="mt-2 text-2xl font-semibold text-slate-950">
+        <h3 className="mt-1 text-xl font-semibold text-slate-950">
           Community heartbeat
         </h3>
       </div>
@@ -21,12 +21,12 @@ export function AnalyticsBars({
         {points.map((point) => (
           <div className="flex flex-1 flex-col items-center gap-2" key={point.date}>
             <div
-              className="w-full rounded-t-2xl bg-[var(--accent)]/80"
+              className="w-full rounded-t bg-[var(--accent)]/80"
               style={{
                 height: `${Math.max(8, (point.value / maxValue) * 100)}%`,
               }}
             />
-            <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+            <span className="text-[10px] font-medium text-slate-500">
               {point.date.slice(5)}
             </span>
           </div>

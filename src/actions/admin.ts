@@ -1,21 +1,32 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { nanoid } from "nanoid";
 
-import { authOptions } from "@/lib/auth-options";
-import { canViewAdminRoute } from "@/server/permissions";
-import { buildNotification, sendNotificationEmail } from "@/server/notifications";
+import { getViewerContextForAction } from "@/lib/auth";
+import { isClerkConfigured } from "@/lib/env";
+import { getPostCommentRevalidationPaths } from "@/lib/post-action-routing";
+import { absoluteAppUrl } from "@/lib/urls";
 import {
-  addNotification,
+  enqueueAnalyticsEvent,
+  enqueueClerkInvitation,
+  enqueueMembershipEmail,
+  enqueueNotificationWrite,
+} from "@/server/action-side-effects";
+import { canViewAdminRoute } from "@/server/permissions";
+import { buildNotification, enqueueNotificationEmail } from "@/server/notifications";
+import {
   createManagedAccount,
   createIntroRequest,
-  ensureMembership,
-  getOrganizationBySlug,
-  getProfileByMembershipId,
+  getCommentRecordById,
+  getMembershipById,
+  getMembershipRecordById,
+  getPostById,
+  getProfileRecordById,
+  recomputeMatchesForProfile,
   recomputeMatchesForOrg,
-  upsertSessionUser,
   updateCommentStatus,
   updateMembershipStatus,
   updateOrganizationSettings,
@@ -24,56 +35,95 @@ import {
 } from "@/server/store";
 
 async function requireAdminForAction(slug: string) {
-  const org = await getOrganizationBySlug(slug);
-  const session = await getServerSession(authOptions);
+  const viewer = await getViewerContextForAction(slug);
 
-  if (!org || !session?.user?.email) {
+  if (!viewer || !canViewAdminRoute(viewer.user, viewer.membership)) {
     throw new Error("Unauthorized.");
   }
 
-  const user = await upsertSessionUser({
-    email: session.user.email,
-    name: session.user.name ?? session.user.email,
-    imageUrl: session.user.image ?? undefined,
+  return {
+    org: viewer.org,
+    user: viewer.user,
+    membership: viewer.membership,
+  };
+}
+
+function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: string) {
+  after(async () => {
+    try {
+      await recomputeMatchesForProfile(orgId, profileId);
+      revalidatePath(`/org/${slug}/matches`);
+      revalidatePath(`/org/${slug}/admin/matches`);
+    } catch (error) {
+      console.error("[wavesparks] profile match recompute failed", profileId, error);
+    }
   });
-  const membership = await ensureMembership(user.id, org.id);
-
-  if (!canViewAdminRoute(user, membership)) {
-    throw new Error("Unauthorized.");
-  }
-
-  return { org, user, membership };
 }
 
 export async function createManagedAccountAction(slug: string, formData: FormData) {
   const { org } = await requireAdminForAction(slug);
+  const email = String(formData.get("email") ?? "");
+  const name = String(formData.get("name") ?? "");
+  const role = String(formData.get("role") ?? "member") as never;
+  const status = String(formData.get("status") ?? "approved") as never;
+  const clerkConfigured = isClerkConfigured();
 
-  await createManagedAccount({
+  const { membership } = await createManagedAccount({
     orgId: org.id,
-    email: String(formData.get("email") ?? ""),
-    name: String(formData.get("name") ?? ""),
+    email,
+    name,
     password: String(formData.get("password") ?? ""),
-    role: String(formData.get("role") ?? "member") as never,
-    status: String(formData.get("status") ?? "approved") as never,
+    createPasswordCredential: !clerkConfigured,
+    role,
+    status,
   });
 
+  if (clerkConfigured) {
+    enqueueClerkInvitation({
+      emailAddress: email,
+      redirectUrl: absoluteAppUrl(`/org/${slug}/sign-up`),
+      publicMetadata: {
+        orgSlug: slug,
+        membershipId: membership.id,
+        membershipRole: membership.role,
+      },
+    });
+  }
+
   revalidatePath(`/org/${slug}/admin/members`);
+  redirect(
+    `/org/${slug}/admin/members?status=${
+      clerkConfigured ? "member_invited" : "member_saved"
+    }`,
+  );
 }
 
 export async function updateMembershipAction(slug: string, membershipId: string, formData: FormData) {
-  const org = await getOrganizationBySlug(slug);
+  const { org } = await requireAdminForAction(slug);
+  const targetRecord = await getMembershipRecordById(membershipId);
+  const targetMembership = targetRecord?.membership;
+  const targetProfile = targetRecord?.profile;
+  if (!targetMembership || targetMembership.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+
   const membership = await updateMembershipStatus(
     membershipId,
     String(formData.get("status") ?? "pending") as never,
     String(formData.get("approval_note") ?? ""),
+    { existingMembership: targetMembership, recomputeMatches: false },
   );
 
   if (!org || !membership) {
     return;
   }
 
+  if (targetProfile) {
+    enqueueProfileMatchRecompute(slug, org.id, targetProfile.id);
+  }
+
   if (membership.status === "approved") {
-    await addNotification(
+    enqueueNotificationWrite(
       buildNotification(
         `ntf_${nanoid(8)}`,
         org.id,
@@ -85,56 +135,87 @@ export async function updateMembershipAction(slug: string, membershipId: string,
       ),
     );
 
-    const profile = await getProfileByMembershipId(membership.id);
-    if (profile) {
-      await sendNotificationEmail({
-        to: profile.emailForIntro,
+    if (targetProfile) {
+      const feedUrl = absoluteAppUrl(`/org/${slug}/feed`);
+      enqueueNotificationEmail({
+        to: targetProfile.emailForIntro,
         subject: "Your Wavespark membership is approved",
-        html: `<p>You’re approved for Wavespark.</p><p>Visit <a href="/org/${slug}/feed">the community feed</a> to get started.</p>`,
+        html: `<p>You’re approved for Wavespark.</p><p>Visit <a href="${feedUrl}">the community feed</a> to get started.</p>`,
       });
     }
   }
 
   revalidatePath(`/org/${slug}/admin/members`);
   revalidatePath(`/org/${slug}/pending`);
+  redirect(`/org/${slug}/admin/members?status=membership_updated`);
 }
 
 export async function updatePostModerationAction(slug: string, postId: string, formData: FormData) {
-  await updatePostModeration(postId, {
-    hidden: formData.has("hidden") ? formData.get("hidden") === "true" : undefined,
-    featured: formData.has("featured") ? formData.get("featured") === "true" : undefined,
-    commentsLocked: formData.has("comments_locked")
-      ? formData.get("comments_locked") === "true"
-      : undefined,
-    status: formData.has("status") ? (formData.get("status") as never) : undefined,
-  });
+  const { org } = await requireAdminForAction(slug);
+  const post = await getPostById(postId);
+  if (!post || post.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+
+  await updatePostModeration(
+    postId,
+    {
+      hidden: formData.has("hidden") ? formData.get("hidden") === "true" : undefined,
+      featured: formData.has("featured") ? formData.get("featured") === "true" : undefined,
+      commentsLocked: formData.has("comments_locked")
+        ? formData.get("comments_locked") === "true"
+        : undefined,
+      status: formData.has("status") ? (formData.get("status") as never) : undefined,
+    },
+    { existingPost: post },
+  );
 
   revalidatePath(`/org/${slug}/admin/posts`);
-  revalidatePath(`/org/${slug}/feed`);
+  for (const path of getPostCommentRevalidationPaths(slug, postId, post.type)) {
+    revalidatePath(path);
+  }
+  redirect(`/org/${slug}/admin/posts?status=post_moderation_updated`);
 }
 
 export async function updateProfileFlagsAction(slug: string, profileId: string, formData: FormData) {
-  await updateProfileFlags(profileId, {
-    featured: formData.get("featured") === "true",
-    stale: formData.get("stale") === "true",
-  });
+  const { org } = await requireAdminForAction(slug);
+  const profileRecord = await getProfileRecordById(profileId);
+  const profile = profileRecord?.profile;
+  const membership = profileRecord?.membership;
+  if (!profile || !membership || membership.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+
+  await updateProfileFlags(
+    profileId,
+    {
+      featured: formData.get("featured") === "true",
+      stale: formData.get("stale") === "true",
+    },
+    { existingProfile: profile, orgId: org.id, recomputeMatches: false },
+  );
+  enqueueProfileMatchRecompute(slug, org.id, profile.id);
 
   revalidatePath(`/org/${slug}/admin/profiles`);
-  revalidatePath(`/org/${slug}/matches`);
+  redirect(`/org/${slug}/admin/profiles?status=profile_flags_updated`);
 }
 
 export async function createManualIntroAction(slug: string, requesterMembershipId: string, formData: FormData) {
-  const org = await getOrganizationBySlug(slug);
-  if (!org) {
-    return;
+  const { org, membership: adminMembership } = await requireAdminForAction(slug);
+  if (requesterMembershipId !== adminMembership.id) {
+    throw new Error("Unauthorized.");
   }
 
   const receiverMembershipId = String(formData.get("receiver_membership_id") ?? "");
-  const receiverProfile = await getProfileByMembershipId(receiverMembershipId);
-  await createIntroRequest({
+  const receiverMembership = await getMembershipById(receiverMembershipId);
+  if (!receiverMembership || receiverMembership.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+
+  const intro = await createIntroRequest({
     orgId: org.id,
-    requesterMembershipId,
-    receiverMembershipId,
+    requesterMembershipId: adminMembership.id,
+    receiverMembershipId: receiverMembership.id,
     sourceType: "admin_manual",
     sourceId: `manual_${nanoid(8)}`,
     introPurpose: String(formData.get("intro_purpose") ?? "general connection"),
@@ -144,56 +225,78 @@ export async function createManualIntroAction(slug: string, requesterMembershipI
     status: "pending",
     suggestedFirstMessage:
       "Happy to connect. I’d love to learn how your work is evolving and where we might be able to help one another.",
-  });
-
-  await addNotification(
+  }, { recordAnalytics: false });
+  enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
       org.id,
-      receiverMembershipId,
+      receiverMembership.id,
       "manual_intro",
       "An admin created an introduction for you",
       "A Wavespark admin surfaced a connection that looks worth exploring.",
       `/org/${slug}/requests`,
     ),
   );
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: org.id,
+    membershipId: adminMembership.id,
+    eventName: "intro_requested",
+    payload: {
+      receiverMembershipId: intro.receiverMembershipId,
+      sourceType: intro.sourceType,
+    },
+    createdAt: intro.createdAt,
+  });
 
-  if (receiverProfile) {
-    await sendNotificationEmail({
-      to: receiverProfile.emailForIntro,
-      subject: "A Wavespark admin created an intro for you",
-      html: `<p>An admin made a curated intro for you inside Wavespark.</p><p>Open your requests inbox to respond.</p>`,
-    });
-  }
+  const requestsUrl = absoluteAppUrl(`/org/${slug}/requests`);
+  enqueueMembershipEmail({
+    membershipId: receiverMembership.id,
+    subject: "A Wavespark admin created an intro for you",
+    html: `<p>An admin made a curated intro for you inside Wavespark.</p><p>Open <a href="${requestsUrl}">your requests inbox</a> to respond.</p>`,
+  });
 
   revalidatePath(`/org/${slug}/admin/requests`);
   revalidatePath(`/org/${slug}/requests`);
+  redirect(`/org/${slug}/admin/requests?status=manual_intro_created`);
 }
 
 export async function recomputeMatchesAction(slug: string) {
-  const org = await getOrganizationBySlug(slug);
-  if (!org) {
-    return;
-  }
+  const { org } = await requireAdminForAction(slug);
 
   await recomputeMatchesForOrg(org.id);
   revalidatePath(`/org/${slug}/matches`);
   revalidatePath(`/org/${slug}/admin/matches`);
+  redirect(`/org/${slug}/admin/matches?status=matches_recomputed`);
 }
 
 export async function moderateCommentAction(slug: string, commentId: string, status: "visible" | "removed") {
-  await updateCommentStatus(commentId, status);
+  const { org } = await requireAdminForAction(slug);
+  const commentRecord = await getCommentRecordById(commentId);
+  if (!commentRecord?.post || commentRecord.post.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+
+  await updateCommentStatus(commentId, status, {
+    existingComment: commentRecord.comment,
+  });
   revalidatePath(`/org/${slug}/admin/posts`);
+  for (const path of getPostCommentRevalidationPaths(
+    slug,
+    commentRecord.post.id,
+    commentRecord.post.type,
+  )) {
+    revalidatePath(path);
+  }
+  redirect(`/org/${slug}/admin/posts?status=comment_moderation_updated`);
 }
 
 export async function updateOrgSettingsAction(slug: string, formData: FormData) {
-  const org = await getOrganizationBySlug(slug);
-  if (!org) {
-    return;
-  }
+  const { org } = await requireAdminForAction(slug);
 
   await updateOrganizationSettings(org.id, {
     name: String(formData.get("name") ?? org.name),
+    logoUrl: String(formData.get("logo_url") ?? org.logoUrl),
     tagline: String(formData.get("tagline") ?? org.tagline),
     description: String(formData.get("description") ?? org.description),
     inviteSettings: String(formData.get("invite_settings") ?? org.inviteSettings),
@@ -201,4 +304,5 @@ export async function updateOrgSettingsAction(slug: string, formData: FormData) 
 
   revalidatePath(`/org/${slug}`);
   revalidatePath(`/org/${slug}/admin/settings`);
+  redirect(`/org/${slug}/admin/settings?status=org_settings_saved`);
 }

@@ -3,16 +3,25 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { canAccessFeed, canViewAdminRoute, canViewContactDetails } from "@/server/permissions";
 import { seedOrganization } from "@/data/seed-data";
 import {
+  addNotification,
   authorizePasswordUser,
+  createIntroRequest,
   createManagedAccount,
   ensureMembership,
+  getIntroRequestById,
   getMembershipById,
+  getMembershipRecordById,
   getProfileByMembershipId,
   getUserById,
+  getViewerRecordByEmailAndOrgId,
+  hasUnreadNotificationsForMembership,
   listIntroRequestsForMembership,
+  listMembershipProfileRecordsByIds,
+  markNotificationsReadForMembership,
   resetStore,
   upsertSessionUser,
 } from "@/server/store";
+import { getIntroRequestViews, getNotificationViews } from "@/server/view-models";
 
 describe("permission guards", () => {
   beforeEach(() => {
@@ -34,7 +43,9 @@ describe("permission guards", () => {
       email: "letsbuild@wavesparks.co",
       name: "Lets Build",
     });
-    const membership = await ensureMembership(user.id, seedOrganization.id);
+    const membership = await ensureMembership(user.id, seedOrganization.id, {
+      existingUser: user,
+    });
 
     expect(user.platformRole).toBe("platform_owner");
     expect(membership).toMatchObject({
@@ -43,6 +54,35 @@ describe("permission guards", () => {
       programName: "Wavespark Admin",
     });
     expect(canViewAdminRoute(user, membership)).toBe(true);
+  });
+
+  it("promotes an existing bootstrap admin membership from known auth context", async () => {
+    const user = await upsertSessionUser({
+      email: "letsbuild@wavesparks.co",
+      name: "Lets Build",
+    });
+    const existingMembership = await ensureMembership(user.id, seedOrganization.id, {
+      existingUser: user,
+    });
+    Object.assign(existingMembership, {
+      role: "member",
+      status: "pending",
+      approvedAt: undefined,
+      approvalNote: undefined,
+    });
+
+    const promoted = await ensureMembership(user.id, seedOrganization.id, {
+      existingUser: user,
+      existingMembership,
+    });
+
+    expect(promoted.id).toBe(existingMembership.id);
+    expect(promoted).toMatchObject({
+      role: "org_admin",
+      status: "approved",
+      approvalNote: "Approved by WAVESPARK_ADMIN_EMAILS bootstrap.",
+    });
+    expect(canViewAdminRoute(user, promoted)).toBe(true);
   });
 
   it("authenticates the bootstrap admin with the built-in password provider", async () => {
@@ -77,6 +117,26 @@ describe("permission guards", () => {
     expect(authenticated?.id).toBe(user.id);
   });
 
+  it("creates managed memberships without local passwords when Clerk owns account access", async () => {
+    const { user, membership } = await createManagedAccount({
+      orgId: seedOrganization.id,
+      email: "clerk.member@example.com",
+      name: "Clerk Member",
+      createPasswordCredential: false,
+      role: "member",
+      status: "approved",
+    });
+
+    const authenticated = await authorizePasswordUser({
+      email: "clerk.member@example.com",
+      password: "temporary-password",
+    });
+
+    expect(user.email).toBe("clerk.member@example.com");
+    expect(membership).toMatchObject({ role: "member", status: "approved" });
+    expect(authenticated).toBeNull();
+  });
+
   it("only grants feed access to approved members with onboarding complete", async () => {
     const approvedMembership = (await getMembershipById("mem_jules"))!;
     const approvedProfile = (await getProfileByMembershipId("mem_jules"))!;
@@ -87,13 +147,174 @@ describe("permission guards", () => {
     expect(canAccessFeed(pendingMembership, pendingProfile)).toBe(false);
   });
 
+  it("loads one membership record with user and profile for action authorization", async () => {
+    const record = await getMembershipRecordById("mem_jules");
+
+    expect(record?.membership).toMatchObject({
+      id: "mem_jules",
+      orgId: seedOrganization.id,
+    });
+    expect(record?.user?.id).toBe(record?.membership.userId);
+    expect(record?.profile?.membershipId).toBe("mem_jules");
+    await expect(getMembershipRecordById("mem_missing")).resolves.toBeUndefined();
+  });
+
+  it("loads a viewer membership record when the organization is already known", async () => {
+    const record = await getViewerRecordByEmailAndOrgId(
+      seedOrganization.id,
+      "JULES@EXAMPLE.COM",
+    );
+
+    expect(record.user?.id).toBe("usr_jules");
+    expect(record.membership?.id).toBe("mem_jules");
+    expect(record.profile?.membershipId).toBe("mem_jules");
+    await expect(
+      getViewerRecordByEmailAndOrgId(seedOrganization.id, "missing@example.com"),
+    ).resolves.toEqual({
+      user: undefined,
+      membership: undefined,
+      profile: undefined,
+    });
+  });
+
+  it("loads only requested membership records for inbox rendering", async () => {
+    const records = await listMembershipProfileRecordsByIds(
+      ["mem_jules", "mem_marcus", "mem_jules"],
+      { orgId: seedOrganization.id },
+    );
+    const inboxViews = await getIntroRequestViews("mem_jules", seedOrganization.id);
+    const acceptedIntro = inboxViews.find((request) => request.id === "intro_1");
+
+    expect(records.map((record) => record.membership.id).sort()).toEqual([
+      "mem_jules",
+      "mem_marcus",
+    ]);
+    expect(records.every((record) => record.user === undefined)).toBe(true);
+    await expect(
+      listMembershipProfileRecordsByIds(["mem_jules"], { orgId: "org_missing" }),
+    ).resolves.toEqual([]);
+    expect(acceptedIntro?.otherParty.membershipId).toBe("mem_marcus");
+    expect(acceptedIntro?.contactDetails?.email).toContain("@");
+  });
+
+  it("limits the member notification inbox to the latest records", async () => {
+    await Promise.all(
+      Array.from({ length: 10 }, async (_, index) =>
+        addNotification({
+          id: `ntf_limit_${index}`,
+          orgId: seedOrganization.id,
+          membershipId: "mem_jules",
+          type: "admin_note",
+          title: `Notification ${index}`,
+          body: "Inbox limit coverage.",
+          link: `/org/${seedOrganization.slug}/requests`,
+          readAt: new Date(Date.UTC(2031, 0, index + 1)).toISOString(),
+          createdAt: new Date(Date.UTC(2030, 0, index + 1)).toISOString(),
+        }),
+      ),
+    );
+    await addNotification({
+      id: "ntf_limit_old_unread",
+      orgId: seedOrganization.id,
+      membershipId: "mem_jules",
+      type: "admin_note",
+      title: "Older unread notification",
+      body: "Unread coverage outside the latest visible page.",
+      link: `/org/${seedOrganization.slug}/requests`,
+      createdAt: new Date(Date.UTC(2029, 0, 1)).toISOString(),
+    });
+
+    const notifications = await getNotificationViews("mem_jules", { limit: 8 });
+
+    expect(notifications).toHaveLength(8);
+    expect(notifications[0].id).toBe("ntf_limit_9");
+    expect(notifications.map((notification) => notification.id)).not.toContain("ntf_2");
+    expect(notifications.some((notification) => !notification.readAt)).toBe(false);
+    await expect(hasUnreadNotificationsForMembership("mem_jules")).resolves.toBe(true);
+  });
+
+  it("marks member notifications as read in one inbox action", async () => {
+    await addNotification({
+      id: "ntf_mark_read",
+      orgId: seedOrganization.id,
+      membershipId: "mem_jules",
+      type: "admin_note",
+      title: "Needs attention",
+      body: "Mark-read coverage.",
+      link: `/org/${seedOrganization.slug}/requests`,
+      createdAt: new Date(Date.UTC(2030, 0, 1)).toISOString(),
+    });
+
+    await expect(markNotificationsReadForMembership("mem_jules")).resolves.toBeGreaterThan(0);
+
+    const notifications = await getNotificationViews("mem_jules");
+
+    expect(notifications.find((notification) => notification.id === "ntf_mark_read")?.readAt).toBeTruthy();
+  });
+
+  it("limits member intro request views to the latest records when requested", async () => {
+    const created: string[] = [];
+
+    for (let index = 0; index < 8; index += 1) {
+      const intro = await createIntroRequest({
+        orgId: seedOrganization.id,
+        requesterMembershipId: "mem_jules",
+        receiverMembershipId: "mem_marcus",
+        sourceType: "match",
+        sourceId: `match_limit_${index}`,
+        introPurpose: `Limit coverage ${index}`,
+        note: "Keep the member inbox bounded.",
+        suggestedFirstMessage: "A short first message.",
+        status: "pending",
+        respondedAt: undefined,
+        contactRevealedAt: undefined,
+      });
+      created.push(intro.id);
+    }
+
+    const limitedRequests = await getIntroRequestViews("mem_jules", seedOrganization.id, {
+      limit: 3,
+    });
+    const outgoingPendingRequests = await listIntroRequestsForMembership("mem_jules", {
+      direction: "outgoing",
+      status: "pending",
+    });
+    const outgoingPendingViews = await getIntroRequestViews("mem_jules", seedOrganization.id, {
+      direction: "outgoing",
+      status: "pending",
+    });
+    const incomingDeclinedViews = await getIntroRequestViews("mem_jules", seedOrganization.id, {
+      direction: "incoming",
+      status: "declined",
+    });
+    const fullRequests = await getIntroRequestViews("mem_jules", seedOrganization.id);
+
+    expect(limitedRequests).toHaveLength(3);
+    expect(limitedRequests[0].id).toBe(created.at(-1));
+    expect(outgoingPendingRequests.length).toBeGreaterThan(0);
+    expect(
+      outgoingPendingRequests.every(
+        (request) =>
+          request.requesterMembershipId === "mem_jules" && request.status === "pending",
+      ),
+    ).toBe(true);
+    expect(outgoingPendingViews.length).toBeGreaterThan(0);
+    expect(outgoingPendingViews.every((request) => !request.isIncoming)).toBe(true);
+    expect(outgoingPendingViews.every((request) => request.status === "pending")).toBe(true);
+    expect(incomingDeclinedViews).toHaveLength(1);
+    expect(incomingDeclinedViews[0]).toMatchObject({
+      isIncoming: true,
+      status: "declined",
+    });
+    expect(fullRequests.length).toBeGreaterThan(limitedRequests.length);
+  });
+
   it("reveals contact details only after an accepted intro and only to the participants", async () => {
-    const acceptedIntro = (await listIntroRequestsForMembership("mem_jules")).find(
-      (request) => request.id === "intro_1",
-    )!;
+    const acceptedIntro = (await getIntroRequestById("intro_1"))!;
 
     expect(canViewContactDetails("mem_jules", acceptedIntro)).toBe(true);
     expect(canViewContactDetails("mem_marcus", acceptedIntro)).toBe(true);
     expect(canViewContactDetails("mem_rhea", acceptedIntro)).toBe(false);
+    await expect(getIntroRequestById("intro_missing")).resolves.toBeUndefined();
   });
 });

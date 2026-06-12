@@ -41,7 +41,7 @@ export function AvatarUploadField({
   }
 
   return (
-    <div className="md:col-span-2 rounded-[28px] bg-slate-50 p-4">
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 md:col-span-2">
       <div className="flex flex-wrap items-center gap-4">
         <Avatar className="size-20" name={displayName} src={photoUrl} />
         <div className="min-w-0 flex-1 space-y-3">

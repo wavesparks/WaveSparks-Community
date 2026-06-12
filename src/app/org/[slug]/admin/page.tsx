@@ -4,7 +4,7 @@ import { MetricCard } from "@/components/community/metric-card";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getViewerContext } from "@/lib/auth";
-import { getAnalyticsSnapshot, listIntroRequestsForOrg, listPostsForOrg } from "@/server/store";
+import { getAdminOverviewData } from "@/server/store";
 
 export default async function AdminOverviewPage({
   params,
@@ -22,15 +22,14 @@ export default async function AdminOverviewPage({
     return null;
   }
 
-  const analytics = await getAnalyticsSnapshot(viewer.org.id);
-  const recentPosts = (await listPostsForOrg(viewer.org.id)).slice(0, 4);
-  const recentRequests = (await listIntroRequestsForOrg(viewer.org.id)).slice(0, 4);
+  const { analytics, recentPosts, recentRequests } = await getAdminOverviewData(viewer.org.id);
 
   return (
     <AppShell currentPath={`/org/${slug}/admin`} viewer={viewer}>
       <div className="space-y-8">
         <SectionHeading
           eyebrow="Admin"
+          level={1}
           title="Community command center"
           description="See approvals, content health, intro flow, and activation without breaking the product’s privacy model."
         />
@@ -50,10 +49,13 @@ export default async function AdminOverviewPage({
             }))}
           />
           <Card className="space-y-4">
-            <h3 className="text-2xl font-semibold text-slate-950">Recent intro flow</h3>
+            <h3 className="text-xl font-semibold text-slate-950">Recent intro flow</h3>
             <div className="space-y-3">
               {recentRequests.map((request) => (
-                <div className="rounded-[24px] bg-slate-50 p-4" key={request.id}>
+                <div
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+                  key={request.id}
+                >
                   <p className="font-semibold text-slate-900">{request.introPurpose}</p>
                   <p className="mt-1 text-sm text-slate-600">{request.status}</p>
                 </div>
@@ -63,10 +65,13 @@ export default async function AdminOverviewPage({
         </div>
 
         <Card className="space-y-4">
-          <h3 className="text-2xl font-semibold text-slate-950">Recent posts</h3>
+          <h3 className="text-xl font-semibold text-slate-950">Recent posts</h3>
           <div className="grid gap-4 md:grid-cols-2">
             {recentPosts.map((post) => (
-              <div className="rounded-[24px] bg-slate-50 p-4" key={post.id}>
+              <div
+                className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+                key={post.id}
+              >
                 <p className="font-semibold text-slate-900">{post.title}</p>
                 <p className="mt-2 text-sm text-slate-600">{post.type.replaceAll("_", " ")}</p>
               </div>

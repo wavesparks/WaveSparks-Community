@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Select } from "@/components/ui/select";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
 import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
@@ -62,6 +63,7 @@ export default async function ComposePage({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <SectionHeading
             eyebrow={opportunityMode ? "Create opportunity" : "Create post"}
+            level={1}
             title={
               opportunityMode
                 ? "Publish an opportunity with the right source layer"
@@ -160,10 +162,13 @@ export default async function ComposePage({
                 />
               </div>
             </div>
-            <Button className="w-full" type="submit">
+            <SubmitButton
+              className="w-full"
+              pendingLabel={opportunityMode ? "Publishing opportunity" : "Publishing post"}
+            >
               <Send className="size-4" />
               {opportunityMode ? "Publish opportunity" : "Publish post"}
-            </Button>
+            </SubmitButton>
           </form>
         </Card>
       </div>

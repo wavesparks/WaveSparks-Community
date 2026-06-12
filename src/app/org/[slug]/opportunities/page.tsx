@@ -6,8 +6,9 @@ import { FilterBar } from "@/components/community/filter-bar";
 import { PostCard } from "@/components/community/post-card";
 import { Button } from "@/components/ui/button";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
-import { parseFeedFilters, singleQueryValue } from "@/lib/feed-filters";
+import { parseFeedFilters, pathWithQuery, singleQueryValue } from "@/lib/feed-filters";
 import { cn } from "@/lib/utils";
 import type { FeedFilters } from "@/server/view-models";
 import { getFeedViewsForOrg } from "@/server/view-models";
@@ -38,8 +39,11 @@ export default async function OpportunitiesPage({
   });
   const allPosts = await getFeedViewsForOrg(viewer.org, {
     viewerMembershipId: viewer.membership.id,
+    viewerProfileId: viewer.profile?.id,
     filters,
+    includeMatchedRecommendationSignals: false,
     onlyOpportunities: true,
+    limit: 60,
   });
   const posts = allPosts;
   const layers = [
@@ -55,6 +59,7 @@ export default async function OpportunitiesPage({
     source && source !== "all"
       ? layers.filter((layer) => layer.source === source)
       : layers;
+  const returnPath = pathWithQuery(`/org/${slug}/opportunities`, query);
   const hrefForSource = (nextSource: "all" | "member" | "mentor" | "official") => {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
@@ -80,6 +85,7 @@ export default async function OpportunitiesPage({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <SectionHeading
             eyebrow="Opportunities"
+            level={1}
             title="Official events, open asks, and mentor needs"
             description="Official recommendations are the default surface. Members can still switch layers or filter into specific asks."
           />
@@ -90,14 +96,15 @@ export default async function OpportunitiesPage({
             </Link>
           </Button>
         </div>
+        <StatusBanner status={singleQueryValue(query.status)} />
         <div className="flex flex-wrap gap-2">
           {layerLinks.map((layer) => (
             <Link
               className={cn(
-                "rounded-full px-4 py-2 text-sm font-semibold ring-1 ring-slate-200",
+                "rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-slate-200 transition",
                 source === layer.source || (!source && layer.source === "official")
                   ? "bg-[var(--accent)] text-white ring-transparent"
-                  : "bg-white/80 text-slate-700",
+                  : "bg-white text-slate-700 hover:bg-slate-50",
               )}
               href={hrefForSource(layer.source)}
               key={layer.source}
@@ -125,13 +132,14 @@ export default async function OpportunitiesPage({
                       <PostCard
                         key={post.id}
                         post={post}
+                        returnPath={returnPath}
                         slug={slug}
                         viewerMembershipId={viewer.membership.id}
                       />
                     ))}
                   </div>
                 ) : (
-                  <p className="rounded-[24px] bg-white/70 p-4 text-sm text-slate-600">
+                  <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
                     No opportunities match these filters.
                   </p>
                 )}

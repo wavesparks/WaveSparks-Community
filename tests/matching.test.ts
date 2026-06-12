@@ -21,6 +21,23 @@ describe("matching engine", () => {
     expect(matches.some((match) => match.targetProfileId === "pro_nora")).toBe(false);
   });
 
+  it("can scope recomputation to one profile", () => {
+    const scopedMatches = recomputeMatchesForProfiles(
+      seedOrganization,
+      seedMemberships,
+      seedProfiles,
+      { profileIds: ["pro_jules"], limit: null },
+    );
+
+    expect(scopedMatches.length).toBeGreaterThan(0);
+    expect(
+      scopedMatches.every(
+        (match) =>
+          match.sourceProfileId === "pro_jules" || match.targetProfileId === "pro_jules",
+      ),
+    ).toBe(true);
+  });
+
   it("produces weighted breakdowns for cofounder matching", () => {
     const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
     const target = seedProfiles.find((profile) => profile.id === "pro_rhea")!;

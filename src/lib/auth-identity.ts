@@ -1,0 +1,123 @@
+import { auth, clerkClient } from "@clerk/nextjs/server";
+import { getServerSession } from "next-auth";
+
+import { authOptions } from "@/lib/auth-options";
+import { env, isClerkConfigured } from "@/lib/env";
+
+type ClerkAuth = Awaited<ReturnType<typeof auth>>;
+type ClerkSessionClaims = NonNullable<ClerkAuth["sessionClaims"]>;
+type ClerkClient = Awaited<ReturnType<typeof clerkClient>>;
+type ClerkUser = Awaited<ReturnType<ClerkClient["users"]["getUser"]>>;
+
+export interface AuthIdentity {
+  email: string;
+  name: string;
+  imageUrl?: string;
+  provider: "clerk" | "demo";
+}
+
+function nameForClerkUser(user: NonNullable<ClerkUser>, email: string) {
+  const composedName = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  return user.fullName || composedName || user.username || email;
+}
+
+function identityFromClerkUser(user: ClerkUser): AuthIdentity | null {
+  const email =
+    user?.primaryEmailAddress?.emailAddress ??
+    user?.emailAddresses.at(0)?.emailAddress;
+
+  if (!user || !email) {
+    return null;
+  }
+
+  return {
+    email,
+    name: nameForClerkUser(user, email),
+    imageUrl: user.imageUrl,
+    provider: "clerk",
+  };
+}
+
+function stringClaim(
+  claims: ClerkSessionClaims,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = claims[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function identityFromClerkClaims(
+  claims: ClerkSessionClaims | null | undefined,
+): AuthIdentity | null {
+  if (!claims) {
+    return null;
+  }
+
+  const email = stringClaim(claims, [
+    "email",
+    "email_address",
+    "primary_email_address",
+  ]);
+
+  if (!email) {
+    return null;
+  }
+
+  const firstName = stringClaim(claims, ["first_name", "given_name"]);
+  const lastName = stringClaim(claims, ["last_name", "family_name"]);
+  const composedName = [firstName, lastName].filter(Boolean).join(" ");
+  const name =
+    stringClaim(claims, ["name", "full_name", "preferred_username", "username"]) ??
+    (composedName || email);
+
+  return {
+    email,
+    name,
+    imageUrl: stringClaim(claims, ["picture", "image_url", "imageUrl"]),
+    provider: "clerk",
+  };
+}
+
+export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
+  if (isClerkConfigured()) {
+    const clerkAuth = await auth();
+
+    if (!clerkAuth.userId) {
+      return null;
+    }
+
+    const claimsIdentity = identityFromClerkClaims(clerkAuth.sessionClaims);
+
+    if (claimsIdentity) {
+      return claimsIdentity;
+    }
+
+    const client = await clerkClient();
+    return identityFromClerkUser(await client.users.getUser(clerkAuth.userId));
+  }
+
+  if (!env.authDevDemoEnabled) {
+    return null;
+  }
+
+  const session = await getServerSession(authOptions);
+  const email = session?.user?.email;
+
+  if (!email) {
+    return null;
+  }
+
+  return {
+    email,
+    name: session.user.name ?? email,
+    imageUrl: session.user.image ?? undefined,
+    provider: "demo",
+  };
+}

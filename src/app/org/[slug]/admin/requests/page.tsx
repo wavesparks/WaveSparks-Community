@@ -5,16 +5,64 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { StatusBanner } from "@/components/ui/status-banner";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
 import { getViewerContext } from "@/lib/auth";
-import { getUserById, listIntroRequestsForOrg, listMembershipsForOrg } from "@/server/store";
+import { singleQueryValue } from "@/lib/feed-filters";
+import type { IntroSourceType, IntroStatus } from "@/lib/domain";
+import { getAdminIntroRequestDashboard } from "@/server/view-models";
+import Link from "next/link";
+
+const introRequestQueues = [
+  { label: "All", status: undefined, sourceType: undefined },
+  { label: "Pending", status: "pending", sourceType: undefined },
+  { label: "Accepted", status: "accepted", sourceType: undefined },
+  { label: "Manual", status: undefined, sourceType: "admin_manual" },
+  { label: "From matches", status: undefined, sourceType: "match" },
+] satisfies Array<{
+  label: string;
+  status?: IntroStatus;
+  sourceType?: IntroSourceType;
+}>;
+
+function introStatusFromQuery(value?: string) {
+  return value === "pending" ||
+    value === "accepted" ||
+    value === "declined" ||
+    value === "expired"
+    ? value
+    : undefined;
+}
+
+function introSourceTypeFromQuery(value?: string) {
+  return value === "match" || value === "post" || value === "admin_manual"
+    ? value
+    : undefined;
+}
+
+function introQueueHref(slug: string, queue: (typeof introRequestQueues)[number]) {
+  const params = new URLSearchParams();
+  if (queue.status) {
+    params.set("request_status", queue.status);
+  }
+  if (queue.sourceType) {
+    params.set("source_type", queue.sourceType);
+  }
+
+  const query = params.toString();
+  return `/org/${slug}/admin/requests${query ? `?${query}` : ""}`;
+}
 
 export default async function AdminRequestsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { slug } = await params;
+  const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
     requireApproved: true,
@@ -25,17 +73,14 @@ export default async function AdminRequestsPage({
     return null;
   }
 
-  const requests = await listIntroRequestsForOrg(viewer.org.id);
-  const members = (await listMembershipsForOrg(viewer.org.id)).filter(
-    (membership) => membership.status === "approved",
-  );
-  const userById = new Map(
-    await Promise.all(
-      members.map(async (membership) => [
-        membership.userId,
-        await getUserById(membership.userId),
-      ] as const),
-    ),
+  const selectedRequestStatus = introStatusFromQuery(singleQueryValue(query.request_status));
+  const selectedSourceType = introSourceTypeFromQuery(singleQueryValue(query.source_type));
+  const { manualIntroCandidates, requests } = await getAdminIntroRequestDashboard(
+    viewer.org.id,
+    {
+      requestStatus: selectedRequestStatus,
+      sourceType: selectedSourceType,
+    },
   );
 
   return (
@@ -43,9 +88,11 @@ export default async function AdminRequestsPage({
       <div className="space-y-8">
         <SectionHeading
           eyebrow="Admin - Requests"
+          level={1}
           title="Watch intro flow and create manual intros"
           description="Manual intros let admins catalyze obvious fits without opening the member graph to everyone."
         />
+        <StatusBanner status={singleQueryValue(query.status)} />
 
         <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
           <Card className="space-y-4">
@@ -54,12 +101,11 @@ export default async function AdminRequestsPage({
               action={createManualIntroAction.bind(null, slug, viewer.membership.id)}
               className="space-y-4"
             >
-              <select className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm" name="receiver_membership_id">
-                {members.map((membership) => {
-                  const user = userById.get(membership.userId);
+              <select className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950" name="receiver_membership_id">
+                {manualIntroCandidates.map((candidate) => {
                   return (
-                    <option key={membership.id} value={membership.id}>
-                      {user?.name ?? membership.id}
+                    <option key={candidate.membershipId} value={candidate.membershipId}>
+                      {candidate.name}
                     </option>
                   );
                 })}
@@ -70,20 +116,33 @@ export default async function AdminRequestsPage({
                 placeholder="Why are you making this intro?"
                 defaultValue="Admin-curated intro based on a strong fit and helpful overlap."
               />
-              <Button className="w-full" type="submit">
+              <SubmitButton className="w-full" pendingLabel="Sending intro">
                 Send manual intro
-              </Button>
+              </SubmitButton>
             </form>
           </Card>
 
           <div className="space-y-4">
+            <SectionHeading eyebrow="Latest" title="Intro requests" />
+            <div className="flex flex-wrap gap-2">
+              {introRequestQueues.map((queue) => {
+                const active =
+                  queue.status === selectedRequestStatus &&
+                  queue.sourceType === selectedSourceType;
+
+                return (
+                  <Button
+                    asChild
+                    key={queue.label}
+                    size="sm"
+                    variant={active ? "primary" : "secondary"}
+                  >
+                    <Link href={introQueueHref(slug, queue)}>{queue.label}</Link>
+                  </Button>
+                );
+              })}
+            </div>
             {requests.map((request) => {
-              const requester = members.find(
-                (membership) => membership.id === request.requesterMembershipId,
-              );
-              const receiver = members.find(
-                (membership) => membership.id === request.receiverMembershipId,
-              );
               return (
                 <Card className="space-y-3" key={request.id}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -93,13 +152,20 @@ export default async function AdminRequestsPage({
                     </Badge>
                   </div>
                   <p className="text-sm text-slate-600">
-                    {userById.get(requester?.userId ?? "")?.name ?? "Unknown"} to{" "}
-                    {userById.get(receiver?.userId ?? "")?.name ?? "Unknown"}
+                    {request.requesterName} to {request.receiverName}
                   </p>
                   <p className="text-sm text-slate-700">{request.note}</p>
                 </Card>
               );
             })}
+            {!requests.length ? (
+              <Card>
+                <p className="text-sm font-semibold text-slate-950">No requests in this queue</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Try another request status or source type.
+                </p>
+              </Card>
+            ) : null}
           </div>
         </div>
       </div>

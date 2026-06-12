@@ -2,17 +2,43 @@
 
 import { LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { getCsrfToken } from "next-auth/react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+function subscribeToHydration() {
+  return () => {};
+}
+
+function getClientSnapshot() {
+  return true;
+}
+
+function getServerSnapshot() {
+  return false;
+}
+
 export function PasswordSignInForm({ slug }: { slug: string }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const csrfTokenRef = useRef<string | null>(null);
+  const csrfTokenPromiseRef = useRef<Promise<string | undefined> | null>(null);
+  const ready = useSyncExternalStore(
+    subscribeToHydration,
+    getClientSnapshot,
+    getServerSnapshot,
+  );
+
+  useEffect(() => {
+    csrfTokenPromiseRef.current = getCsrfToken().then((token) => {
+      csrfTokenRef.current = token ?? null;
+      return token;
+    });
+  }, []);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -20,26 +46,41 @@ export function PasswordSignInForm({ slug }: { slug: string }) {
     setPending(true);
 
     const formData = new FormData(event.currentTarget);
-    const result = await signIn("password", {
-      email: String(formData.get("email") ?? ""),
-      password: String(formData.get("password") ?? ""),
-      callbackUrl: `/org/${slug}/admin/members`,
-      redirect: false,
+    const callbackUrl = `/org/${slug}`;
+    const csrfToken =
+      csrfTokenRef.current ??
+      (await (csrfTokenPromiseRef.current ?? getCsrfToken()));
+
+    const response = await fetch("/api/auth/callback/password", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        email: String(formData.get("email") ?? ""),
+        password: String(formData.get("password") ?? ""),
+        csrfToken: csrfToken ?? "",
+        callbackUrl,
+        json: "true",
+      }),
     });
 
     setPending(false);
 
-    if (!result || result.error) {
+    const result = (await response.json()) as { url?: string | null };
+    const resultUrl = result.url ? new URL(result.url, window.location.origin) : null;
+
+    if (!response.ok || resultUrl?.searchParams.has("error")) {
       setError("Invalid email or password.");
       return;
     }
 
-    router.push(result.url ?? `/org/${slug}/admin/members`);
+    router.push(resultUrl ? `${resultUrl.pathname}${resultUrl.search}` : callbackUrl);
     router.refresh();
   }
 
   return (
-    <form className="space-y-4" onSubmit={onSubmit}>
+    <form className="space-y-4" method="post" onSubmit={onSubmit}>
       <div>
         <Label htmlFor="email">Email</Label>
         <Input
@@ -62,7 +103,7 @@ export function PasswordSignInForm({ slug }: { slug: string }) {
         />
       </div>
       {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
-      <Button className="w-full" disabled={pending} type="submit">
+      <Button className="w-full" disabled={pending || !ready} type="submit">
         {pending ? <LoaderCircle className="size-4 animate-spin" /> : null}
         Sign in
       </Button>

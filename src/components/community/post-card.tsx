@@ -8,6 +8,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { SubmitButton } from "@/components/ui/submit-button";
 import type { FeedPostView } from "@/lib/domain";
 import { formatDate } from "@/lib/utils";
 
@@ -19,10 +20,12 @@ const opportunitySourceLabels = {
 
 export function PostCard({
   post,
+  returnPath,
   slug,
   viewerMembershipId,
 }: {
   post: FeedPostView;
+  returnPath?: string;
   slug: string;
   viewerMembershipId?: string;
 }) {
@@ -32,9 +35,11 @@ export function PostCard({
     : followMembershipAction.bind(null, slug, viewerMembershipId ?? "", post.author.membershipId);
 
   return (
-    <Card className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <Badge variant={post.featured ? "accent" : "default"}>{post.type.replaceAll("_", " ")}</Badge>
+    <Card className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={post.featured ? "accent" : "default"}>
+          {post.type.replaceAll("_", " ")}
+        </Badge>
         {post.opportunitySource ? (
           <Badge variant="muted">{opportunitySourceLabels[post.opportunitySource]}</Badge>
         ) : null}
@@ -43,13 +48,13 @@ export function PostCard({
             {reason}
           </Badge>
         ))}
-        <span className="text-xs uppercase tracking-[0.25em] text-slate-400">
+        <span className="ml-auto text-xs font-medium text-slate-500">
           {formatDate(post.createdAt)}
         </span>
       </div>
-      <div className="space-y-3">
-        <h3 className="text-2xl font-semibold text-slate-950">{post.title}</h3>
-        <p className="text-sm text-slate-600">{post.body}</p>
+      <div className="space-y-2">
+        <h3 className="text-xl font-semibold leading-tight text-slate-950">{post.title}</h3>
+        <p className="text-sm leading-6 text-slate-600">{post.body}</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {post.tags.map((tag, index) => (
@@ -63,24 +68,29 @@ export function PostCard({
           </Badge>
         ))}
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] bg-slate-50 px-4 py-3">
+      <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <Avatar name={post.author.displayName} src={post.author.photo} />
-          <div className="space-y-1">
+          <div className="min-w-0 space-y-0.5">
             <p className="text-sm font-semibold text-slate-900">{post.author.displayName}</p>
-            <p className="text-sm text-slate-600">{post.author.headline}</p>
+            <p className="line-clamp-1 text-sm text-slate-600">{post.author.headline}</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <span className="text-sm text-slate-500">{post.commentCount} comments</span>
           {canFollow ? (
             <form action={followAction}>
-              <Button size="sm" type="submit" variant={post.isFollowingAuthor ? "secondary" : "primary"}>
+              {returnPath ? <input name="return_to" type="hidden" value={returnPath} /> : null}
+              <SubmitButton
+                pendingLabel={post.isFollowingAuthor ? "Unfollowing" : "Following"}
+                size="sm"
+                variant={post.isFollowingAuthor ? "secondary" : "primary"}
+              >
                 {post.isFollowingAuthor ? "Following" : "Follow"}
-              </Button>
+              </SubmitButton>
             </form>
           ) : null}
-          <Button asChild size="sm">
+          <Button asChild size="sm" variant="secondary">
             <Link href={`/org/${slug}/posts/${post.id}`}>Open thread</Link>
           </Button>
         </div>

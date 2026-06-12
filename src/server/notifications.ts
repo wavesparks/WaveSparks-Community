@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { Resend } from "resend";
 
 import { env } from "@/lib/env";
@@ -33,6 +34,20 @@ export async function sendNotificationEmail(input: {
     to: input.to,
     subject: input.subject,
     html: input.html,
+  });
+}
+
+export function enqueueNotificationEmail(input: {
+  to: string;
+  subject: string;
+  html: string;
+}) {
+  after(async () => {
+    try {
+      await sendNotificationEmail(input);
+    } catch (error) {
+      console.error("[wavesparks] email failed", input.subject, input.to, error);
+    }
   });
 }
 

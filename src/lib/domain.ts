@@ -337,6 +337,24 @@ export interface NotificationView {
   readAt?: string;
 }
 
+export type ActivationChecklistItemId = "profile" | "post" | "matches" | "intro";
+
+export interface ActivationChecklistItem {
+  id: ActivationChecklistItemId;
+  label: string;
+  description: string;
+  complete: boolean;
+  href: string;
+  cta: string;
+}
+
+export interface MemberActivationState {
+  items: ActivationChecklistItem[];
+  completedCount: number;
+  totalCount: number;
+  isComplete: boolean;
+}
+
 export interface OrgAnalyticsSnapshot {
   approvedMembers: number;
   completedProfiles: number;

@@ -19,6 +19,7 @@ export default async function DemoPage({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <SectionHeading
             eyebrow="Demo mode"
+            level={1}
             title="Use seeded preview personas"
             description="Demo access is available only when the demo credentials provider is enabled in the environment."
           />

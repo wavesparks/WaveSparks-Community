@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 import { env } from "@/lib/env";
-import { getDb, getSqlClient } from "@/db/client";
+import { getMigrationDb, getSqlClient } from "@/db/client";
 
 async function main() {
   if (!env.databaseUrl) {
@@ -10,7 +10,7 @@ async function main() {
     return;
   }
 
-  const db = getDb();
+  const db = getMigrationDb();
   await db.execute(sql`create extension if not exists vector;`);
   await migrate(db, { migrationsFolder: "drizzle" });
   await getSqlClient().end();

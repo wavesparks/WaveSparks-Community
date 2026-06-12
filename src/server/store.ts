@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { getDb } from "@/db/client";
 import * as dbSchema from "@/db/schema";
@@ -17,20 +18,29 @@ import {
   seedUsers,
 } from "@/data/seed-data";
 import { env, getBootstrapAdminPassword, isBootstrapAdminEmail } from "@/lib/env";
-import { buildOrgAnalyticsSnapshot } from "@/server/analytics";
+import {
+  buildDailySeriesFromCounts,
+  buildOrgAnalyticsSnapshot,
+  dailySeriesStartDate,
+} from "@/server/analytics";
 import { recomputeMatchesForProfiles } from "@/server/matching";
 import type {
   AnalyticsEvent,
   Comment,
   Follow,
   IntroRequest,
+  IntroStatus,
   MatchRecord,
+  MatchType,
   Membership,
   MembershipRole,
   MembershipStatus,
   Notification,
+  OpportunitySource,
+  OrgAnalyticsSnapshot,
   Organization,
   Post,
+  PostType,
   Profile,
   ProfileLink,
   User,
@@ -60,6 +70,116 @@ export interface StoreState {
   introRequests: IntroRequest[];
   notifications: Notification[];
   analyticsEvents: AnalyticsEvent[];
+}
+
+export interface AdminOverviewData {
+  analytics: OrgAnalyticsSnapshot;
+  recentPosts: Post[];
+  recentRequests: IntroRequest[];
+}
+
+export interface PublicOrgStats {
+  approvedMembers: number;
+  introRequestsAccepted: number;
+}
+
+export interface MembershipRecord {
+  membership: Membership;
+  user?: User;
+  profile?: Profile;
+}
+
+export interface ProfileRecord {
+  profile: Profile;
+  membership?: Membership;
+  user?: User;
+}
+
+export interface CommentRecord {
+  comment: Comment;
+  post?: Post;
+}
+
+export interface PostThreadCommentRecord {
+  comment: Comment;
+  membership?: Membership;
+  profile?: Profile;
+}
+
+export interface PostThreadRecord {
+  post: Post;
+  author?: MembershipRecord;
+  comments: PostThreadCommentRecord[];
+}
+
+export interface MemberActivationSignals {
+  hasPost: boolean;
+  hasFollow: boolean;
+  hasVisibleMatch: boolean;
+  hasRequestedIntro: boolean;
+}
+
+export interface MatchProfileRecord {
+  match: MatchRecord;
+  sourceProfile?: Profile;
+  targetProfile?: Profile;
+}
+
+export interface MatchTargetRecord {
+  match: MatchRecord;
+  targetMembership?: Membership;
+  targetProfile?: Profile;
+  following: boolean;
+}
+
+interface TimeOrderedListOptions {
+  limit?: number;
+  orderBy?: "created_desc" | "none";
+}
+
+interface MembershipRecordListOptions extends TimeOrderedListOptions {
+  status?: MembershipStatus;
+  statuses?: MembershipStatus[];
+}
+
+interface MembershipProfileRecordListOptions extends TimeOrderedListOptions {
+  status?: MembershipStatus;
+  statuses?: MembershipStatus[];
+  profileRequired?: boolean;
+  featured?: boolean;
+  stale?: boolean;
+}
+
+type IntroRequestDirection = "incoming" | "outgoing";
+
+interface IntroRequestListOptions extends TimeOrderedListOptions {
+  direction?: IntroRequestDirection;
+  status?: IntroStatus;
+}
+
+interface OrgIntroRequestListOptions extends TimeOrderedListOptions {
+  status?: IntroStatus;
+  sourceType?: IntroRequest["sourceType"];
+}
+
+interface MatchProfileRecordListOptions {
+  limit?: number;
+  matchType?: MatchType;
+  scoreBand?: MatchRecord["scoreBand"];
+}
+
+interface PostListOptions extends TimeOrderedListOptions {
+  hidden?: boolean;
+  types?: PostType[];
+  opportunitySources?: OpportunitySource[];
+}
+
+interface VisibleCommentCountOptions {
+  postIds?: string[];
+}
+
+function positiveIntegerLimit(value?: number) {
+  return value && value > 0 ? Math.floor(value) : undefined;
 }
 
 declare global {
@@ -355,17 +475,6 @@ function notificationFromRow(row: typeof dbSchema.notifications.$inferSelect): N
   };
 }
 
-function analyticsEventFromRow(row: typeof dbSchema.analyticsEvents.$inferSelect): AnalyticsEvent {
-  return {
-    id: row.id,
-    orgId: row.orgId,
-    membershipId: row.membershipId ?? undefined,
-    eventName: row.eventName,
-    payload: row.payloadJson,
-    createdAt: requiredIso(row.createdAt),
-  };
-}
-
 function userInsert(user: User): typeof dbSchema.users.$inferInsert {
   return {
     ...user,
@@ -470,6 +579,101 @@ export async function getOrganizationBySlug(slug: string) {
     .where(eq(dbSchema.organizations.slug, slug))
     .limit(1);
   return row ? organizationFromRow(row) : undefined;
+}
+
+export async function getViewerRecordByEmailAndSlug(slug: string, email: string) {
+  const normalizedEmail = normalizeEmailAddress(email);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const org = store.organizations.find((organization) => organization.slug === slug);
+    const user = store.users.find((candidate) => candidate.email.toLowerCase() === normalizedEmail);
+    const membership =
+      org && user
+        ? store.memberships.find(
+            (candidate) => candidate.orgId === org.id && candidate.userId === user.id,
+          )
+        : undefined;
+    const profile = membership
+      ? store.profiles.find((candidate) => candidate.membershipId === membership.id)
+      : undefined;
+
+    return { org, user, membership, profile };
+  }
+
+  const [row] = await getDb()
+    .select({
+      org: dbSchema.organizations,
+      user: dbSchema.users,
+      membership: dbSchema.memberships,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.organizations)
+    .leftJoin(dbSchema.users, sql`lower(${dbSchema.users.email}) = ${normalizedEmail}`)
+    .leftJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.orgId, dbSchema.organizations.id),
+        eq(dbSchema.memberships.userId, dbSchema.users.id),
+      ),
+    )
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(eq(dbSchema.organizations.slug, slug))
+    .limit(1);
+
+  return row
+    ? {
+        org: organizationFromRow(row.org),
+        user: row.user ? userFromRow(row.user) : undefined,
+        membership: row.membership ? membershipFromRow(row.membership) : undefined,
+        profile: row.profile ? profileFromRow(row.profile) : undefined,
+      }
+    : { org: undefined, user: undefined, membership: undefined, profile: undefined };
+}
+
+export async function getViewerRecordByEmailAndOrgId(orgId: string, email: string) {
+  const normalizedEmail = normalizeEmailAddress(email);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const user = store.users.find((candidate) => candidate.email.toLowerCase() === normalizedEmail);
+    const membership = user
+      ? store.memberships.find(
+          (candidate) => candidate.orgId === orgId && candidate.userId === user.id,
+        )
+      : undefined;
+    const profile = membership
+      ? store.profiles.find((candidate) => candidate.membershipId === membership.id)
+      : undefined;
+
+    return { user, membership, profile };
+  }
+
+  const [row] = await getDb()
+    .select({
+      user: dbSchema.users,
+      membership: dbSchema.memberships,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.users)
+    .leftJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.orgId, orgId),
+        eq(dbSchema.memberships.userId, dbSchema.users.id),
+      ),
+    )
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(sql`lower(${dbSchema.users.email}) = ${normalizedEmail}`)
+    .limit(1);
+
+  return row
+    ? {
+        user: userFromRow(row.user),
+        membership: row.membership ? membershipFromRow(row.membership) : undefined,
+        profile: row.profile ? profileFromRow(row.profile) : undefined,
+      }
+    : { user: undefined, membership: undefined, profile: undefined };
 }
 
 export async function getUserByEmail(email: string) {
@@ -752,10 +956,25 @@ export async function upsertSessionUser(input: { email: string; name: string; im
   return userFromRow(row);
 }
 
-export async function ensureMembership(userId: string, orgId: string) {
-  const user = await getUserById(userId);
+export async function ensureMembership(
+  userId: string,
+  orgId: string,
+  options: { existingUser?: User; existingMembership?: Membership } = {},
+) {
+  const existingMembership =
+    options.existingMembership?.userId === userId &&
+    options.existingMembership.orgId === orgId
+      ? options.existingMembership
+      : undefined;
+  const [user, existing] = await Promise.all([
+    options.existingUser?.id === userId
+      ? Promise.resolve(options.existingUser)
+      : getUserById(userId),
+    existingMembership
+      ? Promise.resolve(existingMembership)
+      : getMembershipByUserAndOrg(userId, orgId),
+  ]);
   const adminBootstrap = isBootstrapAdminEmail(user?.email) || user?.platformRole === "platform_owner";
-  const existing = await getMembershipByUserAndOrg(userId, orgId);
   if (existing) {
     if (
       adminBootstrap &&
@@ -854,24 +1073,28 @@ export async function createManagedAccount(input: {
   orgId: string;
   email: string;
   name: string;
-  password: string;
+  password?: string;
+  createPasswordCredential?: boolean;
   role: MembershipRole;
   status: MembershipStatus;
 }) {
   const email = normalizeEmailAddress(input.email);
   const name = input.name.trim() || displayNameForEmail(email);
-  const password = input.password.trim();
+  const password = input.password?.trim() ?? "";
+  const createPasswordCredential = input.createPasswordCredential ?? true;
 
   if (!email.includes("@")) {
     throw new Error("A valid email is required.");
   }
 
-  if (password.length < 8) {
+  if (createPasswordCredential && password.length < 8) {
     throw new Error("Password must be at least 8 characters.");
   }
 
   const user = await upsertSessionUser({ email, name });
-  await setPasswordCredential(user.id, email, password);
+  if (createPasswordCredential) {
+    await setPasswordCredential(user.id, email, password);
+  }
 
   const existing = await getMembershipByUserAndOrg(user.id, input.orgId);
   const now = new Date().toISOString();
@@ -987,6 +1210,195 @@ export async function getProfileById(profileId: string) {
   return row ? profileFromRow(row) : undefined;
 }
 
+export async function getMembershipRecordById(
+  membershipId: string,
+): Promise<MembershipRecord | undefined> {
+  if (!usesDatabase) {
+    const store = getStore();
+    const membership = store.memberships.find((candidate) => candidate.id === membershipId);
+    if (!membership) {
+      return undefined;
+    }
+
+    return {
+      membership,
+      user: store.users.find((user) => user.id === membership.userId),
+      profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+    };
+  }
+
+  const [row] = await getDb()
+    .select({
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(eq(dbSchema.memberships.id, membershipId))
+    .limit(1);
+
+  return row
+    ? {
+        membership: membershipFromRow(row.membership),
+        user: row.user ? userFromRow(row.user) : undefined,
+        profile: row.profile ? profileFromRow(row.profile) : undefined,
+      }
+    : undefined;
+}
+
+export async function getProfileRecordById(
+  profileId: string,
+): Promise<ProfileRecord | undefined> {
+  if (!usesDatabase) {
+    const store = getStore();
+    const profile = store.profiles.find((candidate) => candidate.id === profileId);
+    if (!profile) {
+      return undefined;
+    }
+
+    const membership = store.memberships.find(
+      (candidate) => candidate.id === profile.membershipId,
+    );
+    return {
+      profile,
+      membership,
+      user: membership
+        ? store.users.find((user) => user.id === membership.userId)
+        : undefined,
+    };
+  }
+
+  const [row] = await getDb()
+    .select({
+      profile: dbSchema.profiles,
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+    })
+    .from(dbSchema.profiles)
+    .leftJoin(dbSchema.memberships, eq(dbSchema.memberships.id, dbSchema.profiles.membershipId))
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .where(eq(dbSchema.profiles.id, profileId))
+    .limit(1);
+
+  return row
+    ? {
+        profile: profileFromRow(row.profile),
+        membership: row.membership ? membershipFromRow(row.membership) : undefined,
+        user: row.user ? userFromRow(row.user) : undefined,
+      }
+    : undefined;
+}
+
+export async function listProfileRecordsByIds(
+  profileIds: string[],
+  options: { orgId?: string } = {},
+): Promise<ProfileRecord[]> {
+  const uniqueIds = [...new Set(profileIds.filter(Boolean))];
+  if (!uniqueIds.length) {
+    return [];
+  }
+
+  if (!usesDatabase) {
+    const ids = new Set(uniqueIds);
+    const store = getStore();
+    return store.profiles
+      .filter((profile) => ids.has(profile.id))
+      .map((profile) => {
+        const membership = store.memberships.find(
+          (candidate) => candidate.id === profile.membershipId,
+        );
+        return {
+          profile,
+          membership,
+          user: membership
+            ? store.users.find((user) => user.id === membership.userId)
+            : undefined,
+        };
+      })
+      .filter(
+        (record) =>
+          !options.orgId || record.membership?.orgId === options.orgId,
+      );
+  }
+
+  const rows = await getDb()
+    .select({
+      profile: dbSchema.profiles,
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+    })
+    .from(dbSchema.profiles)
+    .leftJoin(dbSchema.memberships, eq(dbSchema.memberships.id, dbSchema.profiles.membershipId))
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .where(
+      options.orgId
+        ? and(
+            inArray(dbSchema.profiles.id, uniqueIds),
+            eq(dbSchema.memberships.orgId, options.orgId),
+          )
+        : inArray(dbSchema.profiles.id, uniqueIds),
+    );
+
+  return rows.map((row) => ({
+    profile: profileFromRow(row.profile),
+    membership: row.membership ? membershipFromRow(row.membership) : undefined,
+    user: row.user ? userFromRow(row.user) : undefined,
+  }));
+}
+
+export async function listProfileMembershipRecordsByIds(
+  profileIds: string[],
+  options: { orgId?: string } = {},
+): Promise<ProfileRecord[]> {
+  const uniqueIds = [...new Set(profileIds.filter(Boolean))];
+  if (!uniqueIds.length) {
+    return [];
+  }
+
+  if (!usesDatabase) {
+    const ids = new Set(uniqueIds);
+    const store = getStore();
+    return store.profiles
+      .filter((profile) => ids.has(profile.id))
+      .map((profile) => {
+        const membership = store.memberships.find(
+          (candidate) => candidate.id === profile.membershipId,
+        );
+        return {
+          profile,
+          membership,
+        };
+      })
+      .filter(
+        (record) =>
+          !options.orgId || record.membership?.orgId === options.orgId,
+      );
+  }
+
+  const rows = await getDb()
+    .select({
+      profile: dbSchema.profiles,
+      membership: dbSchema.memberships,
+    })
+    .from(dbSchema.profiles)
+    .leftJoin(dbSchema.memberships, eq(dbSchema.memberships.id, dbSchema.profiles.membershipId))
+    .where(
+      options.orgId
+        ? and(
+            inArray(dbSchema.profiles.id, uniqueIds),
+            eq(dbSchema.memberships.orgId, options.orgId),
+          )
+        : inArray(dbSchema.profiles.id, uniqueIds),
+    );
+
+  return rows.map((row) => ({
+    profile: profileFromRow(row.profile),
+    membership: row.membership ? membershipFromRow(row.membership) : undefined,
+  }));
+}
+
 export async function listProfileLinks(profileId: string) {
   if (!usesDatabase) {
     return getStore().profileLinks.filter((link) => link.profileId === profileId);
@@ -1011,59 +1423,751 @@ export async function listMembershipsForOrg(orgId: string) {
   return rows.map(membershipFromRow);
 }
 
-export async function listProfilesForOrg(orgId: string) {
-  const memberships = await listMembershipsForOrg(orgId);
-  const membershipIds = memberships.map((membership) => membership.id);
+export async function listMembershipRecordsForOrg(
+  orgId: string,
+  options: MembershipRecordListOptions = {},
+): Promise<MembershipRecord[]> {
+  const limit = positiveIntegerLimit(options.limit);
+  const statuses = [
+    ...new Set([
+      ...(options.status ? [options.status] : []),
+      ...(options.statuses ?? []),
+    ]),
+  ];
+  const statusSet = statuses.length ? new Set(statuses) : undefined;
 
   if (!usesDatabase) {
+    const store = getStore();
+    const records = store.memberships
+      .filter(
+        (membership) =>
+          membership.orgId === orgId &&
+          (!statusSet || statusSet.has(membership.status)),
+      )
+      .map((membership) => ({
+        membership,
+        user: store.users.find((user) => user.id === membership.userId),
+        profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+      }));
+    const ordered =
+      options.orderBy === "none"
+        ? records
+        : records.sort((left, right) =>
+            right.membership.createdAt.localeCompare(left.membership.createdAt),
+          );
+
+    return limit ? ordered.slice(0, limit) : ordered;
+  }
+
+  const query = getDb()
+    .select({
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(
+      and(
+        eq(dbSchema.memberships.orgId, orgId),
+        statuses.length === 1
+          ? eq(dbSchema.memberships.status, statuses[0])
+          : statuses.length > 1
+            ? inArray(dbSchema.memberships.status, statuses)
+            : undefined,
+      ),
+    );
+  const ordered =
+    options.orderBy === "none"
+      ? query
+      : query.orderBy(desc(dbSchema.memberships.createdAt));
+  const rows = await (limit ? ordered.limit(limit) : ordered);
+  return rows.map((row) => ({
+    membership: membershipFromRow(row.membership),
+    user: row.user ? userFromRow(row.user) : undefined,
+    profile: row.profile ? profileFromRow(row.profile) : undefined,
+  }));
+}
+
+export async function listMembershipProfileRecordsForOrg(
+  orgId: string,
+  options: MembershipProfileRecordListOptions = {},
+): Promise<MembershipRecord[]> {
+  const limit = positiveIntegerLimit(options.limit);
+  const statuses = [
+    ...new Set([
+      ...(options.status ? [options.status] : []),
+      ...(options.statuses ?? []),
+    ]),
+  ];
+  const statusSet = statuses.length ? new Set(statuses) : undefined;
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const records = store.memberships
+      .filter(
+        (membership) =>
+          membership.orgId === orgId &&
+          (!statusSet || statusSet.has(membership.status)),
+      )
+      .map((membership) => ({
+        membership,
+        profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+      }))
+      .filter(
+        (record) =>
+          (!options.profileRequired || record.profile) &&
+          (options.featured === undefined || record.profile?.featured === options.featured) &&
+          (options.stale === undefined || record.profile?.stale === options.stale),
+      );
+    const ordered =
+      options.orderBy === "none"
+        ? records
+        : records.sort((left, right) =>
+            right.membership.createdAt.localeCompare(left.membership.createdAt),
+          );
+
+    return limit ? ordered.slice(0, limit) : ordered;
+  }
+
+  const query = getDb()
+    .select({
+      membership: dbSchema.memberships,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(
+      and(
+        eq(dbSchema.memberships.orgId, orgId),
+        statuses.length === 1
+          ? eq(dbSchema.memberships.status, statuses[0])
+          : statuses.length > 1
+            ? inArray(dbSchema.memberships.status, statuses)
+            : undefined,
+        options.profileRequired ? sql`${dbSchema.profiles.id} is not null` : undefined,
+        options.featured === undefined
+          ? undefined
+          : eq(dbSchema.profiles.featured, options.featured),
+        options.stale === undefined ? undefined : eq(dbSchema.profiles.stale, options.stale),
+      ),
+    );
+  const ordered =
+    options.orderBy === "none"
+      ? query
+      : query.orderBy(desc(dbSchema.memberships.createdAt));
+  const rows = await (limit ? ordered.limit(limit) : ordered);
+
+  return rows.map((row) => ({
+    membership: membershipFromRow(row.membership),
+    profile: row.profile ? profileFromRow(row.profile) : undefined,
+  }));
+}
+
+export async function listMembershipUserRecordsForOrg(
+  orgId: string,
+  options: { status?: MembershipStatus; limit?: number } = {},
+): Promise<MembershipRecord[]> {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const records = store.memberships
+      .filter(
+        (membership) =>
+          membership.orgId === orgId &&
+          (options.status ? membership.status === options.status : true),
+      )
+      .map((membership) => ({
+        membership,
+        user: store.users.find((user) => user.id === membership.userId),
+      }));
+    const ordered = records.sort((left, right) =>
+      right.membership.createdAt.localeCompare(left.membership.createdAt),
+    );
+
+    return limit ? ordered.slice(0, limit) : ordered;
+  }
+
+  const query = getDb()
+    .select({
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+    })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .where(
+      options.status
+        ? and(
+            eq(dbSchema.memberships.orgId, orgId),
+            eq(dbSchema.memberships.status, options.status),
+          )
+        : eq(dbSchema.memberships.orgId, orgId),
+    )
+    .orderBy(desc(dbSchema.memberships.createdAt));
+  const rows = await (limit ? query.limit(limit) : query);
+
+  return rows.map((row) => ({
+    membership: membershipFromRow(row.membership),
+    user: row.user ? userFromRow(row.user) : undefined,
+  }));
+}
+
+export async function listMembershipRecordsByIds(
+  membershipIds: string[],
+  options: { orgId?: string } = {},
+): Promise<MembershipRecord[]> {
+  const uniqueIds = [...new Set(membershipIds.filter(Boolean))];
+  if (!uniqueIds.length) {
+    return [];
+  }
+
+  if (!usesDatabase) {
+    const ids = new Set(uniqueIds);
+    const store = getStore();
+    return store.memberships
+      .filter(
+        (membership) =>
+          ids.has(membership.id) &&
+          (options.orgId ? membership.orgId === options.orgId : true),
+      )
+      .map((membership) => ({
+        membership,
+        user: store.users.find((user) => user.id === membership.userId),
+        profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+      }));
+  }
+
+  const rows = await getDb()
+    .select({
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(
+      options.orgId
+        ? and(
+            inArray(dbSchema.memberships.id, uniqueIds),
+            eq(dbSchema.memberships.orgId, options.orgId),
+          )
+        : inArray(dbSchema.memberships.id, uniqueIds),
+    );
+
+  return rows.map((row) => ({
+    membership: membershipFromRow(row.membership),
+    user: row.user ? userFromRow(row.user) : undefined,
+    profile: row.profile ? profileFromRow(row.profile) : undefined,
+  }));
+}
+
+export async function listMembershipUserRecordsByIds(
+  membershipIds: string[],
+  options: { orgId?: string } = {},
+): Promise<MembershipRecord[]> {
+  const uniqueIds = [...new Set(membershipIds.filter(Boolean))];
+  if (!uniqueIds.length) {
+    return [];
+  }
+
+  if (!usesDatabase) {
+    const ids = new Set(uniqueIds);
+    const store = getStore();
+    return store.memberships
+      .filter(
+        (membership) =>
+          ids.has(membership.id) &&
+          (options.orgId ? membership.orgId === options.orgId : true),
+      )
+      .map((membership) => ({
+        membership,
+        user: store.users.find((user) => user.id === membership.userId),
+      }));
+  }
+
+  const rows = await getDb()
+    .select({
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+    })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .where(
+      options.orgId
+        ? and(
+            inArray(dbSchema.memberships.id, uniqueIds),
+            eq(dbSchema.memberships.orgId, options.orgId),
+          )
+        : inArray(dbSchema.memberships.id, uniqueIds),
+    );
+
+  return rows.map((row) => ({
+    membership: membershipFromRow(row.membership),
+    user: row.user ? userFromRow(row.user) : undefined,
+  }));
+}
+
+export async function listMembershipProfileRecordsByIds(
+  membershipIds: string[],
+  options: { orgId?: string } = {},
+): Promise<MembershipRecord[]> {
+  const uniqueIds = [...new Set(membershipIds.filter(Boolean))];
+  if (!uniqueIds.length) {
+    return [];
+  }
+
+  if (!usesDatabase) {
+    const ids = new Set(uniqueIds);
+    const store = getStore();
+    return store.memberships
+      .filter(
+        (membership) =>
+          ids.has(membership.id) &&
+          (options.orgId ? membership.orgId === options.orgId : true),
+      )
+      .map((membership) => ({
+        membership,
+        profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+      }));
+  }
+
+  const rows = await getDb()
+    .select({
+      membership: dbSchema.memberships,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(
+      options.orgId
+        ? and(
+            inArray(dbSchema.memberships.id, uniqueIds),
+            eq(dbSchema.memberships.orgId, options.orgId),
+          )
+        : inArray(dbSchema.memberships.id, uniqueIds),
+    );
+
+  return rows.map((row) => ({
+    membership: membershipFromRow(row.membership),
+    profile: row.profile ? profileFromRow(row.profile) : undefined,
+  }));
+}
+
+export async function listProfilesForOrg(orgId: string) {
+  if (!usesDatabase) {
+    const membershipIds = getStore()
+      .memberships.filter((membership) => membership.orgId === orgId)
+      .map((membership) => membership.id);
     const ids = new Set(membershipIds);
     return getStore().profiles.filter((profile) => ids.has(profile.membershipId));
   }
 
-  if (!membershipIds.length) {
-    return [];
-  }
-
   const rows = await getDb()
-    .select()
+    .select({ profile: dbSchema.profiles })
     .from(dbSchema.profiles)
-    .where(inArray(dbSchema.profiles.membershipId, membershipIds));
-  return rows.map(profileFromRow);
+    .innerJoin(dbSchema.memberships, eq(dbSchema.memberships.id, dbSchema.profiles.membershipId))
+    .where(eq(dbSchema.memberships.orgId, orgId));
+  return rows.map((row) => profileFromRow(row.profile));
 }
 
-export async function listPostsForOrg(orgId: string) {
+export async function listPostsForOrg(
+  orgId: string,
+  options: PostListOptions = {},
+) {
+  const limit = positiveIntegerLimit(options.limit);
+
   if (!usesDatabase) {
-    return getStore().posts
+    const types = options.types?.length ? new Set(options.types) : undefined;
+    const opportunitySources = options.opportunitySources?.length
+      ? new Set(options.opportunitySources)
+      : undefined;
+    const posts = getStore().posts
       .filter((post) => post.orgId === orgId)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      .filter((post) => options.hidden === undefined || post.hidden === options.hidden)
+      .filter((post) => !types || types.has(post.type))
+      .filter(
+        (post) =>
+          !opportunitySources ||
+          (post.opportunitySource && opportunitySources.has(post.opportunitySource)),
+      );
+    const ordered =
+      options.orderBy === "none"
+        ? posts
+        : posts.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+    return limit ? ordered.slice(0, limit) : ordered;
   }
 
-  const rows = await getDb()
+  const where = and(
+    eq(dbSchema.posts.orgId, orgId),
+    options.hidden === undefined ? undefined : eq(dbSchema.posts.hidden, options.hidden),
+    options.types?.length ? inArray(dbSchema.posts.type, options.types) : undefined,
+    options.opportunitySources?.length
+      ? inArray(dbSchema.posts.opportunitySource, options.opportunitySources)
+      : undefined,
+  );
+
+  if (options.orderBy === "none") {
+    const query = getDb().select().from(dbSchema.posts).where(where);
+    const rows = await (limit ? query.limit(limit) : query);
+    return rows.map(postFromRow);
+  }
+
+  const query = getDb()
     .select()
     .from(dbSchema.posts)
-    .where(eq(dbSchema.posts.orgId, orgId))
+    .where(where)
     .orderBy(desc(dbSchema.posts.createdAt));
+  const rows = await (limit ? query.limit(limit) : query);
+
   return rows.map(postFromRow);
 }
 
-export async function listAllCommentsForOrg(orgId: string) {
-  const posts = await listPostsForOrg(orgId);
-  const postIds = posts.map((post) => post.id);
-
+export async function hasPostForMembership(orgId: string, membershipId: string) {
   if (!usesDatabase) {
-    const ids = new Set(postIds);
-    return getStore().comments.filter((comment) => ids.has(comment.postId));
+    return getStore().posts.some(
+      (post) => post.orgId === orgId && post.authorMembershipId === membershipId,
+    );
   }
 
-  if (!postIds.length) {
-    return [];
+  const [row] = await getDb()
+    .select({ id: dbSchema.posts.id })
+    .from(dbSchema.posts)
+    .where(
+      and(
+        eq(dbSchema.posts.orgId, orgId),
+        eq(dbSchema.posts.authorMembershipId, membershipId),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+export async function getMemberActivationSignals(input: {
+  orgId: string;
+  membershipId: string;
+  profileId: string;
+}): Promise<MemberActivationSignals> {
+  if (!usesDatabase) {
+    const store = getStore();
+    return {
+      hasPost: store.posts.some(
+        (post) =>
+          post.orgId === input.orgId &&
+          post.authorMembershipId === input.membershipId,
+      ),
+      hasFollow: store.follows.some(
+        (follow) => follow.followerMembershipId === input.membershipId,
+      ),
+      hasVisibleMatch: store.matches.some(
+        (match) =>
+          match.sourceProfileId === input.profileId &&
+          !match.hiddenByAdmin &&
+          !match.dismissedBySource,
+      ),
+      hasRequestedIntro: store.introRequests.some(
+        (request) => request.requesterMembershipId === input.membershipId,
+      ),
+    };
+  }
+
+  const [row] = await getDb()
+    .select({
+      hasPost: sql<boolean>`exists (
+        select 1 from ${dbSchema.posts}
+        where ${dbSchema.posts.orgId} = ${input.orgId}
+          and ${dbSchema.posts.authorMembershipId} = ${input.membershipId}
+      )`,
+      hasFollow: sql<boolean>`exists (
+        select 1 from ${dbSchema.follows}
+        where ${dbSchema.follows.followerMembershipId} = ${input.membershipId}
+      )`,
+      hasVisibleMatch: sql<boolean>`exists (
+        select 1 from ${dbSchema.matches}
+        where ${dbSchema.matches.sourceProfileId} = ${input.profileId}
+          and ${dbSchema.matches.hiddenByAdmin} = false
+          and ${dbSchema.matches.dismissedBySource} = false
+      )`,
+      hasRequestedIntro: sql<boolean>`exists (
+        select 1 from ${dbSchema.introRequests}
+        where ${dbSchema.introRequests.requesterMembershipId} = ${input.membershipId}
+      )`,
+    })
+    .from(dbSchema.organizations)
+    .where(eq(dbSchema.organizations.id, input.orgId))
+    .limit(1);
+
+  return {
+    hasPost: Boolean(row?.hasPost),
+    hasFollow: Boolean(row?.hasFollow),
+    hasVisibleMatch: Boolean(row?.hasVisibleMatch),
+    hasRequestedIntro: Boolean(row?.hasRequestedIntro),
+  };
+}
+
+export async function listAllCommentsForOrg(
+  orgId: string,
+  options: TimeOrderedListOptions = {},
+) {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const postIds = new Set(
+      getStore()
+        .posts.filter((post) => post.orgId === orgId)
+        .map((post) => post.id),
+    );
+    const comments = getStore().comments.filter((comment) => postIds.has(comment.postId));
+    const ordered =
+      options.orderBy === "none"
+        ? comments
+        : comments.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+    return limit ? ordered.slice(0, limit) : ordered;
+  }
+
+  const query = getDb()
+    .select({ comment: dbSchema.comments })
+    .from(dbSchema.comments)
+    .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+    .where(eq(dbSchema.posts.orgId, orgId));
+  const ordered =
+    options.orderBy === "none"
+      ? query
+      : query.orderBy(desc(dbSchema.comments.createdAt));
+  const rows = await (limit ? ordered.limit(limit) : ordered);
+  return rows.map((row) => commentFromRow(row.comment));
+}
+
+export async function listCommentRecordsForOrg(
+  orgId: string,
+  options: TimeOrderedListOptions = {},
+): Promise<CommentRecord[]> {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const postById = new Map(
+      store.posts
+        .filter((post) => post.orgId === orgId)
+        .map((post) => [post.id, post]),
+    );
+    const records = store.comments
+      .filter((comment) => postById.has(comment.postId))
+      .map((comment) => ({
+        comment,
+        post: postById.get(comment.postId),
+      }));
+    const ordered =
+      options.orderBy === "none"
+        ? records
+        : records.sort((left, right) =>
+            right.comment.createdAt.localeCompare(left.comment.createdAt),
+          );
+
+    return limit ? ordered.slice(0, limit) : ordered;
+  }
+
+  const query = getDb()
+    .select({
+      comment: dbSchema.comments,
+      post: dbSchema.posts,
+    })
+    .from(dbSchema.comments)
+    .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+    .where(eq(dbSchema.posts.orgId, orgId));
+  const ordered =
+    options.orderBy === "none"
+      ? query
+      : query.orderBy(desc(dbSchema.comments.createdAt));
+  const rows = await (limit ? ordered.limit(limit) : ordered);
+  return rows.map((row) => ({
+    comment: commentFromRow(row.comment),
+    post: postFromRow(row.post),
+  }));
+}
+
+export async function getCommentRecordById(
+  commentId: string,
+): Promise<CommentRecord | undefined> {
+  if (!usesDatabase) {
+    const store = getStore();
+    const comment = store.comments.find((candidate) => candidate.id === commentId);
+    if (!comment) {
+      return undefined;
+    }
+
+    return {
+      comment,
+      post: store.posts.find((post) => post.id === comment.postId),
+    };
+  }
+
+  const [row] = await getDb()
+    .select({
+      comment: dbSchema.comments,
+      post: dbSchema.posts,
+    })
+    .from(dbSchema.comments)
+    .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+    .where(eq(dbSchema.comments.id, commentId))
+    .limit(1);
+
+  return row
+    ? {
+        comment: commentFromRow(row.comment),
+        post: postFromRow(row.post),
+      }
+    : undefined;
+}
+
+export async function listVisibleCommentCountsForOrg(
+  orgId: string,
+  options: VisibleCommentCountOptions = {},
+) {
+  const scopedPostIds = options.postIds
+    ? [...new Set(options.postIds.filter(Boolean))]
+    : undefined;
+
+  if (scopedPostIds?.length === 0) {
+    return new Map<string, number>();
+  }
+
+  if (!usesDatabase) {
+    const postIds = new Set(
+      getStore()
+        .posts.filter((post) => post.orgId === orgId)
+        .filter((post) => !scopedPostIds || scopedPostIds.includes(post.id))
+        .map((post) => post.id),
+    );
+
+    return getStore().comments.reduce((counts, comment) => {
+      if (!postIds.has(comment.postId) || comment.status !== "visible") {
+        return counts;
+      }
+
+      counts.set(comment.postId, (counts.get(comment.postId) ?? 0) + 1);
+      return counts;
+    }, new Map<string, number>());
   }
 
   const rows = await getDb()
-    .select()
+    .select({
+      postId: dbSchema.comments.postId,
+      count: sql<number>`count(*)::int`,
+    })
     .from(dbSchema.comments)
-    .where(inArray(dbSchema.comments.postId, postIds));
-  return rows.map(commentFromRow);
+    .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+    .where(
+      and(
+        eq(dbSchema.posts.orgId, orgId),
+        eq(dbSchema.comments.status, "visible"),
+        scopedPostIds ? inArray(dbSchema.comments.postId, scopedPostIds) : undefined,
+      ),
+    )
+    .groupBy(dbSchema.comments.postId);
+
+  return new Map(rows.map((row) => [row.postId, Number(row.count)]));
+}
+
+async function getOrgAnalyticsInput(orgId: string) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const memberships = store.memberships.filter((membership) => membership.orgId === orgId);
+    const membershipIds = new Set(memberships.map((membership) => membership.id));
+    const posts = store.posts.filter((post) => post.orgId === orgId);
+    const postIds = new Set(posts.map((post) => post.id));
+    return {
+      memberships: memberships.map((membership) => ({ status: membership.status })),
+      profiles: store.profiles
+        .filter((profile) => membershipIds.has(profile.membershipId))
+        .map((profile) => ({ onboardingComplete: profile.onboardingComplete })),
+      posts: posts.map((post) => ({
+        authorMembershipId: post.authorMembershipId,
+        createdAt: post.createdAt,
+      })),
+      comments: store.comments
+        .filter((comment) => postIds.has(comment.postId))
+        .map((comment) => ({ createdAt: comment.createdAt })),
+      introRequests: store.introRequests
+        .filter((event) => event.orgId === orgId)
+        .map((intro) => ({
+          createdAt: intro.createdAt,
+          introPurpose: intro.introPurpose,
+          respondedAt: intro.respondedAt,
+          status: intro.status,
+        })),
+      analyticsEvents: store.analyticsEvents
+        .filter((event) => event.orgId === orgId)
+        .map((event) => ({ eventName: event.eventName })),
+    };
+  }
+
+  const [
+    membershipRows,
+    profileRows,
+    postRows,
+    commentRows,
+    introRequestRows,
+    analyticsRows,
+  ] = await Promise.all([
+    getDb()
+      .select({ status: dbSchema.memberships.status })
+      .from(dbSchema.memberships)
+      .where(eq(dbSchema.memberships.orgId, orgId)),
+    getDb()
+      .select({ onboardingComplete: dbSchema.profiles.onboardingComplete })
+      .from(dbSchema.profiles)
+      .innerJoin(dbSchema.memberships, eq(dbSchema.memberships.id, dbSchema.profiles.membershipId))
+      .where(eq(dbSchema.memberships.orgId, orgId)),
+    getDb()
+      .select({
+        authorMembershipId: dbSchema.posts.authorMembershipId,
+        createdAt: dbSchema.posts.createdAt,
+      })
+      .from(dbSchema.posts)
+      .where(eq(dbSchema.posts.orgId, orgId)),
+    getDb()
+      .select({ createdAt: dbSchema.comments.createdAt })
+      .from(dbSchema.comments)
+      .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+      .where(eq(dbSchema.posts.orgId, orgId)),
+    getDb()
+      .select({
+        createdAt: dbSchema.introRequests.createdAt,
+        introPurpose: dbSchema.introRequests.introPurpose,
+        respondedAt: dbSchema.introRequests.respondedAt,
+        status: dbSchema.introRequests.status,
+      })
+      .from(dbSchema.introRequests)
+      .where(eq(dbSchema.introRequests.orgId, orgId)),
+    getDb()
+      .select({ eventName: dbSchema.analyticsEvents.eventName })
+      .from(dbSchema.analyticsEvents)
+      .where(eq(dbSchema.analyticsEvents.orgId, orgId)),
+  ]);
+
+  return {
+    memberships: membershipRows,
+    profiles: profileRows,
+    posts: postRows.map((post) => ({
+      authorMembershipId: post.authorMembershipId,
+      createdAt: requiredIso(post.createdAt),
+    })),
+    comments: commentRows.map((comment) => ({
+      createdAt: requiredIso(comment.createdAt),
+    })),
+    introRequests: introRequestRows.map((intro) => ({
+      createdAt: requiredIso(intro.createdAt),
+      introPurpose: intro.introPurpose,
+      respondedAt: maybeIso(intro.respondedAt),
+      status: intro.status,
+    })),
+    analyticsEvents: analyticsRows,
+  };
 }
 
 export async function listFollowsForMembership(followerMembershipId: string) {
@@ -1081,12 +2185,49 @@ export async function listFollowsForMembership(followerMembershipId: string) {
   return rows.map(followFromRow);
 }
 
-export async function isFollowingMembership(
+export async function listFollowedMembershipIdsForMembership(
+  followerMembershipId: string,
+  options: { followedMembershipIds?: string[] } = {},
+) {
+  const scopedIds = options.followedMembershipIds
+    ? [...new Set(options.followedMembershipIds.filter(Boolean))]
+    : undefined;
+
+  if (scopedIds?.length === 0) {
+    return [];
+  }
+
+  if (!usesDatabase) {
+    const scopedSet = scopedIds ? new Set(scopedIds) : undefined;
+    return getStore().follows
+      .filter(
+        (follow) =>
+          follow.followerMembershipId === followerMembershipId &&
+          (!scopedSet || scopedSet.has(follow.followedMembershipId)),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((follow) => follow.followedMembershipId);
+  }
+
+  const rows = await getDb()
+    .select({ followedMembershipId: dbSchema.follows.followedMembershipId })
+    .from(dbSchema.follows)
+    .where(
+      and(
+        eq(dbSchema.follows.followerMembershipId, followerMembershipId),
+        scopedIds ? inArray(dbSchema.follows.followedMembershipId, scopedIds) : undefined,
+      ),
+    )
+    .orderBy(desc(dbSchema.follows.createdAt));
+  return rows.map((row) => row.followedMembershipId);
+}
+
+async function getFollowBetweenMemberships(
   followerMembershipId: string,
   followedMembershipId: string,
 ) {
   if (!usesDatabase) {
-    return getStore().follows.some(
+    return getStore().follows.find(
       (follow) =>
         follow.followerMembershipId === followerMembershipId &&
         follow.followedMembershipId === followedMembershipId,
@@ -1103,6 +2244,28 @@ export async function isFollowingMembership(
       ),
     )
     .limit(1);
+  return row ? followFromRow(row) : undefined;
+}
+
+export async function isFollowingMembership(
+  followerMembershipId: string,
+  followedMembershipId: string,
+) {
+  return Boolean(await getFollowBetweenMemberships(followerMembershipId, followedMembershipId));
+}
+
+export async function hasFollowForMembership(followerMembershipId: string) {
+  if (!usesDatabase) {
+    return getStore().follows.some(
+      (follow) => follow.followerMembershipId === followerMembershipId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select({ id: dbSchema.follows.id })
+    .from(dbSchema.follows)
+    .where(eq(dbSchema.follows.followerMembershipId, followerMembershipId))
+    .limit(1);
   return Boolean(row);
 }
 
@@ -1115,8 +2278,9 @@ export async function followMembership(
     return null;
   }
 
-  const existing = (await listFollowsForMembership(followerMembershipId)).find(
-    (follow) => follow.followedMembershipId === followedMembershipId,
+  const existing = await getFollowBetweenMemberships(
+    followerMembershipId,
+    followedMembershipId,
   );
   if (existing) {
     return existing;
@@ -1182,6 +2346,108 @@ export async function getPostById(postId: string) {
   return row ? postFromRow(row) : undefined;
 }
 
+export async function getPostThreadRecord(
+  postId: string,
+  orgId: string,
+): Promise<PostThreadRecord | undefined> {
+  if (!usesDatabase) {
+    const store = getStore();
+    const post = store.posts.find(
+      (candidate) => candidate.id === postId && candidate.orgId === orgId,
+    );
+    if (!post) {
+      return undefined;
+    }
+
+    const authorMembership = store.memberships.find(
+      (membership) => membership.id === post.authorMembershipId,
+    );
+    const comments = store.comments
+      .filter((comment) => comment.postId === post.id && comment.status === "visible")
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((comment) => {
+        const membership = store.memberships.find(
+          (candidate) => candidate.id === comment.authorMembershipId,
+        );
+        return {
+          comment,
+          membership,
+          profile: membership
+            ? store.profiles.find((profile) => profile.membershipId === membership.id)
+            : undefined,
+        };
+      });
+
+    return {
+      post,
+      author: authorMembership
+        ? {
+            membership: authorMembership,
+            profile: store.profiles.find(
+              (profile) => profile.membershipId === authorMembership.id,
+            ),
+          }
+        : undefined,
+      comments,
+    };
+  }
+
+  const [postRows, commentRows] = await Promise.all([
+    getDb()
+      .select({
+        post: dbSchema.posts,
+        membership: dbSchema.memberships,
+        profile: dbSchema.profiles,
+      })
+      .from(dbSchema.posts)
+      .leftJoin(dbSchema.memberships, eq(dbSchema.memberships.id, dbSchema.posts.authorMembershipId))
+      .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+      .where(and(eq(dbSchema.posts.id, postId), eq(dbSchema.posts.orgId, orgId)))
+      .limit(1),
+    getDb()
+      .select({
+        comment: dbSchema.comments,
+        membership: dbSchema.memberships,
+        profile: dbSchema.profiles,
+      })
+      .from(dbSchema.comments)
+      .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+      .leftJoin(
+        dbSchema.memberships,
+        eq(dbSchema.memberships.id, dbSchema.comments.authorMembershipId),
+      )
+      .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+      .where(
+        and(
+          eq(dbSchema.comments.postId, postId),
+          eq(dbSchema.comments.status, "visible"),
+          eq(dbSchema.posts.orgId, orgId),
+        ),
+      )
+      .orderBy(asc(dbSchema.comments.createdAt)),
+  ]);
+  const postRow = postRows[0];
+
+  if (!postRow) {
+    return undefined;
+  }
+
+  return {
+    post: postFromRow(postRow.post),
+    author: postRow.membership
+      ? {
+          membership: membershipFromRow(postRow.membership),
+          profile: postRow.profile ? profileFromRow(postRow.profile) : undefined,
+        }
+      : undefined,
+    comments: commentRows.map((row) => ({
+      comment: commentFromRow(row.comment),
+      membership: row.membership ? membershipFromRow(row.membership) : undefined,
+      profile: row.profile ? profileFromRow(row.profile) : undefined,
+    })),
+  };
+}
+
 export async function listCommentsForPost(postId: string) {
   if (!usesDatabase) {
     return getStore().comments
@@ -1197,17 +2463,12 @@ export async function listCommentsForPost(postId: string) {
   return rows.map(commentFromRow);
 }
 
-export async function listMatchesForMembership(membershipId: string) {
-  const profile = await getProfileByMembershipId(membershipId);
-  if (!profile) {
-    return [];
-  }
-
+export async function listMatchesForProfile(profileId: string) {
   if (!usesDatabase) {
     return getStore().matches
       .filter(
         (match) =>
-          match.sourceProfileId === profile.id &&
+          match.sourceProfileId === profileId &&
           !match.hiddenByAdmin &&
           !match.dismissedBySource,
       )
@@ -1220,7 +2481,7 @@ export async function listMatchesForMembership(membershipId: string) {
     .from(dbSchema.matches)
     .where(
       and(
-        eq(dbSchema.matches.sourceProfileId, profile.id),
+        eq(dbSchema.matches.sourceProfileId, profileId),
         eq(dbSchema.matches.hiddenByAdmin, false),
         eq(dbSchema.matches.dismissedBySource, false),
       ),
@@ -1230,73 +2491,534 @@ export async function listMatchesForMembership(membershipId: string) {
   return rows.map(matchFromRow);
 }
 
-export async function listIntroRequestsForMembership(membershipId: string) {
+export async function listMatchesForMembership(membershipId: string) {
+  const profile = await getProfileByMembershipId(membershipId);
+  return profile ? listMatchesForProfile(profile.id) : [];
+}
+
+export async function listMatchTargetRecordsForProfile(
+  profileId: string,
+  followerMembershipId: string,
+  options: { limit?: number } = {},
+): Promise<MatchTargetRecord[]> {
+  const limit = positiveIntegerLimit(options.limit) ?? 12;
+
   if (!usesDatabase) {
-    return getStore().introRequests
+    const store = getStore();
+    const profileById = new Map(store.profiles.map((profile) => [profile.id, profile]));
+    const membershipById = new Map(
+      store.memberships.map((membership) => [membership.id, membership]),
+    );
+    const followedIds = new Set(
+      store.follows
+        .filter((follow) => follow.followerMembershipId === followerMembershipId)
+        .map((follow) => follow.followedMembershipId),
+    );
+
+    return store.matches
       .filter(
-        (request) =>
-          request.requesterMembershipId === membershipId ||
-          request.receiverMembershipId === membershipId,
+        (match) =>
+          match.sourceProfileId === profileId &&
+          !match.hiddenByAdmin &&
+          !match.dismissedBySource,
       )
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit)
+      .map((match) => {
+        const targetProfile = profileById.get(match.targetProfileId);
+        const targetMembership = targetProfile
+          ? membershipById.get(targetProfile.membershipId)
+          : undefined;
+
+        return {
+          match,
+          targetMembership,
+          targetProfile,
+          following: targetMembership ? followedIds.has(targetMembership.id) : false,
+        };
+      });
+  }
+
+  const targetProfiles = alias(dbSchema.profiles, "match_target_profiles");
+  const targetMemberships = alias(dbSchema.memberships, "match_target_memberships");
+  const rows = await getDb()
+    .select({
+      match: dbSchema.matches,
+      targetProfile: targetProfiles,
+      targetMembership: targetMemberships,
+      followId: dbSchema.follows.id,
+    })
+    .from(dbSchema.matches)
+    .leftJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .leftJoin(targetMemberships, eq(targetMemberships.id, targetProfiles.membershipId))
+    .leftJoin(
+      dbSchema.follows,
+      and(
+        eq(dbSchema.follows.followerMembershipId, followerMembershipId),
+        eq(dbSchema.follows.followedMembershipId, targetMemberships.id),
+      ),
+    )
+    .where(
+      and(
+        eq(dbSchema.matches.sourceProfileId, profileId),
+        eq(dbSchema.matches.hiddenByAdmin, false),
+        eq(dbSchema.matches.dismissedBySource, false),
+      ),
+    )
+    .orderBy(desc(dbSchema.matches.score))
+    .limit(limit);
+
+  return rows.map((row) => ({
+    match: matchFromRow(row.match),
+    targetMembership: row.targetMembership
+      ? membershipFromRow(row.targetMembership)
+      : undefined,
+    targetProfile: row.targetProfile ? profileFromRow(row.targetProfile) : undefined,
+    following: Boolean(row.followId),
+  }));
+}
+
+export async function listVisibleMatchTargetMembershipIdsForProfile(profileId: string) {
+  if (!usesDatabase) {
+    const profileById = new Map(
+      getStore().profiles.map((profile) => [profile.id, profile]),
+    );
+    return getStore().matches
+      .filter(
+        (match) =>
+          match.sourceProfileId === profileId &&
+          !match.hiddenByAdmin &&
+          !match.dismissedBySource,
+      )
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 12)
+      .map((match) => profileById.get(match.targetProfileId)?.membershipId)
+      .filter((membershipId): membershipId is string => Boolean(membershipId));
   }
 
   const rows = await getDb()
+    .select({ membershipId: dbSchema.profiles.membershipId })
+    .from(dbSchema.matches)
+    .innerJoin(dbSchema.profiles, eq(dbSchema.profiles.id, dbSchema.matches.targetProfileId))
+    .where(
+      and(
+        eq(dbSchema.matches.sourceProfileId, profileId),
+        eq(dbSchema.matches.hiddenByAdmin, false),
+        eq(dbSchema.matches.dismissedBySource, false),
+      ),
+    )
+    .orderBy(desc(dbSchema.matches.score))
+    .limit(12);
+  return rows.map((row) => row.membershipId);
+}
+
+export async function listVisibleMatchTargetMembershipIdsForMembership(
+  membershipId: string,
+) {
+  if (!usesDatabase) {
+    const profile = await getProfileByMembershipId(membershipId);
+    return profile ? listVisibleMatchTargetMembershipIdsForProfile(profile.id) : [];
+  }
+
+  const sourceProfiles = alias(dbSchema.profiles, "source_profiles");
+  const targetProfiles = alias(dbSchema.profiles, "target_profiles");
+  const rows = await getDb()
+    .select({ membershipId: targetProfiles.membershipId })
+    .from(dbSchema.matches)
+    .innerJoin(sourceProfiles, eq(sourceProfiles.id, dbSchema.matches.sourceProfileId))
+    .innerJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .where(
+      and(
+        eq(sourceProfiles.membershipId, membershipId),
+        eq(dbSchema.matches.hiddenByAdmin, false),
+        eq(dbSchema.matches.dismissedBySource, false),
+      ),
+    )
+    .orderBy(desc(dbSchema.matches.score))
+    .limit(12);
+  return rows.map((row) => row.membershipId);
+}
+
+export async function hasVisibleMatchForProfile(profileId: string) {
+  if (!usesDatabase) {
+    return getStore().matches.some(
+      (match) =>
+        match.sourceProfileId === profileId &&
+        !match.hiddenByAdmin &&
+        !match.dismissedBySource,
+    );
+  }
+
+  const [row] = await getDb()
+    .select({ id: dbSchema.matches.id })
+    .from(dbSchema.matches)
+    .where(
+      and(
+        eq(dbSchema.matches.sourceProfileId, profileId),
+        eq(dbSchema.matches.hiddenByAdmin, false),
+        eq(dbSchema.matches.dismissedBySource, false),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+export async function hasVisibleMatchForMembership(membershipId: string) {
+  const profile = await getProfileByMembershipId(membershipId);
+  return profile ? hasVisibleMatchForProfile(profile.id) : false;
+}
+
+export async function getIntroRequestById(introRequestId: string) {
+  if (!usesDatabase) {
+    return getStore().introRequests.find((request) => request.id === introRequestId);
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.introRequests)
+    .where(eq(dbSchema.introRequests.id, introRequestId))
+    .limit(1);
+  return row ? introRequestFromRow(row) : undefined;
+}
+
+export async function listIntroRequestsForMembership(
+  membershipId: string,
+  options: IntroRequestListOptions = {},
+) {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const requests = getStore().introRequests
+      .filter(
+        (request) =>
+          (options.direction === "incoming"
+            ? request.receiverMembershipId === membershipId
+            : options.direction === "outgoing"
+              ? request.requesterMembershipId === membershipId
+              : request.requesterMembershipId === membershipId ||
+                request.receiverMembershipId === membershipId) &&
+          (!options.status || request.status === options.status),
+      );
+    const ordered =
+      options.orderBy === "none"
+        ? requests
+        : requests.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+    return limit ? ordered.slice(0, limit) : ordered;
+  }
+
+  if (options.orderBy === "none") {
+    const query = getDb()
+      .select()
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          options.direction === "incoming"
+            ? eq(dbSchema.introRequests.receiverMembershipId, membershipId)
+            : options.direction === "outgoing"
+              ? eq(dbSchema.introRequests.requesterMembershipId, membershipId)
+              : or(
+                  eq(dbSchema.introRequests.requesterMembershipId, membershipId),
+                  eq(dbSchema.introRequests.receiverMembershipId, membershipId),
+                ),
+          options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
+        ),
+      );
+    const rows = await (limit ? query.limit(limit) : query);
+    return rows.map(introRequestFromRow);
+  }
+
+  const query = getDb()
     .select()
     .from(dbSchema.introRequests)
     .where(
-      or(
-        eq(dbSchema.introRequests.requesterMembershipId, membershipId),
-        eq(dbSchema.introRequests.receiverMembershipId, membershipId),
+      and(
+        options.direction === "incoming"
+          ? eq(dbSchema.introRequests.receiverMembershipId, membershipId)
+          : options.direction === "outgoing"
+            ? eq(dbSchema.introRequests.requesterMembershipId, membershipId)
+            : or(
+                eq(dbSchema.introRequests.requesterMembershipId, membershipId),
+                eq(dbSchema.introRequests.receiverMembershipId, membershipId),
+              ),
+        options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
       ),
     )
     .orderBy(desc(dbSchema.introRequests.createdAt));
+  const rows = await (limit ? query.limit(limit) : query);
   return rows.map(introRequestFromRow);
 }
 
-export async function listNotificationsForMembership(membershipId: string) {
+export async function hasIntroRequestFromMembership(membershipId: string) {
   if (!usesDatabase) {
-    return getStore().notifications
-      .filter((notification) => notification.membershipId === membershipId)
+    return getStore().introRequests.some(
+      (request) => request.requesterMembershipId === membershipId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select({ id: dbSchema.introRequests.id })
+    .from(dbSchema.introRequests)
+    .where(eq(dbSchema.introRequests.requesterMembershipId, membershipId))
+    .limit(1);
+  return Boolean(row);
+}
+
+export async function listActiveIntroRequestStatusesForRequester(
+  requesterMembershipId: string,
+  receiverMembershipIds?: string[],
+) {
+  const uniqueReceiverIds = receiverMembershipIds
+    ? [...new Set(receiverMembershipIds.filter(Boolean))]
+    : undefined;
+  if (receiverMembershipIds && !uniqueReceiverIds?.length) {
+    return new Map<string, IntroStatus>();
+  }
+
+  if (!usesDatabase) {
+    const receiverIds = uniqueReceiverIds ? new Set(uniqueReceiverIds) : undefined;
+    const requests = getStore().introRequests
+      .filter(
+        (request) =>
+          request.requesterMembershipId === requesterMembershipId &&
+          (!receiverIds || receiverIds.has(request.receiverMembershipId)) &&
+          request.status !== "expired",
+      )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+    return requests.reduce((statuses, request) => {
+      if (!statuses.has(request.receiverMembershipId)) {
+        statuses.set(request.receiverMembershipId, request.status);
+      }
+      return statuses;
+    }, new Map<string, IntroStatus>());
   }
 
   const rows = await getDb()
+    .select({
+      receiverMembershipId: dbSchema.introRequests.receiverMembershipId,
+      status: dbSchema.introRequests.status,
+    })
+    .from(dbSchema.introRequests)
+    .where(
+      and(
+        eq(dbSchema.introRequests.requesterMembershipId, requesterMembershipId),
+        uniqueReceiverIds
+          ? inArray(dbSchema.introRequests.receiverMembershipId, uniqueReceiverIds)
+          : undefined,
+        sql`${dbSchema.introRequests.status} <> 'expired'`,
+      ),
+    )
+    .orderBy(desc(dbSchema.introRequests.createdAt));
+
+  return rows.reduce((statuses, row) => {
+    if (!statuses.has(row.receiverMembershipId)) {
+      statuses.set(row.receiverMembershipId, row.status);
+    }
+    return statuses;
+  }, new Map<string, IntroStatus>());
+}
+
+export async function listNotificationsForMembership(
+  membershipId: string,
+  options: TimeOrderedListOptions = {},
+) {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const notifications = getStore().notifications
+      .filter((notification) => notification.membershipId === membershipId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+    return limit ? notifications.slice(0, limit) : notifications;
+  }
+
+  const query = getDb()
     .select()
     .from(dbSchema.notifications)
     .where(eq(dbSchema.notifications.membershipId, membershipId))
     .orderBy(desc(dbSchema.notifications.createdAt));
+  const rows = await (limit ? query.limit(limit) : query);
   return rows.map(notificationFromRow);
 }
 
-export async function listIntroRequestsForOrg(orgId: string) {
+export async function hasUnreadNotificationsForMembership(membershipId: string) {
   if (!usesDatabase) {
-    return getStore().introRequests
-      .filter((request) => request.orgId === orgId)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return getStore().notifications.some(
+      (notification) => notification.membershipId === membershipId && !notification.readAt,
+    );
+  }
+
+  const [row] = await getDb()
+    .select({ id: dbSchema.notifications.id })
+    .from(dbSchema.notifications)
+    .where(
+      and(
+        eq(dbSchema.notifications.membershipId, membershipId),
+        sql`${dbSchema.notifications.readAt} is null`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+export async function markNotificationsReadForMembership(membershipId: string) {
+  const readAt = new Date().toISOString();
+
+  if (!usesDatabase) {
+    const notifications = getStore().notifications.filter(
+      (notification) => notification.membershipId === membershipId && !notification.readAt,
+    );
+    notifications.forEach((notification) => {
+      notification.readAt = readAt;
+    });
+    return notifications.length;
   }
 
   const rows = await getDb()
+    .update(dbSchema.notifications)
+    .set({ readAt: new Date(readAt) })
+    .where(
+      and(
+        eq(dbSchema.notifications.membershipId, membershipId),
+        sql`${dbSchema.notifications.readAt} is null`,
+      ),
+    )
+    .returning({ id: dbSchema.notifications.id });
+  return rows.length;
+}
+
+export async function listIntroRequestsForOrg(
+  orgId: string,
+  options: OrgIntroRequestListOptions = {},
+) {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const requests = getStore().introRequests.filter(
+      (request) =>
+        request.orgId === orgId &&
+        (!options.status || request.status === options.status) &&
+        (!options.sourceType || request.sourceType === options.sourceType),
+    );
+    const ordered =
+      options.orderBy === "none"
+        ? requests
+        : requests.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+    return limit ? ordered.slice(0, limit) : ordered;
+  }
+
+  if (options.orderBy === "none") {
+    const query = getDb()
+      .select()
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, orgId),
+          options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
+          options.sourceType
+            ? eq(dbSchema.introRequests.sourceType, options.sourceType)
+            : undefined,
+        ),
+      );
+    const rows = await (limit ? query.limit(limit) : query);
+    return rows.map(introRequestFromRow);
+  }
+
+  const query = getDb()
     .select()
     .from(dbSchema.introRequests)
-    .where(eq(dbSchema.introRequests.orgId, orgId))
+    .where(
+      and(
+        eq(dbSchema.introRequests.orgId, orgId),
+        options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
+        options.sourceType ? eq(dbSchema.introRequests.sourceType, options.sourceType) : undefined,
+      ),
+    )
     .orderBy(desc(dbSchema.introRequests.createdAt));
+  const rows = await (limit ? query.limit(limit) : query);
+
   return rows.map(introRequestFromRow);
 }
 
-export async function listMatchesForOrg(orgId: string) {
+export async function listMatchesForOrg(
+  orgId: string,
+  options: { limit?: number } = {},
+) {
+  const limit =
+    options.limit && options.limit > 0 ? Math.floor(options.limit) : undefined;
+
   if (!usesDatabase) {
-    return getStore().matches
+    const matches = getStore().matches
       .filter((match) => match.orgId === orgId)
       .sort((left, right) => right.score - left.score);
+
+    return limit ? matches.slice(0, limit) : matches;
   }
 
-  const rows = await getDb()
+  const query = getDb()
     .select()
     .from(dbSchema.matches)
     .where(eq(dbSchema.matches.orgId, orgId))
     .orderBy(desc(dbSchema.matches.score));
+  const rows = await (limit ? query.limit(limit) : query);
+
   return rows.map(matchFromRow);
+}
+
+export async function listMatchProfileRecordsForOrg(
+  orgId: string,
+  options: MatchProfileRecordListOptions = {},
+): Promise<MatchProfileRecord[]> {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const profileById = new Map(store.profiles.map((profile) => [profile.id, profile]));
+    const matches = store.matches
+      .filter(
+        (match) =>
+          match.orgId === orgId &&
+          (!options.matchType || match.matchType === options.matchType) &&
+          (!options.scoreBand || match.scoreBand === options.scoreBand),
+      )
+      .sort((left, right) => right.score - left.score);
+    const visibleMatches = limit ? matches.slice(0, limit) : matches;
+
+    return visibleMatches.map((match) => ({
+      match,
+      sourceProfile: profileById.get(match.sourceProfileId),
+      targetProfile: profileById.get(match.targetProfileId),
+    }));
+  }
+
+  const sourceProfiles = alias(dbSchema.profiles, "source_profiles");
+  const targetProfiles = alias(dbSchema.profiles, "target_profiles");
+  const query = getDb()
+    .select({
+      match: dbSchema.matches,
+      sourceProfile: sourceProfiles,
+      targetProfile: targetProfiles,
+    })
+    .from(dbSchema.matches)
+    .leftJoin(sourceProfiles, eq(sourceProfiles.id, dbSchema.matches.sourceProfileId))
+    .leftJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .where(
+      and(
+        eq(dbSchema.matches.orgId, orgId),
+        options.matchType ? eq(dbSchema.matches.matchType, options.matchType) : undefined,
+        options.scoreBand ? eq(dbSchema.matches.scoreBand, options.scoreBand) : undefined,
+      ),
+    )
+    .orderBy(desc(dbSchema.matches.score));
+  const rows = await (limit ? query.limit(limit) : query);
+
+  return rows.map((row) => ({
+    match: matchFromRow(row.match),
+    sourceProfile: row.sourceProfile ? profileFromRow(row.sourceProfile) : undefined,
+    targetProfile: row.targetProfile ? profileFromRow(row.targetProfile) : undefined,
+  }));
 }
 
 export async function addNotification(notification: Notification) {
@@ -1317,7 +3039,10 @@ export async function addAnalyticsEvent(event: AnalyticsEvent) {
   await getDb().insert(dbSchema.analyticsEvents).values(analyticsEventInsert(event));
 }
 
-export async function createPost(input: Omit<Post, "id" | "createdAt" | "updatedAt">) {
+export async function createPost(
+  input: Omit<Post, "id" | "createdAt" | "updatedAt">,
+  options: { recordAnalytics?: boolean } = {},
+) {
   const post: Post = {
     id: `pst_${nanoid(8)}`,
     ...input,
@@ -1331,18 +3056,23 @@ export async function createPost(input: Omit<Post, "id" | "createdAt" | "updated
     await getDb().insert(dbSchema.posts).values(postInsert(post));
   }
 
-  await addAnalyticsEvent({
-    id: `evt_${nanoid(8)}`,
-    orgId: input.orgId,
-    membershipId: input.authorMembershipId,
-    eventName: "post_created",
-    payload: { postId: post.id, type: post.type },
-    createdAt: new Date().toISOString(),
-  });
+  if (options.recordAnalytics !== false) {
+    await addAnalyticsEvent({
+      id: `evt_${nanoid(8)}`,
+      orgId: input.orgId,
+      membershipId: input.authorMembershipId,
+      eventName: "post_created",
+      payload: { postId: post.id, type: post.type },
+      createdAt: new Date().toISOString(),
+    });
+  }
   return post;
 }
 
-export async function createComment(input: Omit<Comment, "id" | "createdAt" | "updatedAt" | "status">) {
+export async function createComment(
+  input: Omit<Comment, "id" | "createdAt" | "updatedAt" | "status">,
+  options: { orgId?: string; recordAnalytics?: boolean } = {},
+) {
   const comment: Comment = {
     id: `cmt_${nanoid(8)}`,
     status: "visible",
@@ -1357,19 +3087,26 @@ export async function createComment(input: Omit<Comment, "id" | "createdAt" | "u
     await getDb().insert(dbSchema.comments).values(commentInsert(comment));
   }
 
-  const post = await getPostById(input.postId);
-  await addAnalyticsEvent({
-    id: `evt_${nanoid(8)}`,
-    orgId: post?.orgId ?? seedOrganization.id,
-    membershipId: input.authorMembershipId,
-    eventName: "comment_created",
-    payload: { postId: input.postId },
-    createdAt: new Date().toISOString(),
-  });
+  if (options.recordAnalytics !== false) {
+    await addAnalyticsEvent({
+      id: `evt_${nanoid(8)}`,
+      orgId: options.orgId ?? (await getPostById(input.postId))?.orgId ?? seedOrganization.id,
+      membershipId: input.authorMembershipId,
+      eventName: "comment_created",
+      payload: { postId: input.postId },
+      createdAt: new Date().toISOString(),
+    });
+  }
   return comment;
 }
 
-export async function upsertProfile(profile: Profile, links: ProfileLink[]) {
+export async function upsertProfile(
+  profile: Profile,
+  links: ProfileLink[],
+  options: { orgId?: string; recomputeMatches?: boolean } = {},
+) {
+  const shouldRecomputeMatches = options.recomputeMatches ?? true;
+
   if (!usesDatabase) {
     const store = getStore();
     const existingIndex = store.profiles.findIndex(
@@ -1385,10 +3122,15 @@ export async function upsertProfile(profile: Profile, links: ProfileLink[]) {
     store.profileLinks = store.profileLinks.filter((link) => link.profileId !== profile.id);
     store.profileLinks.unshift(...links);
 
-    const membership = await getMembershipById(profile.membershipId);
+    const membership = store.memberships.find(
+      (candidate) => candidate.id === profile.membershipId,
+    );
+    const orgId = options.orgId ?? membership?.orgId;
     if (membership) {
       membership.updatedAt = new Date().toISOString();
-      await recomputeMatchesForOrg(membership.orgId);
+    }
+    if (orgId && shouldRecomputeMatches) {
+      await recomputeMatchesForProfile(orgId, profile.id);
     }
     return profile;
   }
@@ -1409,19 +3151,21 @@ export async function upsertProfile(profile: Profile, links: ProfileLink[]) {
     await db.insert(dbSchema.profileLinks).values(links);
   }
 
-  const membership = await getMembershipById(profile.membershipId);
-  if (membership) {
-    await db
-      .update(dbSchema.memberships)
-      .set({ updatedAt: new Date() })
-      .where(eq(dbSchema.memberships.id, membership.id));
-    await recomputeMatchesForOrg(membership.orgId);
+  const [membershipUpdate] = await db
+    .update(dbSchema.memberships)
+    .set({ updatedAt: new Date() })
+    .where(eq(dbSchema.memberships.id, profile.membershipId))
+    .returning({ orgId: dbSchema.memberships.orgId });
+  const orgId = options.orgId ?? membershipUpdate?.orgId;
+  if (orgId && shouldRecomputeMatches) {
+    await recomputeMatchesForProfile(orgId, profile.id);
   }
   return profile;
 }
 
 export async function createIntroRequest(
   input: Omit<IntroRequest, "id" | "createdAt" | "updatedAt">,
+  options: { recordAnalytics?: boolean } = {},
 ) {
   const intro: IntroRequest = {
     id: `intro_${nanoid(8)}`,
@@ -1436,20 +3180,23 @@ export async function createIntroRequest(
     await getDb().insert(dbSchema.introRequests).values(introRequestInsert(intro));
   }
 
-  await addAnalyticsEvent({
-    id: `evt_${nanoid(8)}`,
-    orgId: input.orgId,
-    membershipId: input.requesterMembershipId,
-    eventName: "intro_requested",
-    payload: { receiverMembershipId: input.receiverMembershipId, sourceType: input.sourceType },
-    createdAt: new Date().toISOString(),
-  });
+  if (options.recordAnalytics !== false) {
+    await addAnalyticsEvent({
+      id: `evt_${nanoid(8)}`,
+      orgId: input.orgId,
+      membershipId: input.requesterMembershipId,
+      eventName: "intro_requested",
+      payload: { receiverMembershipId: input.receiverMembershipId, sourceType: input.sourceType },
+      createdAt: new Date().toISOString(),
+    });
+  }
   return intro;
 }
 
 export async function respondToIntroRequest(
   introRequestId: string,
   status: "accepted" | "declined",
+  options: { recordAnalytics?: boolean } = {},
 ) {
   const now = new Date().toISOString();
 
@@ -1466,14 +3213,16 @@ export async function respondToIntroRequest(
       intro.contactRevealedAt = now;
     }
 
-    await addAnalyticsEvent({
-      id: `evt_${nanoid(8)}`,
-      orgId: intro.orgId,
-      membershipId: intro.receiverMembershipId,
-      eventName: `intro_${status}`,
-      payload: { introRequestId: intro.id },
-      createdAt: now,
-    });
+    if (options.recordAnalytics !== false) {
+      await addAnalyticsEvent({
+        id: `evt_${nanoid(8)}`,
+        orgId: intro.orgId,
+        membershipId: intro.receiverMembershipId,
+        eventName: `intro_${status}`,
+        payload: { introRequestId: intro.id },
+        createdAt: now,
+      });
+    }
 
     return intro;
   }
@@ -1494,14 +3243,16 @@ export async function respondToIntroRequest(
   }
 
   const intro = introRequestFromRow(row);
-  await addAnalyticsEvent({
-    id: `evt_${nanoid(8)}`,
-    orgId: intro.orgId,
-    membershipId: intro.receiverMembershipId,
-    eventName: `intro_${status}`,
-    payload: { introRequestId: intro.id },
-    createdAt: now,
-  });
+  if (options.recordAnalytics !== false) {
+    await addAnalyticsEvent({
+      id: `evt_${nanoid(8)}`,
+      orgId: intro.orgId,
+      membershipId: intro.receiverMembershipId,
+      eventName: `intro_${status}`,
+      payload: { introRequestId: intro.id },
+      createdAt: now,
+    });
+  }
   return intro;
 }
 
@@ -1509,11 +3260,13 @@ export async function updateMembershipStatus(
   membershipId: string,
   status: MembershipStatus,
   approvalNote?: string,
+  options: { existingMembership?: Membership; recomputeMatches?: boolean } = {},
 ) {
-  const membership = await getMembershipById(membershipId);
+  const membership = options.existingMembership ?? (await getMembershipById(membershipId));
   if (!membership) {
     return null;
   }
+  const shouldRecomputeMatches = options.recomputeMatches ?? true;
 
   const now = new Date().toISOString();
   if (!usesDatabase) {
@@ -1523,7 +3276,9 @@ export async function updateMembershipStatus(
     if (status === "approved") {
       membership.approvedAt = now;
     }
-    await recomputeMatchesForOrg(membership.orgId);
+    if (shouldRecomputeMatches) {
+      await recomputeMatchesForMembership(membership.orgId, membership.id);
+    }
     return membership;
   }
 
@@ -1537,22 +3292,30 @@ export async function updateMembershipStatus(
     })
     .where(eq(dbSchema.memberships.id, membershipId))
     .returning();
-  await recomputeMatchesForOrg(row.orgId);
+  if (!row) {
+    return null;
+  }
+
+  if (shouldRecomputeMatches) {
+    await recomputeMatchesForMembership(row.orgId, row.id);
+  }
   return membershipFromRow(row);
 }
 
 export async function updatePostModeration(
   postId: string,
   input: Partial<Pick<Post, "hidden" | "featured" | "commentsLocked" | "status">>,
+  options: { existingPost?: Post } = {},
 ) {
-  const post = await getPostById(postId);
-  if (!post) {
-    return null;
-  }
-
   const next = { ...input, updatedAt: new Date().toISOString() };
 
   if (!usesDatabase) {
+    const post =
+      options.existingPost ?? getStore().posts.find((candidate) => candidate.id === postId);
+    if (!post) {
+      return null;
+    }
+
     Object.assign(post, next);
     return post;
   }
@@ -1578,12 +3341,17 @@ export async function updatePostModeration(
     .set(updateValues)
     .where(eq(dbSchema.posts.id, postId))
     .returning();
-  return postFromRow(row);
+  return row ? postFromRow(row) : null;
 }
 
-export async function updateCommentStatus(commentId: string, status: Comment["status"]) {
+export async function updateCommentStatus(
+  commentId: string,
+  status: Comment["status"],
+  options: { existingComment?: Comment } = {},
+) {
   if (!usesDatabase) {
-    const comment = getStore().comments.find((entry) => entry.id === commentId);
+    const comment =
+      options.existingComment ?? getStore().comments.find((entry) => entry.id === commentId);
     if (!comment) {
       return null;
     }
@@ -1604,17 +3372,24 @@ export async function updateCommentStatus(commentId: string, status: Comment["st
 export async function updateProfileFlags(
   profileId: string,
   input: Partial<Pick<Profile, "featured" | "stale">>,
+  options: { existingProfile?: Profile; orgId?: string; recomputeMatches?: boolean } = {},
 ) {
-  const profile = await getProfileById(profileId);
-  if (!profile) {
-    return null;
-  }
+  const shouldRecomputeMatches = options.recomputeMatches ?? true;
 
   if (!usesDatabase) {
+    const profile =
+      options.existingProfile ??
+      getStore().profiles.find((candidate) => candidate.id === profileId);
+    if (!profile) {
+      return null;
+    }
+
     Object.assign(profile, { ...input, updatedAt: new Date().toISOString() });
-    const membership = await getMembershipById(profile.membershipId);
-    if (membership) {
-      await recomputeMatchesForOrg(membership.orgId);
+    const orgId =
+      options.orgId ??
+      getStore().memberships.find((membership) => membership.id === profile.membershipId)?.orgId;
+    if (orgId && shouldRecomputeMatches) {
+      await recomputeMatchesForProfile(orgId, profile.id);
     }
     return profile;
   }
@@ -1634,17 +3409,24 @@ export async function updateProfileFlags(
     .set(updateValues)
     .where(eq(dbSchema.profiles.id, profileId))
     .returning();
+  if (!row) {
+    return null;
+  }
+
   const updated = profileFromRow(row);
-  const membership = await getMembershipById(updated.membershipId);
-  if (membership) {
-    await recomputeMatchesForOrg(membership.orgId);
+  const orgId =
+    options.orgId ?? (await getMembershipById(updated.membershipId))?.orgId;
+  if (orgId && shouldRecomputeMatches) {
+    await recomputeMatchesForProfile(orgId, updated.id);
   }
   return updated;
 }
 
 export async function updateOrganizationSettings(
   orgId: string,
-  input: Partial<Pick<Organization, "name" | "tagline" | "description" | "inviteSettings">>,
+  input: Partial<
+    Pick<Organization, "name" | "tagline" | "description" | "inviteSettings" | "logoUrl">
+  >,
 ) {
   if (!usesDatabase) {
     const organization = getStore().organizations.find((candidate) => candidate.id === orgId);
@@ -1664,25 +3446,117 @@ export async function updateOrganizationSettings(
   return row ? organizationFromRow(row) : null;
 }
 
-export async function recomputeMatchesForOrg(orgId: string) {
-  const organization = usesDatabase
-    ? (await getDb()
-        .select()
-        .from(dbSchema.organizations)
-        .where(eq(dbSchema.organizations.id, orgId))
-        .limit(1)).map(organizationFromRow)[0]
-    : getStore().organizations.find((candidate) => candidate.id === orgId);
+async function getOrganizationById(orgId: string) {
+  if (!usesDatabase) {
+    return getStore().organizations.find((candidate) => candidate.id === orgId);
+  }
 
-  if (!organization) {
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.organizations)
+    .where(eq(dbSchema.organizations.id, orgId))
+    .limit(1);
+  return row ? organizationFromRow(row) : undefined;
+}
+
+async function recomputeMatchesForMembership(orgId: string, membershipId: string) {
+  const input = await getMatchRecomputeInput(orgId);
+  if (!input) {
     return [];
   }
 
-  const memberships = await listMembershipsForOrg(orgId);
-  const profiles = await listProfilesForOrg(orgId);
-  const matches = recomputeMatchesForProfiles(organization, memberships, profiles);
+  const profile = input.profiles.find((candidate) => candidate.membershipId === membershipId);
+  return profile ? recomputeMatchesForProfileInput(orgId, profile.id, input) : [];
+}
+
+async function getMatchRecomputeInput(orgId: string) {
+  const [organization, membershipRecords] = await Promise.all([
+    getOrganizationById(orgId),
+    listMembershipRecordsForOrg(orgId),
+  ]);
+
+  if (!organization) {
+    return undefined;
+  }
+
+  return {
+    organization,
+    memberships: membershipRecords.map((record) => record.membership),
+    profiles: membershipRecords.flatMap((record) =>
+      record.profile ? [record.profile] : [],
+    ),
+  };
+}
+
+export async function recomputeMatchesForProfile(orgId: string, profileId: string) {
+  const input = await getMatchRecomputeInput(orgId);
+  if (!input) {
+    return [];
+  }
+
+  return recomputeMatchesForProfileInput(orgId, profileId, input);
+}
+
+async function recomputeMatchesForProfileInput(
+  orgId: string,
+  profileId: string,
+  input: NonNullable<Awaited<ReturnType<typeof getMatchRecomputeInput>>>,
+) {
+  const scopedMatches = recomputeMatchesForProfiles(
+    input.organization,
+    input.memberships,
+    input.profiles,
+    { profileIds: [profileId], limit: null },
+  );
 
   if (!usesDatabase) {
-    getStore().matches = matches;
+    const store = getStore();
+    store.matches = [
+      ...store.matches.filter(
+        (match) =>
+          match.orgId !== orgId ||
+          (match.sourceProfileId !== profileId && match.targetProfileId !== profileId),
+      ),
+      ...scopedMatches,
+    ];
+    return scopedMatches;
+  }
+
+  await getDb()
+    .delete(dbSchema.matches)
+    .where(
+      and(
+        eq(dbSchema.matches.orgId, orgId),
+        or(
+          eq(dbSchema.matches.sourceProfileId, profileId),
+          eq(dbSchema.matches.targetProfileId, profileId),
+        ),
+      ),
+    );
+  if (scopedMatches.length) {
+    await getDb().insert(dbSchema.matches).values(scopedMatches.map(matchInsert));
+  }
+  return scopedMatches;
+}
+
+export async function recomputeMatchesForOrg(orgId: string) {
+  const input = await getMatchRecomputeInput(orgId);
+  if (!input) {
+    return [];
+  }
+
+  const matches = recomputeMatchesForProfiles(
+    input.organization,
+    input.memberships,
+    input.profiles,
+  );
+
+  if (!usesDatabase) {
+    const store = getStore();
+    store.matches = [
+      ...store.matches.filter((match) => match.orgId !== orgId),
+      ...matches,
+    ];
     return matches;
   }
 
@@ -1694,40 +3568,236 @@ export async function recomputeMatchesForOrg(orgId: string) {
 }
 
 export async function getAnalyticsSnapshot(orgId: string) {
-  if (!usesDatabase) {
-    const store = getStore();
-    const memberships = store.memberships.filter((membership) => membership.orgId === orgId);
-    const membershipIds = new Set(memberships.map((membership) => membership.id));
-    return buildOrgAnalyticsSnapshot({
-      memberships,
-      profiles: store.profiles.filter((profile) => membershipIds.has(profile.membershipId)),
-      posts: store.posts.filter((post) => post.orgId === orgId),
-      comments: store.comments,
-      introRequests: store.introRequests.filter((event) => event.orgId === orgId),
-      matches: store.matches.filter((match) => match.orgId === orgId),
-      analyticsEvents: store.analyticsEvents.filter((event) => event.orgId === orgId),
-    });
+  if (usesDatabase) {
+    return getAnalyticsSnapshotFromDatabase(orgId);
   }
 
-  const memberships = await listMembershipsForOrg(orgId);
-  const membershipIds = memberships.map((membership) => membership.id);
-  const profiles = await listProfilesForOrg(orgId);
-  const posts = await listPostsForOrg(orgId);
-  const comments = await listAllCommentsForOrg(orgId);
-  const introRequests = await listIntroRequestsForOrg(orgId);
-  const matches = await listMatchesForOrg(orgId);
-  const analyticsRows = await getDb()
-    .select()
-    .from(dbSchema.analyticsEvents)
-    .where(eq(dbSchema.analyticsEvents.orgId, orgId));
+  return buildOrgAnalyticsSnapshot(await getOrgAnalyticsInput(orgId));
+}
 
-  return buildOrgAnalyticsSnapshot({
-    memberships,
-    profiles: membershipIds.length ? profiles : [],
-    posts,
-    comments,
-    introRequests,
-    matches,
-    analyticsEvents: analyticsRows.map(analyticsEventFromRow),
-  });
+function countFromRows(rows: Array<{ count: number }>) {
+  return Number(rows[0]?.count ?? 0);
+}
+
+function dateCountMap(rows: Array<{ date: string; count: number }>) {
+  return new Map(rows.map((row) => [row.date, Number(row.count)]));
+}
+
+async function getAnalyticsSnapshotFromDatabase(orgId: string): Promise<OrgAnalyticsSnapshot> {
+  const seriesStart = dailySeriesStartDate();
+  const activeSince = new Date(Date.now() - 1000 * 60 * 60 * 24 * 7);
+  const postDay = sql<string>`to_char(${dbSchema.posts.createdAt}, 'YYYY-MM-DD')`;
+  const commentDay = sql<string>`to_char(${dbSchema.comments.createdAt}, 'YYYY-MM-DD')`;
+  const introCreatedDay = sql<string>`to_char(${dbSchema.introRequests.createdAt}, 'YYYY-MM-DD')`;
+  const introRespondedDay = sql<string>`to_char(${dbSchema.introRequests.respondedAt}, 'YYYY-MM-DD')`;
+
+  const [
+    approvedMembers,
+    completedProfiles,
+    activeWeeklyPosters,
+    introRequestsSent,
+    introRequestsAccepted,
+    cofounderMatchesAccepted,
+    mentorMatchesAccepted,
+    teamsFormed,
+    startupsLaunched,
+    postSeries,
+    commentSeries,
+    introSeries,
+    acceptedIntroSeries,
+  ] = await Promise.all([
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.memberships)
+      .where(
+        and(
+          eq(dbSchema.memberships.orgId, orgId),
+          eq(dbSchema.memberships.status, "approved"),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.profiles)
+      .innerJoin(dbSchema.memberships, eq(dbSchema.memberships.id, dbSchema.profiles.membershipId))
+      .where(
+        and(
+          eq(dbSchema.memberships.orgId, orgId),
+          eq(dbSchema.profiles.onboardingComplete, true),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(distinct ${dbSchema.posts.authorMembershipId})::int` })
+      .from(dbSchema.posts)
+      .where(
+        and(
+          eq(dbSchema.posts.orgId, orgId),
+          sql`${dbSchema.posts.createdAt} > ${activeSince}`,
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(eq(dbSchema.introRequests.orgId, orgId)),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, orgId),
+          eq(dbSchema.introRequests.status, "accepted"),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, orgId),
+          eq(dbSchema.introRequests.status, "accepted"),
+          eq(dbSchema.introRequests.introPurpose, "co-founder conversation"),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, orgId),
+          eq(dbSchema.introRequests.status, "accepted"),
+          eq(dbSchema.introRequests.introPurpose, "mentor guidance"),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.analyticsEvents)
+      .where(
+        and(
+          eq(dbSchema.analyticsEvents.orgId, orgId),
+          eq(dbSchema.analyticsEvents.eventName, "team_formed"),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.analyticsEvents)
+      .where(
+        and(
+          eq(dbSchema.analyticsEvents.orgId, orgId),
+          eq(dbSchema.analyticsEvents.eventName, "startup_launched"),
+        ),
+      ),
+    getDb()
+      .select({ date: postDay, count: sql<number>`count(*)::int` })
+      .from(dbSchema.posts)
+      .where(
+        and(
+          eq(dbSchema.posts.orgId, orgId),
+          sql`${dbSchema.posts.createdAt} >= ${seriesStart}`,
+        ),
+      )
+      .groupBy(postDay),
+    getDb()
+      .select({ date: commentDay, count: sql<number>`count(*)::int` })
+      .from(dbSchema.comments)
+      .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+      .where(
+        and(
+          eq(dbSchema.posts.orgId, orgId),
+          sql`${dbSchema.comments.createdAt} >= ${seriesStart}`,
+        ),
+      )
+      .groupBy(commentDay),
+    getDb()
+      .select({ date: introCreatedDay, count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, orgId),
+          sql`${dbSchema.introRequests.createdAt} >= ${seriesStart}`,
+        ),
+      )
+      .groupBy(introCreatedDay),
+    getDb()
+      .select({ date: introRespondedDay, count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, orgId),
+          eq(dbSchema.introRequests.status, "accepted"),
+          sql`${dbSchema.introRequests.respondedAt} >= ${seriesStart}`,
+        ),
+      )
+      .groupBy(introRespondedDay),
+  ]);
+
+  return {
+    approvedMembers: countFromRows(approvedMembers),
+    completedProfiles: countFromRows(completedProfiles),
+    activeWeeklyPosters: countFromRows(activeWeeklyPosters),
+    introRequestsSent: countFromRows(introRequestsSent),
+    introRequestsAccepted: countFromRows(introRequestsAccepted),
+    cofounderMatchesAccepted: countFromRows(cofounderMatchesAccepted),
+    mentorMatchesAccepted: countFromRows(mentorMatchesAccepted),
+    teamsFormed: countFromRows(teamsFormed),
+    startupsLaunched: countFromRows(startupsLaunched),
+    dailySeries: buildDailySeriesFromCounts({
+      posts: dateCountMap(postSeries),
+      comments: dateCountMap(commentSeries),
+      introRequests: dateCountMap(introSeries),
+      acceptedIntros: dateCountMap(acceptedIntroSeries),
+    }),
+  };
+}
+
+export async function getPublicOrgStats(orgId: string): Promise<PublicOrgStats> {
+  if (!usesDatabase) {
+    const store = getStore();
+    return {
+      approvedMembers: store.memberships.filter(
+        (membership) => membership.orgId === orgId && membership.status === "approved",
+      ).length,
+      introRequestsAccepted: store.introRequests.filter(
+        (request) => request.orgId === orgId && request.status === "accepted",
+      ).length,
+    };
+  }
+
+  const [approvedRows, acceptedIntroRows] = await Promise.all([
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.memberships)
+      .where(
+        and(
+          eq(dbSchema.memberships.orgId, orgId),
+          eq(dbSchema.memberships.status, "approved"),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, orgId),
+          eq(dbSchema.introRequests.status, "accepted"),
+        ),
+      ),
+  ]);
+
+  return {
+    approvedMembers: Number(approvedRows[0]?.count ?? 0),
+    introRequestsAccepted: Number(acceptedIntroRows[0]?.count ?? 0),
+  };
+}
+
+export async function getAdminOverviewData(orgId: string): Promise<AdminOverviewData> {
+  const [analytics, recentPosts, recentRequests] = await Promise.all([
+    getAnalyticsSnapshot(orgId),
+    listPostsForOrg(orgId, { limit: 4 }),
+    listIntroRequestsForOrg(orgId, { limit: 4 }),
+  ]);
+
+  return {
+    analytics,
+    recentPosts,
+    recentRequests,
+  };
 }

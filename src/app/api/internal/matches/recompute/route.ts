@@ -1,11 +1,8 @@
-import { getServerSession } from "next-auth";
-
-import { authOptions } from "@/lib/auth-options";
+import { getCurrentAuthIdentity } from "@/lib/auth-identity";
 import { env } from "@/lib/env";
 import {
-  getMembershipByUserAndOrg,
   getOrganizationBySlug,
-  getUserByEmail,
+  getViewerRecordByEmailAndSlug,
   recomputeMatchesForOrg,
 } from "@/server/store";
 import { canAdminOrganization } from "@/server/permissions";
@@ -27,10 +24,12 @@ async function handleRecompute(request: Request) {
       request.headers.get("authorization") === `Bearer ${env.cronSecret}`);
 
   if (!authorizedBySecret) {
-    const session = await getServerSession(authOptions);
-    const email = session?.user?.email;
-    const user = email ? await getUserByEmail(email) : undefined;
-    const membership = user ? await getMembershipByUserAndOrg(user.id, org.id) : undefined;
+    const identity = await getCurrentAuthIdentity();
+    const viewerRecord = identity
+      ? await getViewerRecordByEmailAndSlug(orgSlug, identity.email)
+      : undefined;
+    const user = viewerRecord?.user;
+    const membership = viewerRecord?.membership;
 
     if (!user || !membership || !canAdminOrganization(user, membership)) {
       return Response.json({ error: "Unauthorized" }, { status: 401 });

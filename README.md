@@ -5,7 +5,7 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 ## What’s in this MVP
 
 - Multi-tenant org routing under `/org/[slug]`
-- Built-in email/password accounts via Auth.js credentials, plus demo personas for local development
+- Clerk-backed sign-in/sign-up and user invitations, with local fallback auth for unconfigured development
 - Structured onboarding and profile completion flow
 - Community feed, opportunities, post detail, comments, and intro requests
 - AI-assisted cofounder and mentor matches with explainable scoring
@@ -17,7 +17,8 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 - Next.js App Router
 - TypeScript
 - Tailwind CSS v4
-- Auth.js / NextAuth credentials
+- Clerk user management
+- Auth.js / NextAuth local fallback credentials
 - Drizzle ORM + drizzle-kit
 - PostgreSQL-ready schema with `pgvector`
 - Vitest + Playwright
@@ -46,11 +47,11 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 
 ## Auth behavior
 
-- The production sign-in page uses built-in email/password accounts.
-- If `AUTH_DEV_DEMO_ENABLED=true`, the sign-in page also shows seeded demo personas so the product can be exercised locally without external auth setup.
-- Admins can create or update built-in accounts from `/org/wavespark/admin/members`.
+- Production authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`; the app's org-scoped sign-in/sign-up pages pass their Clerk routes directly.
+- If Clerk keys are missing, the app falls back to local Auth.js credentials and seeded demo personas so the product can still be exercised without external auth setup.
+- Admins can invite or update members from `/org/wavespark/admin/members`. With Clerk configured, the action sends a Clerk invitation and stores the Wavespark membership state locally.
 - `letsbuild@wavesparks.co` is a default bootstrap admin. Add more comma-separated admin emails with `WAVESPARK_ADMIN_EMAILS`.
-- Set `WAVESPARK_ADMIN_PASSWORD` before running production bootstrap so the bootstrap admin can sign in.
+- In local fallback mode, set `WAVESPARK_ADMIN_PASSWORD` so the bootstrap admin can sign in without Clerk.
 
 ## Database workflow
 
@@ -84,7 +85,57 @@ pnpm test
 pnpm test:e2e
 pnpm build
 pnpm cron:matches
+pnpm readiness:prod
 ```
+
+## Production rollout checklist
+
+Before promoting a deployment to production:
+
+1. Configure production environment variables in Vercel:
+
+```bash
+NEXT_PUBLIC_APP_URL=https://app.wavesparks.co
+DATABASE_URL=<postgres-url-with-pgvector>
+CRON_SECRET=<long-random-secret>
+AUTH_DEV_DEMO_ENABLED=false
+WAVESPARK_ADMIN_EMAILS=letsbuild@wavesparks.co
+RESEND_API_KEY=<resend-key>
+RESEND_FROM_EMAIL=<verified-sender>
+SUPABASE_URL=<supabase-url>
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+SUPABASE_BUCKET=wavesparks
+```
+
+The Vercel Clerk integration should supply `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+`CLERK_SECRET_KEY`. Optional Clerk route overrides are only needed if you want Clerk's
+global defaults to match the Wavespark org routes:
+
+```bash
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/org/wavespark/signin
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/org/wavespark/sign-up
+NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/org/wavespark
+NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/org/wavespark
+```
+
+2. Run the production checks and database setup:
+
+```bash
+pnpm readiness:prod
+pnpm db:migrate
+pnpm db:bootstrap
+```
+
+`pnpm readiness:prod` expects the real production environment to be present, as it is in
+Vercel/CI. It blocks localhost URLs, placeholder secrets, Clerk test keys, demo auth, and
+partial Resend/Supabase configuration before the deployment is promoted. It does not require
+`NEXTAUTH_SECRET` when Clerk is configured and local fallback auth is disabled.
+
+3. Confirm DNS points the app domain to Vercel. `app.wavesparks.co` should resolve to Vercel before it becomes the member-facing URL.
+
+4. Keep Vercel Authentication on preview deployments only. Production access should be controlled by the app sign-in, onboarding, and approval flow.
+
+5. After the first admin signs in through Clerk, invite managed members from the admin members page.
 
 ## Verification
 
@@ -95,6 +146,7 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm build
+pnpm readiness:prod
 ```
 
 ## Notes

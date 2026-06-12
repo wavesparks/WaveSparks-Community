@@ -1,18 +1,23 @@
 import { moderateCommentAction, updatePostModerationAction } from "@/actions/admin";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { StatusBanner } from "@/components/ui/status-banner";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { getViewerContext } from "@/lib/auth";
-import { getMembershipById, getProfileByMembershipId, listAllCommentsForOrg, listPostsForOrg } from "@/server/store";
+import { singleQueryValue } from "@/lib/feed-filters";
+import { getAdminPostModerationDashboard } from "@/server/view-models";
 
 export default async function AdminPostsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { slug } = await params;
+  const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
     requireApproved: true,
@@ -23,37 +28,29 @@ export default async function AdminPostsPage({
     return null;
   }
 
-  const posts = await listPostsForOrg(viewer.org.id);
-  const comments = await listAllCommentsForOrg(viewer.org.id);
-  const postCards = await Promise.all(
-    posts.map(async (post) => {
-      const authorMembership = await getMembershipById(post.authorMembershipId);
-      const authorProfile = authorMembership
-        ? await getProfileByMembershipId(authorMembership.id)
-        : undefined;
-
-      return { authorProfile, post };
-    }),
-  );
+  const dashboard = await getAdminPostModerationDashboard(viewer.org.id);
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/posts`} viewer={viewer}>
       <div className="space-y-8">
         <SectionHeading
           eyebrow="Admin · Posts"
+          level={1}
           title="Moderate feed content and comments"
           description="Feature important posts, hide low-trust content, and lock comment threads when necessary."
         />
+        <StatusBanner status={singleQueryValue(query.status)} />
 
         <div className="space-y-6">
-          {postCards.map(({ authorProfile, post }) => {
+          <SectionHeading eyebrow="Latest" title="Posts to review" />
+          {dashboard.posts.map((post) => {
             return (
               <Card className="space-y-4" key={post.id}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-2xl font-semibold text-slate-950">{post.title}</h3>
+                    <h3 className="text-xl font-semibold text-slate-950">{post.title}</h3>
                     <p className="text-sm text-slate-600">
-                      {authorProfile?.preferredName ?? "Unknown"} · {post.type.replaceAll("_", " ")}
+                      {post.authorName} · {post.type.replaceAll("_", " ")}
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -65,40 +62,66 @@ export default async function AdminPostsPage({
                 <div className="flex flex-wrap gap-3">
                   <form action={updatePostModerationAction.bind(null, slug, post.id)}>
                     <input name="hidden" type="hidden" value={String(!post.hidden)} />
-                    <Button type="submit" variant="secondary">
+                    <SubmitButton pendingLabel="Updating" variant="secondary">
                       {post.hidden ? "Unhide" : "Hide"}
-                    </Button>
+                    </SubmitButton>
                   </form>
                   <form action={updatePostModerationAction.bind(null, slug, post.id)}>
                     <input name="featured" type="hidden" value={String(!post.featured)} />
-                    <Button type="submit" variant="secondary">
+                    <SubmitButton pendingLabel="Updating" variant="secondary">
                       {post.featured ? "Unfeature" : "Feature"}
-                    </Button>
+                    </SubmitButton>
                   </form>
                   <form action={updatePostModerationAction.bind(null, slug, post.id)}>
-                    <input name="comments_locked" type="hidden" value={String(!post.commentsLocked)} />
-                    <Button type="submit" variant="secondary">
+                    <input
+                      name="comments_locked"
+                      type="hidden"
+                      value={String(!post.commentsLocked)}
+                    />
+                    <SubmitButton pendingLabel="Updating" variant="secondary">
                       {post.commentsLocked ? "Unlock comments" : "Lock comments"}
-                    </Button>
+                    </SubmitButton>
                   </form>
                   <form action={updatePostModerationAction.bind(null, slug, post.id)}>
-                    <input name="status" type="hidden" value={post.status === "archived" ? "active" : "archived"} />
-                    <Button type="submit" variant="secondary">
+                    <input
+                      name="status"
+                      type="hidden"
+                      value={post.status === "archived" ? "active" : "archived"}
+                    />
+                    <SubmitButton pendingLabel="Updating" variant="secondary">
                       {post.status === "archived" ? "Reopen" : "Archive"}
-                    </Button>
+                    </SubmitButton>
                   </form>
                 </div>
               </Card>
             );
           })}
+          {!dashboard.posts.length ? (
+            <Card>
+              <p className="text-sm font-semibold text-slate-950">No posts to review yet</p>
+              <p className="mt-1 text-sm text-slate-600">
+                New member posts will appear here for moderation.
+              </p>
+            </Card>
+          ) : null}
         </div>
 
         <Card className="space-y-4">
-          <h3 className="text-2xl font-semibold text-slate-950">Comment moderation</h3>
+          <h3 className="text-xl font-semibold text-slate-950">Latest comment moderation</h3>
           <div className="space-y-3">
-            {comments.map((comment) => (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] bg-slate-50 p-4" key={comment.id}>
-                <p className="text-sm text-slate-700">{comment.body}</p>
+            {dashboard.comments.map((comment) => (
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
+                key={comment.id}
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold text-slate-950">{comment.authorName}</p>
+                    <Badge>{comment.status}</Badge>
+                  </div>
+                  <p className="text-xs text-slate-500">On {comment.postTitle}</p>
+                  <p className="text-sm text-slate-700">{comment.body}</p>
+                </div>
                 <form
                   action={moderateCommentAction.bind(
                     null,
@@ -107,12 +130,17 @@ export default async function AdminPostsPage({
                     comment.status === "removed" ? "visible" : "removed",
                   )}
                 >
-                  <Button type="submit" variant="secondary">
+                  <SubmitButton pendingLabel="Updating" variant="secondary">
                     {comment.status === "removed" ? "Restore" : "Remove"}
-                  </Button>
+                  </SubmitButton>
                 </form>
               </div>
             ))}
+            {!dashboard.comments.length ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm text-slate-600">No comments to review yet.</p>
+              </div>
+            ) : null}
           </div>
         </Card>
       </div>

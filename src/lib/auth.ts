@@ -1,15 +1,17 @@
-import { getServerSession } from "next-auth";
 import { notFound, redirect } from "next/navigation";
 
-import { authOptions } from "@/lib/auth-options";
+import { getCurrentAuthIdentity, type AuthIdentity } from "@/lib/auth-identity";
 import { canAdminOrganization, canAccessFeed } from "@/server/permissions";
 import {
   ensureMembership,
   getOrganizationBySlug,
   getProfileByMembershipId,
+  getViewerRecordByEmailAndOrgId,
+  getViewerRecordByEmailAndSlug,
   upsertSessionUser,
 } from "@/server/store";
-import type { ViewerContext } from "@/lib/domain";
+import type { Membership, Organization, Profile, User, ViewerContext } from "@/lib/domain";
+import { isBootstrapAdminEmail } from "@/lib/env";
 
 interface ViewerOptions {
   requireAuth?: boolean;
@@ -18,52 +20,43 @@ interface ViewerOptions {
   requireAdmin?: boolean;
 }
 
-export async function getViewerContext(
-  slug: string,
-  options: ViewerOptions = {},
-): Promise<ViewerContext | null> {
-  const org = await getOrganizationBySlug(slug);
-  if (!org) {
-    notFound();
+interface ViewerRecord {
+  user?: User;
+  membership?: Membership;
+  profile?: Profile;
+}
+
+async function buildViewerContextForOrg(
+  org: Organization,
+  identity: AuthIdentity,
+  viewerRecord: ViewerRecord,
+) {
+  let user = viewerRecord.user;
+  let membership = viewerRecord.membership;
+  let profile = viewerRecord.profile;
+
+  if (!user || !membership) {
+    user = await upsertSessionUser({
+      email: identity.email,
+      name: identity.name,
+      imageUrl: identity.imageUrl,
+    });
+    membership = await ensureMembership(user.id, org.id, {
+      existingUser: user,
+    });
+    profile = await getProfileByMembershipId(membership.id);
+  } else if (
+    isBootstrapAdminEmail(user.email) &&
+    (membership.role !== "org_admin" || membership.status !== "approved")
+  ) {
+    membership = await ensureMembership(user.id, org.id, {
+      existingUser: user,
+      existingMembership: membership,
+    });
+    profile = await getProfileByMembershipId(membership.id);
   }
 
-  const session = await getServerSession(authOptions);
-
-  if (!session?.user?.email || !session.user.name) {
-    if (options.requireAuth) {
-      redirect(`/org/${slug}/signin`);
-    }
-    return null;
-  }
-
-  const user = await upsertSessionUser({
-    email: session.user.email,
-    name: session.user.name,
-    imageUrl: session.user.image ?? undefined,
-  });
-
-  const membership = await ensureMembership(user.id, org.id);
-  const profile = await getProfileByMembershipId(membership.id);
   const canAdmin = canAdminOrganization(user, membership);
-
-  if (options.requireAdmin && !canAdmin) {
-    redirect(`/org/${slug}/feed`);
-  }
-
-  if (
-    options.requireApproved &&
-    membership.status !== "approved"
-  ) {
-    redirect(`/org/${slug}/pending`);
-  }
-
-  if (
-    options.requireCompleteProfile &&
-    membership.status === "approved" &&
-    !canAccessFeed(membership, profile)
-  ) {
-    redirect(`/org/${slug}/onboarding`);
-  }
 
   return {
     org,
@@ -72,5 +65,114 @@ export async function getViewerContext(
     profile,
     canAdmin,
     scopes: canAdmin ? ["org:admin", "org:member"] : ["org:member"],
+  } satisfies ViewerContext;
+}
+
+async function resolveViewerContext(slug: string) {
+  const identity = await getCurrentAuthIdentity();
+  const viewerRecord = identity?.email
+    ? await getViewerRecordByEmailAndSlug(slug, identity.email)
+    : {
+        org: await getOrganizationBySlug(slug),
+        user: undefined,
+        membership: undefined,
+        profile: undefined,
+      };
+  const org = viewerRecord.org;
+
+  if (!org) {
+    return { org: undefined, viewer: null, authenticated: Boolean(identity) };
+  }
+
+  if (!identity) {
+    return { org, viewer: null, authenticated: false };
+  }
+
+  return {
+    org,
+    authenticated: true,
+    viewer: await buildViewerContextForOrg(org, identity, viewerRecord),
   };
+}
+
+async function resolveOrganizationViewerContext(slug: string) {
+  const [identity, org] = await Promise.all([
+    getCurrentAuthIdentity(),
+    getOrganizationBySlug(slug),
+  ]);
+
+  if (!org) {
+    return { org: undefined, viewer: null, authenticated: Boolean(identity) };
+  }
+
+  if (!identity) {
+    return { org, viewer: null, authenticated: false };
+  }
+
+  const viewerRecord = await getViewerRecordByEmailAndOrgId(org.id, identity.email);
+
+  return {
+    org,
+    authenticated: true,
+    viewer: await buildViewerContextForOrg(org, identity, viewerRecord),
+  };
+}
+
+export async function getViewerContext(
+  slug: string,
+  options: ViewerOptions = {},
+): Promise<ViewerContext | null> {
+  const { org, viewer, authenticated } = await resolveViewerContext(slug);
+
+  if (!org) {
+    notFound();
+  }
+
+  if (!authenticated || !viewer) {
+    if (options.requireAuth) {
+      redirect(`/org/${slug}/signin`);
+    }
+    return null;
+  }
+
+  if (options.requireAdmin && !viewer.canAdmin) {
+    redirect(`/org/${slug}/feed`);
+  }
+
+  if (
+    options.requireApproved &&
+    viewer.membership.status !== "approved"
+  ) {
+    redirect(`/org/${slug}/pending`);
+  }
+
+  if (
+    options.requireCompleteProfile &&
+    viewer.membership.status === "approved" &&
+    !canAccessFeed(viewer.membership, viewer.profile)
+  ) {
+    redirect(`/org/${slug}/onboarding`);
+  }
+
+  return viewer;
+}
+
+export async function getViewerContextForAction(slug: string) {
+  const { org, viewer } = await resolveViewerContext(slug);
+
+  if (!org || !viewer) {
+    return null;
+  }
+
+  return viewer;
+}
+
+export async function getOrganizationViewerContext(slug: string) {
+  const { org, viewer } = await resolveOrganizationViewerContext(slug);
+
+  if (!org) {
+    notFound();
+  }
+
+  return { org, viewer };
 }

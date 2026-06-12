@@ -2,146 +2,334 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { nanoid } from "nanoid";
 
-import { buildNotification, sendNotificationEmail } from "@/server/notifications";
-import { isOpportunityPostType, opportunitySourceForPost } from "@/lib/opportunities";
+import { getViewerContextForAction } from "@/lib/auth";
+import { buildNotification, enqueueNotificationEmail } from "@/server/notifications";
+import { opportunitySourceForPost } from "@/lib/opportunities";
+import {
+  getPostCommentRevalidationPaths,
+  getPostListPathForType,
+  getPostListRevalidationPaths,
+} from "@/lib/post-action-routing";
 import { profileFromFormData } from "@/lib/profile-form";
 import { parseTags } from "@/lib/utils";
+import { absoluteAppUrl } from "@/lib/urls";
 import {
-  addNotification,
+  enqueueAnalyticsEvent,
+  enqueueMembershipEmail,
+  enqueueNotificationWrite,
+} from "@/server/action-side-effects";
+import { canAccessFeed } from "@/server/permissions";
+import {
   createComment,
   createIntroRequest,
+  getIntroRequestById,
   createPost,
   followMembership,
   getMembershipById,
-  getOrganizationBySlug,
+  getPostById,
   getProfileByMembershipId,
-  getUserById,
+  listActiveIntroRequestStatusesForRequester,
+  markNotificationsReadForMembership,
+  recomputeMatchesForProfile,
   respondToIntroRequest,
   unfollowMembership,
   upsertProfile,
 } from "@/server/store";
-import type { IntroStatus, PostType } from "@/lib/domain";
+import type { IntroStatus, Membership, PostType } from "@/lib/domain";
+
+async function requireMemberForAction(
+  slug: string,
+  expectedMembershipId?: string,
+  options: { requireFeedAccess?: boolean } = {},
+) {
+  const viewer = await getViewerContextForAction(slug);
+
+  if (!viewer) {
+    throw new Error("Unauthorized.");
+  }
+
+  if (expectedMembershipId && viewer.membership.id !== expectedMembershipId) {
+    throw new Error("Unauthorized.");
+  }
+
+  if (
+    options.requireFeedAccess &&
+    !canAccessFeed(viewer.membership, viewer.profile)
+  ) {
+    throw new Error("Unauthorized.");
+  }
+
+  return {
+    org: viewer.org,
+    user: viewer.user,
+    membership: viewer.membership,
+    profile: viewer.profile,
+  };
+}
+
+function requireSameOrg(membership: Membership | undefined, orgId: string) {
+  if (!membership || membership.orgId !== orgId) {
+    throw new Error("Unauthorized.");
+  }
+  return membership;
+}
+
+function safeReturnPath(slug: string, formData: FormData | undefined, fallback: string) {
+  const raw = String(formData?.get("return_to") ?? "");
+  if (!raw) {
+    return fallback;
+  }
+
+  try {
+    const url = new URL(raw, "https://wavespark.local");
+    const orgRoot = `/org/${slug}`;
+    if (
+      url.origin !== "https://wavespark.local" ||
+      (url.pathname !== orgRoot && !url.pathname.startsWith(`${orgRoot}/`))
+    ) {
+      return fallback;
+    }
+
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
+function withStatus(path: string, status: string) {
+  const url = new URL(path, "https://wavespark.local");
+  url.searchParams.set("status", status);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: string) {
+  after(async () => {
+    try {
+      await recomputeMatchesForProfile(orgId, profileId);
+      revalidatePath(`/org/${slug}/matches`);
+    } catch (error) {
+      console.error("[wavesparks] profile match recompute failed", profileId, error);
+    }
+  });
+}
+
+function revalidateMemberDiscoveryPaths(slug: string) {
+  revalidatePath(`/org/${slug}/feed`);
+  revalidatePath(`/org/${slug}/opportunities`);
+  revalidatePath(`/org/${slug}/matches`);
+  revalidatePath(`/org/${slug}/profile`);
+}
+
+function revalidateMemberActivationPaths(slug: string) {
+  revalidatePath(`/org/${slug}/feed`);
+  revalidatePath(`/org/${slug}/profile`);
+}
 
 export async function saveOnboardingAction(slug: string, membershipId: string, formData: FormData) {
-  const org = await getOrganizationBySlug(slug);
-  const membership = await getMembershipById(membershipId);
-  if (!org || !membership) {
-    return;
-  }
-
-  const baseUser = await getUserById(membership.userId);
-  if (!baseUser) {
-    return;
-  }
-
-  const existingProfile = await getProfileByMembershipId(membership.id);
+  const { membership, profile: existingProfile, user } = await requireMemberForAction(
+    slug,
+    membershipId,
+  );
   const result = profileFromFormData({
     formData,
     membership,
     user: {
-      ...baseUser,
-      email: String(formData.get("email_for_intro") ?? baseUser.email),
-      name: String(formData.get("full_name") ?? baseUser.name),
-      imageUrl: String(formData.get("profile_photo") ?? baseUser.imageUrl),
+      ...user,
+      email: String(formData.get("email_for_intro") ?? user.email),
+      name: String(formData.get("full_name") ?? user.name),
+      imageUrl: String(formData.get("profile_photo") ?? user.imageUrl),
       updatedAt: new Date().toISOString(),
     },
     existingProfile,
   });
 
-  await upsertProfile(result.profile, result.links);
-  revalidatePath(`/org/${slug}/profile`);
-  revalidatePath(`/org/${slug}/matches`);
+  await upsertProfile(result.profile, result.links, {
+    orgId: membership.orgId,
+    recomputeMatches: false,
+  });
+  enqueueProfileMatchRecompute(slug, membership.orgId, result.profile.id);
+  revalidateMemberActivationPaths(slug);
+  revalidatePath(`/org/${slug}/pending`);
   redirect(
-    membership.status === "approved" ? `/org/${slug}/profile` : `/org/${slug}/pending`,
+    membership.status === "approved"
+      ? `/org/${slug}/profile?status=profile_saved`
+      : `/org/${slug}/pending?status=profile_saved`,
   );
 }
 
 export async function createPostAction(slug: string, membershipId: string, formData: FormData) {
-  const org = await getOrganizationBySlug(slug);
-  const membership = await getMembershipById(membershipId);
-  if (!org || !membership) {
-    return;
-  }
-
-  const type = String(formData.get("type") ?? "general_update") as PostType;
-  const post = await createPost({
-    orgId: org.id,
-    authorMembershipId: membershipId,
-    type,
-    opportunitySource: opportunitySourceForPost(
-      type,
-      membership,
-      formData.get("opportunity_source"),
-    ),
-    title: String(formData.get("title") ?? ""),
-    body: String(formData.get("body") ?? ""),
-    tags: parseTags(formData.get("tags")),
-    relatedStartupName: String(formData.get("related_startup_name") ?? ""),
-    relatedRolesNeeded: parseTags(formData.get("related_roles_needed")),
-    visibility: "org_only",
-    status: "active",
-    featured: false,
-    hidden: false,
-    commentsLocked: false,
+  const { org, membership } = await requireMemberForAction(slug, membershipId, {
+    requireFeedAccess: true,
   });
 
-  revalidatePath(`/org/${slug}/feed`);
-  revalidatePath(`/org/${slug}/opportunities`);
-  redirect(isOpportunityPostType(post.type) ? `/org/${slug}/opportunities` : `/org/${slug}/feed`);
+  const type = String(formData.get("type") ?? "general_update") as PostType;
+  const post = await createPost(
+    {
+      orgId: org.id,
+      authorMembershipId: membershipId,
+      type,
+      opportunitySource: opportunitySourceForPost(
+        type,
+        membership,
+        formData.get("opportunity_source"),
+      ),
+      title: String(formData.get("title") ?? ""),
+      body: String(formData.get("body") ?? ""),
+      tags: parseTags(formData.get("tags")),
+      relatedStartupName: String(formData.get("related_startup_name") ?? ""),
+      relatedRolesNeeded: parseTags(formData.get("related_roles_needed")),
+      visibility: "org_only",
+      status: "active",
+      featured: false,
+      hidden: false,
+      commentsLocked: false,
+    },
+    { recordAnalytics: false },
+  );
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: org.id,
+    membershipId: membership.id,
+    eventName: "post_created",
+    payload: { postId: post.id, type: post.type },
+    createdAt: post.createdAt,
+  });
+
+  for (const path of getPostListRevalidationPaths(slug, post.type)) {
+    revalidatePath(path);
+  }
+  revalidatePath(`/org/${slug}/profile`);
+  redirect(`${getPostListPathForType(slug, post.type)}?status=post_created`);
 }
 
 export async function followMembershipAction(
   slug: string,
   followerMembershipId: string,
   followedMembershipId: string,
+  formData?: FormData,
 ) {
-  const org = await getOrganizationBySlug(slug);
-  if (!org) {
-    return;
+  const { org, membership } = await requireMemberForAction(slug, followerMembershipId, {
+    requireFeedAccess: true,
+  });
+  const followedMembership = requireSameOrg(
+    await getMembershipById(followedMembershipId),
+    org.id,
+  );
+
+  if (followedMembership.status !== "approved") {
+    throw new Error("Unauthorized.");
   }
 
-  await followMembership(org.id, followerMembershipId, followedMembershipId);
-  revalidatePath(`/org/${slug}/feed`);
-  revalidatePath(`/org/${slug}/opportunities`);
-  revalidatePath(`/org/${slug}/matches`);
+  await followMembership(org.id, membership.id, followedMembership.id);
+  revalidateMemberDiscoveryPaths(slug);
+  redirect(
+    withStatus(
+      safeReturnPath(slug, formData, `/org/${slug}/matches`),
+      "member_followed",
+    ),
+  );
 }
 
 export async function unfollowMembershipAction(
   slug: string,
   followerMembershipId: string,
   followedMembershipId: string,
+  formData?: FormData,
 ) {
-  await unfollowMembership(followerMembershipId, followedMembershipId);
-  revalidatePath(`/org/${slug}/feed`);
-  revalidatePath(`/org/${slug}/opportunities`);
-  revalidatePath(`/org/${slug}/matches`);
+  const { org, membership } = await requireMemberForAction(slug, followerMembershipId, {
+    requireFeedAccess: true,
+  });
+  const followedMembership = requireSameOrg(
+    await getMembershipById(followedMembershipId),
+    org.id,
+  );
+
+  await unfollowMembership(membership.id, followedMembership.id);
+  revalidateMemberDiscoveryPaths(slug);
+  redirect(
+    withStatus(
+      safeReturnPath(slug, formData, `/org/${slug}/matches`),
+      "member_unfollowed",
+    ),
+  );
 }
 
 export async function addCommentAction(slug: string, membershipId: string, postId: string, formData: FormData) {
-  await createComment({
-    postId,
-    authorMembershipId: membershipId,
-    body: String(formData.get("body") ?? ""),
+  const { org, membership } = await requireMemberForAction(slug, membershipId, {
+    requireFeedAccess: true,
+  });
+  const post = await getPostById(postId);
+  if (
+    !post ||
+    post.orgId !== org.id ||
+    post.hidden ||
+    post.commentsLocked ||
+    post.status !== "active"
+  ) {
+    throw new Error("Unauthorized.");
+  }
+
+  const comment = await createComment(
+    {
+      postId,
+      authorMembershipId: membership.id,
+      body: String(formData.get("body") ?? ""),
+    },
+    { orgId: org.id, recordAnalytics: false },
+  );
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: org.id,
+    membershipId: membership.id,
+    eventName: "comment_created",
+    payload: { postId: comment.postId },
+    createdAt: comment.createdAt,
   });
 
-  revalidatePath(`/org/${slug}/posts/${postId}`);
-  revalidatePath(`/org/${slug}/feed`);
+  for (const path of getPostCommentRevalidationPaths(slug, postId, post.type)) {
+    revalidatePath(path);
+  }
+  redirect(`/org/${slug}/posts/${postId}?status=comment_added`);
 }
 
 export async function requestIntroAction(slug: string, requesterMembershipId: string, formData: FormData) {
-  const org = await getOrganizationBySlug(slug);
-  if (!org) {
-    return;
-  }
+  const { org, membership } = await requireMemberForAction(slug, requesterMembershipId, {
+    requireFeedAccess: true,
+  });
 
   const receiverMembershipId = String(formData.get("receiver_membership_id") ?? "");
-  const receiverProfile = await getProfileByMembershipId(receiverMembershipId);
-  await createIntroRequest({
+  const [
+    receiverMembershipCandidate,
+    receiverProfile,
+    activeIntroStatuses,
+  ] = await Promise.all([
+    getMembershipById(receiverMembershipId),
+    getProfileByMembershipId(receiverMembershipId),
+    listActiveIntroRequestStatusesForRequester(membership.id, [
+      receiverMembershipId,
+    ]),
+  ]);
+  const receiverMembership = requireSameOrg(receiverMembershipCandidate, org.id);
+  if (receiverMembership.id === membership.id || receiverMembership.status !== "approved") {
+    throw new Error("Unauthorized.");
+  }
+
+  if (!receiverProfile?.introOptIn) {
+    throw new Error("Unauthorized.");
+  }
+
+  const existingIntroStatus = activeIntroStatuses.get(receiverMembership.id);
+  if (existingIntroStatus) {
+    redirect(`/org/${slug}/requests?status=intro_existing`);
+  }
+
+  const intro = await createIntroRequest({
     orgId: org.id,
-    requesterMembershipId,
-    receiverMembershipId,
+    requesterMembershipId: membership.id,
+    receiverMembershipId: receiverMembership.id,
     sourceType: String(formData.get("source_type") ?? "match") as never,
     sourceId: String(formData.get("source_id") ?? ""),
     introPurpose: String(formData.get("intro_purpose") ?? "general connection"),
@@ -150,45 +338,79 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     suggestedFirstMessage:
       String(formData.get("suggested_first_message") ?? "") ||
       "Excited to connect and learn more about what you’re building.",
-  });
-
-  await addNotification(
+  }, { recordAnalytics: false });
+  enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
       org.id,
-      receiverMembershipId,
+      receiverMembership.id,
       "intro_requested",
       "A new intro request is waiting",
       "Someone in the community wants to connect with context.",
       `/org/${slug}/requests`,
     ),
   );
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: org.id,
+    membershipId: membership.id,
+    eventName: "intro_requested",
+    payload: {
+      receiverMembershipId: intro.receiverMembershipId,
+      sourceType: intro.sourceType,
+    },
+    createdAt: intro.createdAt,
+  });
 
   if (receiverProfile) {
-    await sendNotificationEmail({
+    const requestsUrl = absoluteAppUrl(`/org/${slug}/requests`);
+    enqueueNotificationEmail({
       to: receiverProfile.emailForIntro,
       subject: "You have a new Wavespark intro request",
-      html: `<p>You have a new intro request inside Wavespark.</p><p>Open <a href="${`/org/${slug}/requests`}">your requests</a> to respond.</p>`,
+      html: `<p>You have a new intro request inside Wavespark.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
     });
   }
 
   revalidatePath(`/org/${slug}/requests`);
   revalidatePath(`/org/${slug}/matches`);
+  revalidateMemberActivationPaths(slug);
+  redirect(`/org/${slug}/requests?status=intro_requested`);
 }
 
 export async function respondIntroAction(slug: string, introRequestId: string, responderMembershipId: string, status: IntroStatus) {
-  const org = await getOrganizationBySlug(slug);
-  if (!org || (status !== "accepted" && status !== "declined")) {
-    return;
+  const { org, membership } = await requireMemberForAction(slug, responderMembershipId, {
+    requireFeedAccess: true,
+  });
+  if (status !== "accepted" && status !== "declined") {
+    throw new Error("Unauthorized.");
   }
 
-  const updated = await respondToIntroRequest(introRequestId, status);
+  const intro = await getIntroRequestById(introRequestId);
+  if (
+    !intro ||
+    intro.orgId !== org.id ||
+    intro.receiverMembershipId !== membership.id ||
+    intro.status !== "pending"
+  ) {
+    throw new Error("Unauthorized.");
+  }
+
+  const updated = await respondToIntroRequest(introRequestId, status, {
+    recordAnalytics: false,
+  });
   if (!updated) {
     return;
   }
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: org.id,
+    membershipId: updated.receiverMembershipId,
+    eventName: status === "accepted" ? "intro_accepted" : "intro_declined",
+    payload: { introRequestId: updated.id },
+    createdAt: updated.respondedAt ?? updated.updatedAt,
+  });
 
-  const requesterProfile = await getProfileByMembershipId(updated.requesterMembershipId);
-  await addNotification(
+  enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
       org.id,
@@ -202,16 +424,30 @@ export async function respondIntroAction(slug: string, introRequestId: string, r
     ),
   );
 
-  if (requesterProfile) {
-    await sendNotificationEmail({
-      to: requesterProfile.emailForIntro,
-      subject:
-        status === "accepted"
-          ? "Your Wavespark intro was accepted"
-          : "Your Wavespark intro was declined",
-      html: `<p>Your request status is now <strong>${status}</strong>.</p><p>Visit your Wavespark requests inbox for the latest details.</p>`,
-    });
-  }
+  const requestsUrl = absoluteAppUrl(`/org/${slug}/requests`);
+  enqueueMembershipEmail({
+    membershipId: updated.requesterMembershipId,
+    subject:
+      status === "accepted"
+        ? "Your Wavespark intro was accepted"
+        : "Your Wavespark intro was declined",
+    html: `<p>Your request status is now <strong>${status}</strong>.</p><p>Visit <a href="${requestsUrl}">your Wavespark requests inbox</a> for the latest details.</p>`,
+  });
 
   revalidatePath(`/org/${slug}/requests`);
+  redirect(
+    `/org/${slug}/requests?status=${
+      status === "accepted" ? "intro_accepted" : "intro_declined"
+    }`,
+  );
+}
+
+export async function markNotificationsReadAction(slug: string, membershipId: string) {
+  const { membership } = await requireMemberForAction(slug, membershipId, {
+    requireFeedAccess: true,
+  });
+
+  await markNotificationsReadForMembership(membership.id);
+  revalidatePath(`/org/${slug}/requests`);
+  redirect(`/org/${slug}/requests?status=notifications_read`);
 }

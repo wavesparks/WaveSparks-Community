@@ -8,8 +8,23 @@ function parseEmailList(value?: string | null) {
 }
 
 const env = {
-  appUrl: process.env.NEXTAUTH_URL ?? "http://localhost:3000",
+  appUrl:
+    process.env.NEXT_PUBLIC_APP_URL ??
+    process.env.NEXTAUTH_URL ??
+    "http://localhost:3000",
   nextAuthSecret: process.env.NEXTAUTH_SECRET ?? "development-secret",
+  clerkPublishableKey: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+  clerkSecretKey: process.env.CLERK_SECRET_KEY,
+  clerkSignInUrl:
+    process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL ?? "/org/wavespark/signin",
+  clerkSignUpUrl:
+    process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL ?? "/org/wavespark/sign-up",
+  clerkSignInFallbackRedirectUrl:
+    process.env.NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL ??
+    "/org/wavespark",
+  clerkSignUpFallbackRedirectUrl:
+    process.env.NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL ??
+    "/org/wavespark",
   databaseUrl: process.env.DATABASE_URL,
   openAiApiKey: process.env.OPENAI_API_KEY,
   resendApiKey: process.env.RESEND_API_KEY,
@@ -28,6 +43,10 @@ const env = {
     process.env.WAVESPARK_ADMIN_PASSWORD ??
     (process.env.NODE_ENV === "production" ? "" : "wavespark-admin-dev"),
 };
+
+export function isClerkConfigured() {
+  return Boolean(env.clerkPublishableKey && env.clerkSecretKey);
+}
 
 export function getBootstrapAdminEmails() {
   return Array.from(

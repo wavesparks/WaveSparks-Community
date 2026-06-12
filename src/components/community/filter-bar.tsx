@@ -1,10 +1,12 @@
 import Link from "next/link";
+import Form from "next/form";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { activeFeedFilterCount, hasFeedFilters } from "@/lib/feed-filters";
 import type { FeedFilters } from "@/server/view-models";
 
@@ -13,45 +15,50 @@ export function FilterBar({
   clearHref,
   opportunityMode = false,
   defaultOpportunitySource = "all",
+  showRecommendedFilter = true,
 }: {
   filters: FeedFilters;
   clearHref: string;
   opportunityMode?: boolean;
   defaultOpportunitySource?: FeedFilters["opportunitySource"];
+  showRecommendedFilter?: boolean;
 }) {
-  const activeCount = activeFeedFilterCount(filters, {
+  const effectiveFilters = showRecommendedFilter
+    ? filters
+    : { ...filters, recommendedOnly: false };
+  const activeCount = activeFeedFilterCount(effectiveFilters, {
     includeOpportunitySource: opportunityMode,
     defaultOpportunitySource,
   });
-  const hasFilters = hasFeedFilters(filters, {
+  const hasFilters = hasFeedFilters(effectiveFilters, {
     includeOpportunitySource: opportunityMode,
     defaultOpportunitySource,
   });
 
   return (
     <Card className="p-3">
-      <form className="space-y-3">
+      <Form action={clearHref} className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <label className="relative min-w-[220px] flex-1">
-            <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <Input
-              className="pl-10"
+              className="pl-9"
               defaultValue={filters.q}
               name="q"
               placeholder={opportunityMode ? "Search opportunities" : "Search posts, tags, people"}
             />
           </label>
           <details className="group">
-            <summary className="inline-flex h-11 cursor-pointer list-none items-center justify-center gap-2 rounded-full bg-white/70 px-5 text-sm font-semibold text-slate-900 ring-1 ring-slate-200 transition hover:bg-white">
+            <summary className="inline-flex h-10 cursor-pointer list-none items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-semibold text-slate-900 ring-1 ring-slate-200 transition hover:bg-slate-50">
               <SlidersHorizontal className="size-4" />
               Filters
               {activeCount ? (
-                <span className="rounded-full bg-[var(--accent)] px-2 py-0.5 text-xs text-white">
+                <span className="rounded-md bg-[var(--accent)] px-2 py-0.5 text-xs text-white">
                   {activeCount}
                 </span>
               ) : null}
             </summary>
-            <div className="mt-3 grid gap-4 rounded-[24px] bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="mt-3 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 md:grid-cols-2 xl:grid-cols-3">
               {opportunityMode ? (
                 <Select
                   defaultValue={filters.opportunitySource ?? defaultOpportunitySource ?? "all"}
@@ -102,16 +109,18 @@ export function FilterBar({
               </Select>
               <Input defaultValue={filters.authorIndustry} name="industry" placeholder="Industry" />
               <Input defaultValue={filters.roleNeeded} name="role" placeholder="Role needed" />
-              <label className="flex h-11 items-center gap-2 rounded-2xl bg-white px-4 text-sm text-slate-700 ring-1 ring-slate-200">
-                <input
-                  defaultChecked={filters.recommendedOnly}
-                  name="recommended"
-                  type="checkbox"
-                  value="true"
-                />
-                Recommended only
-              </label>
-              <Button type="submit">Apply filters</Button>
+              {showRecommendedFilter ? (
+                <label className="flex h-10 items-center gap-2 rounded-lg bg-white px-3 text-sm text-slate-700 ring-1 ring-slate-200">
+                  <input
+                    defaultChecked={filters.recommendedOnly}
+                    name="recommended"
+                    type="checkbox"
+                    value="true"
+                  />
+                  Recommended only
+                </label>
+              ) : null}
+              <SubmitButton pendingLabel="Applying filters">Apply filters</SubmitButton>
             </div>
           </details>
           {hasFilters ? (
@@ -122,9 +131,9 @@ export function FilterBar({
               </Link>
             </Button>
           ) : null}
-          <Button type="submit">Search</Button>
+          <SubmitButton pendingLabel="Searching">Search</SubmitButton>
         </div>
-      </form>
+      </Form>
     </Card>
   );
 }

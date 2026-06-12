@@ -6,6 +6,7 @@ import {
   createIntroRequest,
   createPost,
   getMembershipById,
+  listMatchesForOrg,
   listCommentsForPost,
   listIntroRequestsForMembership,
   respondToIntroRequest,
@@ -21,6 +22,13 @@ describe("member flows", () => {
   it("supports approval, posting, commenting, and intro acceptance", async () => {
     await updateMembershipStatus("mem_priya", "approved", "Approved for invited brand support");
     await expect(getMembershipById("mem_priya")).resolves.toMatchObject({ status: "approved" });
+    const matchesAfterApproval = await listMatchesForOrg("org_wavespark");
+    expect(
+      matchesAfterApproval.some(
+        (match) =>
+          match.sourceProfileId === "pro_priya" || match.targetProfileId === "pro_priya",
+      ),
+    ).toBe(true);
 
     const post = await createPost({
       orgId: "org_wavespark",

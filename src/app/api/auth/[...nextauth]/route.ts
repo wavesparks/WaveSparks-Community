@@ -1,7 +1,13 @@
 import NextAuth from "next-auth";
 
 import { authOptions } from "@/lib/auth-options";
+import { isClerkConfigured } from "@/lib/env";
 
-const handler = NextAuth(authOptions);
+function disabled() {
+  return Response.json({ error: "Local auth fallback is disabled." }, { status: 404 });
+}
 
-export { handler as GET, handler as POST };
+const handler = isClerkConfigured() ? disabled : NextAuth(authOptions);
+
+export const GET = handler;
+export const POST = handler;

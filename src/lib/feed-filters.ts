@@ -4,6 +4,26 @@ export function singleQueryValue(value: string | string[] | undefined) {
   return typeof value === "string" ? value : undefined;
 }
 
+export function pathWithQuery(
+  pathname: string,
+  query: Record<string, string | string[] | undefined>,
+) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(query)) {
+    if (key === "status") {
+      continue;
+    }
+
+    if (typeof value === "string" && value) {
+      params.set(key, value);
+    }
+  }
+
+  const suffix = params.toString();
+  return `${pathname}${suffix ? `?${suffix}` : ""}`;
+}
+
 export function parseFeedFilters(
   query: Record<string, string | string[] | undefined>,
   options: { includeOpportunitySource?: boolean; defaultOpportunitySource?: FeedFilters["opportunitySource"] } = {},

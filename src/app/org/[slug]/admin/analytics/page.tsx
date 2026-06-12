@@ -28,6 +28,7 @@ export default async function AdminAnalyticsPage({
       <div className="space-y-8">
         <SectionHeading
           eyebrow="Admin · Analytics"
+          level={1}
           title="Activation, engagement, and outcomes"
           description="These are the first-class health signals for a warm founder community: onboarding completion, posting, intros, and outcomes."
         />

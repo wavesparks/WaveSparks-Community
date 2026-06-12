@@ -2,26 +2,38 @@ import {
   canViewContactDetails,
   getProfileVisibilityForMember,
 } from "@/server/permissions";
+import { getProfileReadiness } from "@/lib/activation";
 import {
   getMembershipById,
-  getProfileByMembershipId,
-  getProfileById,
-  isFollowingMembership,
-  listCommentsForPost,
-  listFollowsForMembership,
+  getMemberActivationSignals,
+  getPostThreadRecord,
+  listCommentRecordsForOrg,
+  listActiveIntroRequestStatusesForRequester,
+  listFollowedMembershipIdsForMembership,
+  listIntroRequestsForOrg,
   listIntroRequestsForMembership,
-  listMatchesForMembership,
+  listMembershipUserRecordsByIds,
+  listMembershipUserRecordsForOrg,
+  listMembershipProfileRecordsByIds,
+  listMatchTargetRecordsForProfile,
   listNotificationsForMembership,
   listPostsForOrg,
-  listProfilesForOrg,
+  listProfileMembershipRecordsByIds,
   listProfileLinks,
+  listVisibleCommentCountsForOrg,
+  listVisibleMatchTargetMembershipIdsForMembership,
+  listVisibleMatchTargetMembershipIdsForProfile,
 } from "@/server/store";
+import type { PostThreadRecord } from "@/server/store";
 import type {
   FeedPostView,
   FullAdminProfile,
   IntroRequestView,
+  IntroStatus,
+  Comment,
   LimitedProfileCard,
   MatchCardView,
+  MemberActivationState,
   Membership,
   NotificationView,
   OpportunitySource,
@@ -52,8 +64,79 @@ export interface FeedFilters {
 
 export interface FeedViewOptions {
   viewerMembershipId?: string;
+  viewerProfileId?: string;
   filters?: FeedFilters;
   onlyOpportunities?: boolean;
+  includeMatchedRecommendationSignals?: boolean;
+  limit?: number;
+}
+
+export interface AdminIntroRequestDashboardOptions {
+  requestLimit?: number;
+  candidateLimit?: number;
+  requestStatus?: IntroStatus;
+  sourceType?: "match" | "post" | "admin_manual";
+}
+
+export interface AdminManualIntroCandidateView {
+  membershipId: string;
+  name: string;
+}
+
+export interface AdminIntroRequestRowView {
+  id: string;
+  status: IntroStatus;
+  introPurpose: string;
+  note: string;
+  requesterName: string;
+  receiverName: string;
+}
+
+export interface AdminIntroRequestDashboardView {
+  manualIntroCandidates: AdminManualIntroCandidateView[];
+  requests: AdminIntroRequestRowView[];
+}
+
+export interface AdminPostModerationDashboardOptions {
+  postLimit?: number;
+  commentLimit?: number;
+}
+
+export interface AdminPostModerationPostView {
+  id: string;
+  title: string;
+  body: string;
+  type: PostType;
+  featured: boolean;
+  hidden: boolean;
+  commentsLocked: boolean;
+  status: Post["status"];
+  authorName: string;
+}
+
+export interface AdminCommentModerationRowView {
+  id: string;
+  body: string;
+  status: Comment["status"];
+  postId?: string;
+  postTitle: string;
+  authorName: string;
+}
+
+export interface AdminPostModerationDashboardView {
+  posts: AdminPostModerationPostView[];
+  comments: AdminCommentModerationRowView[];
+}
+
+export interface PostThreadIntroContext {
+  thread?: PostThreadRecord;
+  existingIntroStatus?: IntroStatus;
+}
+
+export interface IntroRequestViewOptions {
+  limit?: number;
+  direction?: "incoming" | "outgoing";
+  status?: IntroStatus;
 }
 
 interface FeedEntry {
@@ -76,31 +159,34 @@ function includesNormalized(values: string[], candidate?: string) {
   return values.some((value) => value.toLowerCase().includes(needle));
 }
 
-async function matchedMembershipIdsForViewer(viewerMembershipId?: string) {
-  if (!viewerMembershipId) {
-    return new Set<string>();
-  }
-
-  const matches = await listMatchesForMembership(viewerMembershipId);
-  const targetMembershipIds = await Promise.all(
-    matches.map(async (match) => (await getProfileById(match.targetProfileId))?.membershipId),
-  );
-
-  return new Set(
-    targetMembershipIds.filter((membershipId): membershipId is string => Boolean(membershipId)),
+function hasNonPostListFilters(filters: FeedFilters, normalizedQuery: string) {
+  return Boolean(
+    normalizedQuery ||
+      filters.tag ||
+      filters.authorAffiliation ||
+      filters.authorStage ||
+      filters.authorIndustry ||
+      filters.roleNeeded ||
+      filters.recommendedOnly,
   );
 }
 
-async function followedMembershipIdsForViewer(viewerMembershipId?: string) {
-  if (!viewerMembershipId) {
-    return new Set<string>();
+function typesForPostList(filters: FeedFilters, onlyOpportunities?: boolean) {
+  if (filters.postType && filters.postType !== "all") {
+    if (onlyOpportunities && !opportunityTypes.includes(filters.postType)) {
+      return [];
+    }
+
+    return [filters.postType];
   }
 
-  return new Set(
-    (await listFollowsForMembership(viewerMembershipId)).map(
-      (follow) => follow.followedMembershipId,
-    ),
-  );
+  return onlyOpportunities ? opportunityTypes : undefined;
+}
+
+function opportunitySourcesForPostList(filters: FeedFilters) {
+  return filters.opportunitySource && filters.opportunitySource !== "all"
+    ? [filters.opportunitySource]
+    : undefined;
 }
 
 function displayName(profile: Profile) {
@@ -146,20 +232,62 @@ export function toFullAdminProfile(profile: Profile, membership: Membership): Fu
 export async function getFeedViewsForOrg(org: Organization, options: FeedViewOptions = {}) {
   const filters = options.filters ?? {};
   const normalizedQuery = normalized(filters.q);
-  const followedIds = await followedMembershipIdsForViewer(options.viewerMembershipId);
-  const matchedIds = await matchedMembershipIdsForViewer(options.viewerMembershipId);
+  const postTypes = typesForPostList(filters, options.onlyOpportunities);
+  const canLimitPostList = !hasNonPostListFilters(filters, normalizedQuery);
+  const includeMatchedRecommendationSignals =
+    options.includeMatchedRecommendationSignals ?? true;
 
-  const entries = await Promise.all(
-    (await listPostsForOrg(org.id))
-    .filter((post) => !post.hidden)
-    .filter((post) =>
-      options.onlyOpportunities
-        ? opportunityTypes.includes(post.type)
-        : true,
-    )
-    .map(async (post) => {
-      const membership = await getMembershipById(post.authorMembershipId);
-      const profile = membership ? await getProfileByMembershipId(membership.id) : undefined;
+  if (postTypes?.length === 0) {
+    return [];
+  }
+
+  const [
+    postsForOrg,
+    matchedMembershipIds,
+  ] = await Promise.all([
+    listPostsForOrg(org.id, {
+      hidden: false,
+      types: postTypes,
+      opportunitySources: opportunitySourcesForPostList(filters),
+      limit: canLimitPostList ? options.limit : undefined,
+    }),
+    includeMatchedRecommendationSignals && options.viewerProfileId
+      ? listVisibleMatchTargetMembershipIdsForProfile(options.viewerProfileId)
+      : includeMatchedRecommendationSignals && options.viewerMembershipId
+        ? listVisibleMatchTargetMembershipIdsForMembership(options.viewerMembershipId)
+      : Promise.resolve([]),
+  ]);
+  const relevantPosts = postsForOrg;
+  const authorMembershipIds = relevantPosts.map((post) => post.authorMembershipId);
+  const [
+    membershipRecords,
+    followedMembershipIds,
+    visibleCommentCountByPostId,
+  ] = await Promise.all([
+    listMembershipProfileRecordsByIds(
+      authorMembershipIds,
+      { orgId: org.id },
+    ),
+    options.viewerMembershipId
+      ? listFollowedMembershipIdsForMembership(options.viewerMembershipId, {
+          followedMembershipIds: authorMembershipIds,
+        })
+      : Promise.resolve([]),
+    listVisibleCommentCountsForOrg(org.id, {
+      postIds: relevantPosts.map((post) => post.id),
+    }),
+  ]);
+  const followedIds = new Set(followedMembershipIds);
+  const matchedIds = new Set(matchedMembershipIds);
+  const recordByMembershipId = new Map(
+    membershipRecords.map((record) => [record.membership.id, record]),
+  );
+
+  const entries = relevantPosts
+    .map((post) => {
+      const record = recordByMembershipId.get(post.authorMembershipId);
+      const membership = record?.membership;
+      const profile = record?.profile;
 
       if (!membership || !profile) {
         return null;
@@ -185,17 +313,14 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
         featured: post.featured,
         createdAt: post.createdAt,
         author: toLimitedProfileCard(profile, membership),
-        commentCount: (await listCommentsForPost(post.id)).length,
-        isFollowingAuthor: options.viewerMembershipId
-          ? await isFollowingMembership(options.viewerMembershipId, membership.id)
-          : false,
+        commentCount: visibleCommentCountByPostId.get(post.id) ?? 0,
+        isFollowingAuthor: followedIds.has(membership.id),
         isRecommended: recommendationReasons.length > 0,
         recommendationReasons,
       };
 
       return { view, membership, profile, post };
-    }),
-  );
+    });
 
   return entries
     .filter((entry): entry is FeedEntry => Boolean(entry))
@@ -269,46 +394,129 @@ export async function getMatchViews(membershipId: string, matchRecords: Array<{
   explanationText: string;
   overlapTags: string[];
   targetProfileId: string;
-}>) {
-  const sourceMembership = await getMembershipById(membershipId);
-  const orgProfiles = sourceMembership ? await listProfilesForOrg(sourceMembership.orgId) : [];
-  const views = await Promise.all(
-    matchRecords.map(async (match) => {
-      const profile = orgProfiles.find(
-        (candidate) => candidate.id === match.targetProfileId,
-      );
-      if (!profile) {
-        return null;
-      }
-      const membership = await getMembershipById(profile.membershipId);
-      if (!membership) {
-        return null;
-      }
-
-      return {
-        id: match.id,
-        matchType: match.matchType,
-        score: match.score,
-        scoreBand: match.scoreBand,
-        explanationText: match.explanationText,
-        overlapTags: match.overlapTags,
-        target: toLimitedProfileCard(profile, membership),
-      } satisfies MatchCardView;
-    }),
+}>, orgId?: string) {
+  const sourceMembership = orgId ? undefined : await getMembershipById(membershipId);
+  const recordsOrgId = orgId ?? sourceMembership?.orgId;
+  const profileRecords = await listProfileMembershipRecordsByIds(
+    matchRecords.map((match) => match.targetProfileId),
+    { orgId: recordsOrgId },
   );
+  const recordByProfileId = new Map(
+    profileRecords.map((record) => [record.profile.id, record]),
+  );
+  const views = matchRecords.map((match) => {
+    const record = recordByProfileId.get(match.targetProfileId);
+    const profile = record?.profile;
+    const membership = record?.membership;
+
+    if (!profile || !membership) {
+      return null;
+    }
+
+    return {
+      id: match.id,
+      matchType: match.matchType,
+      score: match.score,
+      scoreBand: match.scoreBand,
+      explanationText: match.explanationText,
+      overlapTags: match.overlapTags,
+      target: toLimitedProfileCard(profile, membership),
+    } satisfies MatchCardView;
+  });
 
   return views.filter(Boolean) as MatchCardView[];
 }
 
-export async function getIntroRequestViews(membershipId: string) {
-  return Promise.all((await listIntroRequestsForMembership(membershipId)).map(async (request) => {
+export async function getMatchCardViewsForProfile(
+  profileId: string,
+  membershipId: string,
+) {
+  const [records, introStatusByReceiver] = await Promise.all([
+    listMatchTargetRecordsForProfile(profileId, membershipId),
+    listActiveIntroRequestStatusesForRequester(membershipId),
+  ]);
+  const views: Array<{
+    match: MatchCardView;
+    following: boolean;
+    introStatus?: IntroStatus;
+  }> = [];
+
+  for (const record of records) {
+    if (!record.targetProfile || !record.targetMembership) {
+      continue;
+    }
+
+    const introStatus = introStatusByReceiver.get(record.targetMembership.id);
+    views.push({
+      match: {
+        id: record.match.id,
+        matchType: record.match.matchType,
+        score: record.match.score,
+        scoreBand: record.match.scoreBand,
+        explanationText: record.match.explanationText,
+        overlapTags: record.match.overlapTags,
+        target: toLimitedProfileCard(record.targetProfile, record.targetMembership),
+      },
+      following: record.following,
+      ...(introStatus ? { introStatus } : {}),
+    });
+  }
+
+  return views;
+}
+
+export async function getPostThreadIntroContext(input: {
+  postId: string;
+  orgId: string;
+  viewerMembershipId?: string;
+}): Promise<PostThreadIntroContext> {
+  const [thread, introStatusByReceiver] = await Promise.all([
+    getPostThreadRecord(input.postId, input.orgId),
+    input.viewerMembershipId
+      ? listActiveIntroRequestStatusesForRequester(input.viewerMembershipId)
+      : Promise.resolve(new Map<string, IntroStatus>()),
+  ]);
+  const authorMembershipId = thread?.author?.membership.id;
+
+  return {
+    thread,
+    existingIntroStatus:
+      input.viewerMembershipId &&
+      authorMembershipId &&
+      authorMembershipId !== input.viewerMembershipId
+        ? introStatusByReceiver.get(authorMembershipId)
+        : undefined,
+  };
+}
+
+export async function getIntroRequestViews(
+  membershipId: string,
+  orgId?: string,
+  options: IntroRequestViewOptions = {},
+) {
+  const [requests, viewerMembership] = await Promise.all([
+    listIntroRequestsForMembership(membershipId, options),
+    orgId ? Promise.resolve(undefined) : getMembershipById(membershipId),
+  ]);
+  const recordsOrgId = orgId ?? viewerMembership?.orgId;
+  const relatedMembershipIds = requests.flatMap((request) => [
+    request.requesterMembershipId,
+    request.receiverMembershipId,
+  ]);
+  const membershipRecords = await listMembershipProfileRecordsByIds(relatedMembershipIds, {
+    orgId: recordsOrgId,
+  });
+  const recordByMembershipId = new Map(
+    membershipRecords.map((record) => [record.membership.id, record]),
+  );
+
+  return requests.map((request) => {
     const isIncoming = request.receiverMembershipId === membershipId;
-    const otherMembership = await getMembershipById(
+    const otherRecord = recordByMembershipId.get(
       isIncoming ? request.requesterMembershipId : request.receiverMembershipId,
     );
-    const otherProfile = otherMembership
-      ? await getProfileByMembershipId(otherMembership.id)
-      : undefined;
+    const otherMembership = otherRecord?.membership;
+    const otherProfile = otherRecord?.profile;
 
     if (!otherMembership || !otherProfile) {
       throw new Error("Intro request references a missing member.");
@@ -332,11 +540,14 @@ export async function getIntroRequestViews(membershipId: string) {
       isIncoming,
       suggestedFirstMessage: request.suggestedFirstMessage,
     } satisfies IntroRequestView;
-  }));
+  });
 }
 
-export async function getNotificationViews(membershipId: string) {
-  return (await listNotificationsForMembership(membershipId)).map(
+export async function getNotificationViews(
+  membershipId: string,
+  options: { limit?: number } = {},
+) {
+  return (await listNotificationsForMembership(membershipId, options)).map(
     (notification) =>
       ({
         id: notification.id,
@@ -347,6 +558,186 @@ export async function getNotificationViews(membershipId: string) {
         readAt: notification.readAt,
       }) satisfies NotificationView,
   );
+}
+
+export async function getAdminPostModerationDashboard(
+  orgId: string,
+  options: AdminPostModerationDashboardOptions = {},
+): Promise<AdminPostModerationDashboardView> {
+  const [posts, commentRecords] = await Promise.all([
+    listPostsForOrg(orgId, { limit: options.postLimit ?? 50 }),
+    listCommentRecordsForOrg(orgId, { limit: options.commentLimit ?? 30 }),
+  ]);
+  const authorMembershipIds = [
+    ...posts.map((post) => post.authorMembershipId),
+    ...commentRecords.map((record) => record.comment.authorMembershipId),
+  ];
+  const membershipRecords = await listMembershipProfileRecordsByIds(authorMembershipIds, {
+    orgId,
+  });
+  const recordByMembershipId = new Map(
+    membershipRecords.map((record) => [record.membership.id, record]),
+  );
+  const nameForMembership = (membershipId: string) => {
+    const record = recordByMembershipId.get(membershipId);
+    return record?.profile
+      ? displayName(record.profile)
+      : record?.membership.id ?? "Unknown";
+  };
+
+  return {
+    posts: posts.map((post) => ({
+      id: post.id,
+      title: post.title,
+      body: post.body,
+      type: post.type,
+      featured: post.featured,
+      hidden: post.hidden,
+      commentsLocked: post.commentsLocked,
+      status: post.status,
+      authorName: nameForMembership(post.authorMembershipId),
+    })),
+    comments: commentRecords.map((record) => ({
+      id: record.comment.id,
+      body: record.comment.body,
+      status: record.comment.status,
+      postId: record.post?.id,
+      postTitle: record.post?.title ?? "Unknown post",
+      authorName: nameForMembership(record.comment.authorMembershipId),
+    })),
+  };
+}
+
+export async function getAdminIntroRequestDashboard(
+  orgId: string,
+  options: AdminIntroRequestDashboardOptions = {},
+): Promise<AdminIntroRequestDashboardView> {
+  const [requests, candidateRecords] = await Promise.all([
+    listIntroRequestsForOrg(orgId, {
+      limit: options.requestLimit ?? 50,
+      sourceType: options.sourceType,
+      status: options.requestStatus,
+    }),
+    listMembershipUserRecordsForOrg(orgId, {
+      limit: options.candidateLimit ?? 100,
+      status: "approved",
+    }),
+  ]);
+  const recordByMembershipId = new Map(
+    candidateRecords.map((record) => [record.membership.id, record]),
+  );
+  const missingParticipantIds = [
+    ...new Set(
+      requests
+        .flatMap((request) => [
+          request.requesterMembershipId,
+          request.receiverMembershipId,
+        ])
+        .filter((membershipId) => !recordByMembershipId.has(membershipId)),
+    ),
+  ];
+  const participantRecords = await listMembershipUserRecordsByIds(
+    missingParticipantIds,
+    { orgId },
+  );
+
+  for (const record of participantRecords) {
+    recordByMembershipId.set(record.membership.id, record);
+  }
+
+  return {
+    manualIntroCandidates: candidateRecords.map((record) => ({
+      membershipId: record.membership.id,
+      name: record.user?.name ?? record.membership.id,
+    })),
+    requests: requests.map((request) => ({
+      id: request.id,
+      status: request.status,
+      introPurpose: request.introPurpose,
+      note: request.note,
+      requesterName:
+        recordByMembershipId.get(request.requesterMembershipId)?.user?.name ??
+        "Unknown",
+      receiverName:
+        recordByMembershipId.get(request.receiverMembershipId)?.user?.name ??
+        "Unknown",
+    })),
+  };
+}
+
+export async function getMemberActivationState(
+  orgId: string,
+  membershipId: string,
+  profile: Profile,
+  slug = "wavespark",
+): Promise<MemberActivationState> {
+  const {
+    hasPost,
+    hasFollow,
+    hasVisibleMatch,
+    hasRequestedIntro,
+  } = await getMemberActivationSignals({
+    orgId,
+    membershipId,
+    profileId: profile.id,
+  });
+  const readiness = getProfileReadiness(profile);
+  const hasMatchOrFollow = hasFollow || hasVisibleMatch;
+  const items = [
+    {
+      id: "profile",
+      label: "Complete your profile",
+      description: readiness.isReady
+        ? "Your profile has the context needed for matches and introductions."
+        : "Add the minimum founder context so recommendations can work harder.",
+      complete: readiness.isReady,
+      href: `/org/${slug}/onboarding`,
+      cta: readiness.isReady ? "Review profile" : "Finish profile",
+    },
+    {
+      id: "post",
+      label: "Publish your first signal",
+      description: hasPost
+        ? "You have shared context the community can respond to."
+        : "Post an ask, update, or useful context so the right people can spot fit.",
+      complete: hasPost,
+      href: `/org/${slug}/compose?kind=feed`,
+      cta: hasPost ? "Create another post" : "Create post",
+    },
+    {
+      id: "matches",
+      label: "Browse your matches",
+      description: hasMatchOrFollow
+        ? "Your match graph is ready. Use it to find the next useful conversation."
+        : "Review surfaced members and follow the people worth tracking.",
+      complete: hasMatchOrFollow,
+      href: `/org/${slug}/matches`,
+      cta: "Open matches",
+    },
+    {
+      id: "intro",
+      label: "Request a high-context intro",
+      description: hasRequestedIntro
+        ? "You have started an intro flow with context."
+        : "Use a match or post to request an intro without exposing contact details.",
+      complete: hasRequestedIntro,
+      href: hasRequestedIntro
+        ? `/org/${slug}/requests`
+        : hasMatchOrFollow
+          ? `/org/${slug}/matches`
+          : `/org/${slug}/requests`,
+      cta: hasRequestedIntro ? "View requests" : "Request intro",
+    },
+  ] satisfies MemberActivationState["items"];
+
+  const completedCount = items.filter((item) => item.complete).length;
+
+  return {
+    items,
+    completedCount,
+    totalCount: items.length,
+    isComplete: completedCount === items.length,
+  };
 }
 
 export async function getProfileLinks(profileId: string): Promise<ProfileLink[]> {

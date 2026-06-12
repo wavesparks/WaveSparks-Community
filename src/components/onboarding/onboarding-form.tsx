@@ -1,21 +1,36 @@
 "use client";
 
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
+import {
+  getProfileReadiness,
+  getProfileReadinessFromFormData,
+} from "@/lib/activation";
 import { onboardingSteps } from "@/lib/constants";
 import { AvatarUploadField } from "@/components/onboarding/avatar-upload-field";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
 import type { Profile, ProfileLink } from "@/lib/domain";
 
 function linkValue(links: ProfileLink[], type: ProfileLink["type"]) {
   return links.find((link) => link.type === type)?.url ?? "";
 }
+
+const stepByReadinessField: Record<string, number> = {
+  preferred_name: 0,
+  headline: 0,
+  startup_one_liner: 1,
+  startup_description: 1,
+  looking_for_types: 2,
+  desired_roles: 2,
+  skill_tags: 2,
+  email_for_intro: 3,
+};
 
 export function OnboardingForm({
   action,
@@ -27,25 +42,119 @@ export function OnboardingForm({
   links: ProfileLink[];
 }) {
   const [step, setStep] = useState(0);
+  const [readiness, setReadiness] = useState(() => getProfileReadiness(profile));
+  const [validationNotice, setValidationNotice] = useState<string | null>(null);
+  const stepPanelClass =
+    "grid gap-5 rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:grid-cols-2";
+
+  function updateReadiness(form: HTMLFormElement) {
+    const next = getProfileReadinessFromFormData(new FormData(form), profile);
+    setReadiness(next);
+    return next;
+  }
 
   return (
-    <form action={action} className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-4">
+    <form
+      action={action}
+      className="space-y-6"
+      onInput={(event) => {
+        setValidationNotice(null);
+        updateReadiness(event.currentTarget);
+      }}
+      onSubmit={(event) => {
+        const next = updateReadiness(event.currentTarget);
+
+        if (next.isReady) {
+          return;
+        }
+
+        event.preventDefault();
+        setValidationNotice(
+          `Add ${next.missingFields.map((field) => field.label).join(", ")} before saving.`,
+        );
+        setStep(
+          Math.min(
+            ...next.missingFields.map((field) => stepByReadinessField[field.key] ?? 0),
+          ),
+        );
+      }}
+    >
+      <div
+        aria-live="polite"
+        className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
+              Profile readiness
+            </p>
+            <h2 className="mt-1 text-xl font-semibold text-slate-950">
+              {readiness.isReady
+                ? "Ready for matching and intros"
+                : "Add the minimum context before saving"}
+            </h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              Saving updates your match ranking, feed recommendations, and intro context.
+            </p>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-right">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              Complete
+            </p>
+            <p className="text-2xl font-semibold text-slate-950">
+              {readiness.completionPercent}%
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <div className="flex gap-3">
+            {readiness.isReady ? (
+              <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
+            ) : (
+              <AlertCircle className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
+            )}
+            <div>
+              <p className="text-sm font-semibold text-slate-950">
+                {readiness.isReady
+                  ? "All required activation fields are filled."
+                  : "Required before final save"}
+              </p>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                {readiness.isReady
+                  ? "You can still add more detail, but the profile has enough signal to activate."
+                  : readiness.missingFields.map((field) => field.label).join(", ")}
+              </p>
+              {validationNotice ? (
+                <p className="mt-2 text-sm font-medium text-red-600">{validationNotice}</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-2 md:grid-cols-4">
         {onboardingSteps.map((item, index) => (
-          <Card
-            className={index === step ? "border-[var(--accent)] bg-white" : "bg-white/60"}
+          <button
+            aria-current={index === step ? "step" : undefined}
+            className={
+              index === step
+                ? "rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-left shadow-sm"
+                : "rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-300 hover:bg-slate-50"
+            }
             key={item.key}
+            onClick={() => setStep(index)}
+            type="button"
           >
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
               Step {index + 1}
             </p>
-            <h3 className="mt-3 text-lg font-semibold text-slate-950">{item.title}</h3>
-            <p className="mt-2 text-sm text-slate-600">{item.description}</p>
-          </Card>
+            <h3 className="mt-2 text-sm font-semibold text-slate-950">{item.title}</h3>
+            <p className="mt-1 text-xs leading-5 text-slate-600">{item.description}</p>
+          </button>
         ))}
       </div>
 
-      <div className={step === 0 ? "grid gap-5 md:grid-cols-2" : "hidden"}>
+      <div className={step === 0 ? stepPanelClass : "hidden"}>
         <div>
           <Label htmlFor="full_name">Full name</Label>
           <Input defaultValue={profile.fullName} id="full_name" name="full_name" />
@@ -134,7 +243,7 @@ export function OnboardingForm({
         </div>
       </div>
 
-      <div className={step === 1 ? "grid gap-5 md:grid-cols-2" : "hidden"}>
+      <div className={step === 1 ? stepPanelClass : "hidden"}>
         <div>
           <Label htmlFor="startup_name">Startup name</Label>
           <Input defaultValue={profile.startupName} id="startup_name" name="startup_name" />
@@ -215,7 +324,7 @@ export function OnboardingForm({
         </div>
       </div>
 
-      <div className={step === 2 ? "grid gap-5 md:grid-cols-2" : "hidden"}>
+      <div className={step === 2 ? stepPanelClass : "hidden"}>
         <div>
           <Label htmlFor="looking_for_types">Looking for</Label>
           <Input
@@ -344,7 +453,7 @@ export function OnboardingForm({
         </div>
       </div>
 
-      <div className={step === 3 ? "grid gap-5 md:grid-cols-2" : "hidden"}>
+      <div className={step === 3 ? stepPanelClass : "hidden"}>
         <div>
           <Label htmlFor="ambition_level">Ambition level (1-5)</Label>
           <Input defaultValue={profile.ambitionLevel} id="ambition_level" name="ambition_level" type="number" min={1} max={5} />
@@ -488,7 +597,7 @@ export function OnboardingForm({
             name="whatsapp_number"
           />
         </div>
-        <div className="md:col-span-2 grid gap-3 rounded-[28px] bg-slate-50 p-4 text-sm text-slate-700">
+        <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 md:col-span-2">
           {[
             {
               name: "public_contact_enabled",
@@ -519,7 +628,7 @@ export function OnboardingForm({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 bg-[var(--canvas)]/95 py-4 backdrop-blur">
         <Button
           disabled={step === 0}
           onClick={() => setStep((current) => Math.max(0, current - 1))}
@@ -536,7 +645,7 @@ export function OnboardingForm({
               <ChevronRight className="size-4" />
             </Button>
           ) : (
-            <Button type="submit">Save profile</Button>
+            <SubmitButton pendingLabel="Saving profile">Save profile</SubmitButton>
           )}
         </div>
       </div>

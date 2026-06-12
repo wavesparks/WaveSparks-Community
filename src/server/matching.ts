@@ -290,10 +290,16 @@ export function computeMatch(
   } satisfies MatchRecord;
 }
 
+interface RecomputeMatchesForProfilesOptions {
+  profileIds?: string[];
+  limit?: number | null;
+}
+
 export function recomputeMatchesForProfiles(
   organization: Organization,
   memberships: Membership[],
   profiles: Profile[],
+  options: RecomputeMatchesForProfilesOptions = {},
 ) {
   const approvedMemberships = memberships.filter((membership) => membership.status === "approved");
   const approvedProfiles = profiles.filter((profile) => {
@@ -302,6 +308,7 @@ export function recomputeMatchesForProfiles(
     );
     return Boolean(membership) && profile.onboardingComplete;
   });
+  const scopedProfileIds = new Set(options.profileIds ?? []);
 
   const matches: MatchRecord[] = [];
 
@@ -316,6 +323,13 @@ export function recomputeMatchesForProfiles(
 
     for (const target of approvedProfiles) {
       if (source.id === target.id) {
+        continue;
+      }
+      if (
+        scopedProfileIds.size > 0 &&
+        !scopedProfileIds.has(source.id) &&
+        !scopedProfileIds.has(target.id)
+      ) {
         continue;
       }
 
@@ -355,7 +369,8 @@ export function recomputeMatchesForProfiles(
     }
   }
 
-  return matches
-    .sort((left, right) => right.score - left.score)
-    .slice(0, 60);
+  const sortedMatches = matches.sort((left, right) => right.score - left.score);
+  return options.limit === null
+    ? sortedMatches
+    : sortedMatches.slice(0, options.limit ?? 60);
 }
