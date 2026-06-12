@@ -23,8 +23,8 @@ export function SectionHeading({
       {eyebrow ? (
         <p
           className={cn(
-            "text-xs font-semibold uppercase tracking-[0.18em]",
-            inverse ? "text-white/75" : "text-[var(--accent)]",
+            "text-xs font-semibold uppercase",
+            inverse ? "text-[var(--gold)]" : "text-[var(--accent)]",
           )}
         >
           {eyebrow}
@@ -33,7 +33,9 @@ export function SectionHeading({
       <div className="space-y-1.5">
         <Heading
           className={cn(
-            "text-2xl font-semibold leading-tight sm:text-3xl",
+            level === 1
+              ? "text-4xl font-semibold leading-tight sm:text-5xl"
+              : "text-2xl font-semibold leading-tight sm:text-3xl",
             inverse ? "text-white" : "text-[var(--ink)]",
           )}
         >

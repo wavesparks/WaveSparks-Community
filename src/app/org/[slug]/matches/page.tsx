@@ -48,7 +48,7 @@ export default async function MatchesPage({
           eyebrow="Matches"
           level={1}
           title="AI-suggested people worth meeting"
-          description="These suggestions blend structured fit, semantic similarity, and trust signals. Members only see surfaced match cards, not an org directory."
+          description="These suggestions blend structured fit, semantic similarity, and trust signals. Use People when you want broader limited-profile search."
         />
         <StatusBanner status={singleQueryValue(query.status)} />
         <div className="grid gap-6 xl:grid-cols-2">

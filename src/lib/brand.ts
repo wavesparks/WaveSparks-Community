@@ -1,8 +1,35 @@
+export const wavesparksAssets = {
+  logoPrimary: "/wavesparks-assets/wavesparks-primary.png",
+  logoLight: "/wavesparks-assets/wavesparks-light.png",
+  logoDark: "/wavesparks-assets/wavesparks-dark.png",
+  avatarGradient: "/wavesparks-assets/wavesparks-avatar-gradient.png",
+  overview: "/wavesparks-assets/wavesparks-overview.png",
+  graphic01: "/wavesparks-assets/graphic-01.png",
+  graphic02: "/wavesparks-assets/graphic-02.png",
+  frame02: "/wavesparks-assets/frame-02.png",
+  sparkGroup: "/wavesparks-assets/spark-group.png",
+  wave01: "/wavesparks-assets/wave-01.png",
+  wave02: "/wavesparks-assets/wave-02.png",
+  wave04: "/wavesparks-assets/wave-04.png",
+  wave05: "/wavesparks-assets/wave-05.png",
+  gradient03: "/wavesparks-assets/gradient-03.png",
+  gradient06: "/wavesparks-assets/gradient-06.png",
+} as const;
+
 export const wavesparksBrand = {
-  logoUrl:
-    "https://images.squarespace-cdn.com/content/v1/64e22917c68d27228f74cd27/1e5d47d0-2444-45ef-9efa-28e220454afa/wavesparks-primary+%281%29.png?format=500w",
-  heroImageUrl:
-    "https://images.squarespace-cdn.com/content/v1/64e22917c68d27228f74cd27/55723be5-e6a8-4785-9658-085df936239e/YFS+25+Day+2+-+01.png?format=2500w",
-  huddleImageUrl:
-    "https://images.squarespace-cdn.com/content/v1/64e22917c68d27228f74cd27/76fe4644-c99b-42ba-82a9-a95a9b5fbbc4/Young+Founders+Summit+2025+-+huddle.jpg?format=1500w",
+  logoUrl: wavesparksAssets.logoPrimary,
+  heroImageUrl: wavesparksAssets.graphic02,
+  huddleImageUrl: wavesparksAssets.graphic01,
+  theme: {
+    accent: "#8958f0",
+    accentSoft: "#f0e9ff",
+    cyan: "#01d4e7",
+    cyanSoft: "#dcfbff",
+    gold: "#fec502",
+    canvas: "#f7f9ff",
+    ink: "#221b44",
+    inkSoft: "#5a5576",
+    night: "#221b44",
+    blue: "#2a3b89",
+  },
 } as const;

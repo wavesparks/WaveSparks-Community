@@ -1,17 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --accent: #6f4bff;
-  --accent-soft: #eee8ff;
-  --flame: #f36f4c;
-  --flame-soft: #fff0e8;
-  --canvas: #f8f7f3;
-  --ink: #01020a;
-  --ink-soft: #30313a;
+  --accent: #8958f0;
+  --accent-soft: #f0e9ff;
+  --cyan: #01d4e7;
+  --cyan-soft: #dcfbff;
+  --flame: #fec502;
+  --flame-soft: #fff6ca;
+  --canvas: #f7f9ff;
+  --ink: #221b44;
+  --ink-soft: #5a5576;
   --surface: #ffffff;
-  --surface-muted: #f1f0eb;
-  --line: #dedbd2;
-  --night: #05050d;
+  --surface-muted: #eef5ff;
+  --line: #dbe2f3;
+  --night: #221b44;
+  --blue: #2a3b89;
+  --gold: #fec502;
 }
 
 @theme inline {
@@ -49,4 +53,71 @@ h4 {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.ws-page-shell {
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(247, 249, 255, 0.96)),
+    var(--canvas);
+}
+
+.ws-page-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    url("/wavesparks-assets/wave-05.png"),
+    url("/wavesparks-assets/gradient-03.png");
+  background-repeat: no-repeat;
+  background-position:
+    center top 84px,
+    right -360px top -440px;
+  background-size:
+    min(1180px, 112vw) auto,
+    760px auto;
+  opacity: 0.12;
+}
+
+.ws-page-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.ws-night-panel {
+  background-color: var(--night);
+  background-image:
+    linear-gradient(160deg, rgba(34, 27, 68, 0.98), rgba(42, 59, 137, 0.92)),
+    url("/wavesparks-assets/wave-06.png");
+  background-repeat: no-repeat;
+  background-position:
+    center,
+    left bottom;
+  background-size:
+    cover,
+    150% auto;
+}
+
+.ws-hero-art {
+  background-color: var(--night);
+  background-image:
+    linear-gradient(135deg, rgba(34, 27, 68, 0.98), rgba(42, 59, 137, 0.94) 56%, rgba(1, 212, 231, 0.72)),
+    url("/wavesparks-assets/wave-04.png");
+  background-repeat: no-repeat;
+  background-position:
+    center,
+    right bottom;
+  background-size:
+    cover,
+    min(900px, 95vw) auto;
+}
+
+.ws-card-glow {
+  box-shadow:
+    0 22px 70px rgba(34, 27, 68, 0.12),
+    0 1px 0 rgba(255, 255, 255, 0.85) inset;
 }

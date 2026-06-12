@@ -100,7 +100,7 @@ export default async function ProfilePage({
 
           <div className="space-y-6">
             <Card className="space-y-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              <p className="text-xs font-semibold uppercase text-slate-500">
                 Profile completion
               </p>
               <p className="text-4xl font-semibold text-slate-950">

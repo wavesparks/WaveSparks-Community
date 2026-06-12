@@ -33,8 +33,10 @@ import {
   followMembershipAction,
   requestIntroAction,
   respondIntroAction,
+  savePostAction,
   saveOnboardingAction,
   unfollowMembershipAction,
+  unsavePostAction,
 } from "@/actions/member";
 import {
   createIntroRequest,
@@ -43,6 +45,7 @@ import {
   getProfileByMembershipId,
   getStore,
   getUserById,
+  listSavedPostIdsForMembership,
   resetStore,
 } from "@/server/store";
 import { getNotificationViews } from "@/server/view-models";
@@ -284,6 +287,66 @@ describe("member server actions", () => {
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/matches");
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/feed");
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/profile");
+  });
+
+  it("creates profile-sourced intro requests from member discovery", async () => {
+    await setViewer("mem_jules");
+    const receiver = firstIntroReadyTargetFor("mem_jules")!;
+    const receiverProfile = (await getProfileByMembershipId(receiver.id))!;
+    const formData = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "profile",
+      source_id: receiverProfile.id,
+      intro_purpose: "profile discovery",
+      note: "This profile surfaced through member discovery.",
+      suggested_first_message: "Would love to compare notes.",
+    });
+
+    await expect(
+      requestIntroAction("wavespark", "mem_jules", formData),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavespark/requests?status=intro_requested");
+
+    expect(
+      getStore().introRequests.some(
+        (request) =>
+          request.requesterMembershipId === "mem_jules" &&
+          request.receiverMembershipId === receiver.id &&
+          request.sourceType === "profile" &&
+          request.sourceId === receiverProfile.id,
+      ),
+    ).toBe(true);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/people");
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/org/wavespark/people/${receiver.id}`);
+  });
+
+  it("saves and unsaves posts through server actions", async () => {
+    await setViewer("mem_jules");
+    const formData = formDataFromEntries({
+      return_to: "/org/wavespark/knowledge?mode=saved",
+    });
+
+    await expect(
+      savePostAction("wavespark", "mem_jules", "pst_8", formData),
+    ).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavespark/knowledge?mode=saved&status=post_saved",
+    );
+    await expect(
+      listSavedPostIdsForMembership("mem_jules", { postIds: ["pst_8"] }),
+    ).resolves.toHaveProperty("size", 1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/knowledge");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/posts/pst_8");
+
+    vi.clearAllMocks();
+
+    await expect(
+      unsavePostAction("wavespark", "mem_jules", "pst_8", formData),
+    ).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavespark/knowledge?mode=saved&status=post_unsaved",
+    );
+    await expect(
+      listSavedPostIdsForMembership("mem_jules", { postIds: ["pst_8"] }),
+    ).resolves.toHaveProperty("size", 0);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/knowledge");
   });
 
   it("responds to an intro before notifying the requester after the response", async () => {

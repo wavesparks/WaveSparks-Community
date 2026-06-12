@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { Bookmark } from "lucide-react";
 
 import {
   followMembershipAction,
+  savePostAction,
+  unsavePostAction,
   unfollowMembershipAction,
 } from "@/actions/member";
 import { Avatar } from "@/components/ui/avatar";
@@ -33,9 +36,12 @@ export function PostCard({
   const followAction = post.isFollowingAuthor
     ? unfollowMembershipAction.bind(null, slug, viewerMembershipId ?? "", post.author.membershipId)
     : followMembershipAction.bind(null, slug, viewerMembershipId ?? "", post.author.membershipId);
+  const saveAction = post.isSaved
+    ? unsavePostAction.bind(null, slug, viewerMembershipId ?? "", post.id)
+    : savePostAction.bind(null, slug, viewerMembershipId ?? "", post.id);
 
   return (
-    <Card className="group space-y-4 transition hover:-translate-y-0.5 hover:border-[var(--accent)]/30 hover:shadow-[0_22px_55px_rgba(1,2,10,0.10)]">
+    <Card className="group overflow-hidden space-y-4 transition before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-[linear-gradient(180deg,var(--cyan),var(--accent),var(--gold))] before:opacity-70 hover:-translate-y-0.5 hover:border-[var(--accent)]/30 hover:shadow-[0_26px_70px_rgba(34,27,68,0.14)]">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant={post.featured ? "accent" : "default"}>
           {post.type.replaceAll("_", " ")}
@@ -48,7 +54,7 @@ export function PostCard({
             {reason}
           </Badge>
         ))}
-        <span className="ml-auto text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ink-soft)]">
+        <span className="ml-auto text-xs font-semibold uppercase text-[var(--ink-soft)]">
           {formatDate(post.createdAt)}
         </span>
       </div>
@@ -89,6 +95,19 @@ export function PostCard({
                 variant={post.isFollowingAuthor ? "secondary" : "primary"}
               >
                 {post.isFollowingAuthor ? "Following" : "Follow"}
+              </SubmitButton>
+            </form>
+          ) : null}
+          {viewerMembershipId ? (
+            <form action={saveAction}>
+              {returnPath ? <input name="return_to" type="hidden" value={returnPath} /> : null}
+              <SubmitButton
+                pendingLabel={post.isSaved ? "Removing" : "Saving"}
+                size="sm"
+                variant={post.isSaved ? "primary" : "secondary"}
+              >
+                <Bookmark className="size-4" />
+                {post.isSaved ? "Saved" : "Save"}
               </SubmitButton>
             </form>
           ) : null}

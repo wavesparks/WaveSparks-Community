@@ -8,9 +8,9 @@ function SkeletonBlock({ className = "" }: { className?: string }) {
 
 function SidebarSkeleton() {
   return (
-    <aside className="border-b border-white/10 bg-[var(--night)] text-white lg:min-h-screen lg:border-b-0 lg:border-r">
+    <aside className="ws-night-panel border-b border-white/10 text-white lg:min-h-screen lg:border-b-0 lg:border-r">
       <div className="flex h-full flex-col gap-3 p-3 sm:p-4 lg:gap-6 lg:p-5">
-        <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3 lg:p-4">
+        <div className="rounded-lg border border-white/[0.12] bg-white/[0.06] p-3 lg:p-4">
           <div className="flex items-start gap-3">
             <div className="size-10 shrink-0 animate-pulse rounded-lg bg-white/20" />
             <div className="min-w-0 flex-1 space-y-2">
@@ -26,7 +26,7 @@ function SidebarSkeleton() {
           aria-hidden
           className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1"
         >
-          {Array.from({ length: 5 }).map((_, index) => (
+          {Array.from({ length: 7 }).map((_, index) => (
             <div
               className="flex min-h-10 items-center gap-3 rounded-lg px-3 py-2"
               key={`member-nav-skeleton-${index}`}
@@ -77,7 +77,7 @@ function ContentSkeleton() {
             <div className="space-y-6">
               {Array.from({ length: 3 }).map((_, index) => (
                 <div
-                  className="rounded-lg border border-[var(--line)] bg-white p-5 shadow-[0_18px_45px_rgba(1,2,10,0.06)]"
+                  className="ws-card-glow rounded-lg border border-[var(--line)] bg-white/[0.88] p-5"
                   key={`primary-card-skeleton-${index}`}
                 >
                   <div className="flex items-start justify-between gap-4">
@@ -101,7 +101,7 @@ function ContentSkeleton() {
             <div className="space-y-6">
               {Array.from({ length: 2 }).map((_, index) => (
                 <div
-                  className="rounded-lg border border-[var(--line)] bg-white p-5 shadow-[0_18px_45px_rgba(1,2,10,0.06)]"
+                  className="ws-card-glow rounded-lg border border-[var(--line)] bg-white/[0.88] p-5"
                   key={`secondary-card-skeleton-${index}`}
                 >
                   <div className="space-y-3">
@@ -122,7 +122,7 @@ function ContentSkeleton() {
 
 export function AppShellLoading() {
   return (
-    <div className="min-h-screen bg-[var(--canvas)] text-[var(--ink)]">
+    <div className="ws-page-shell text-[var(--ink)]">
       <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-[280px_1fr]">
         <SidebarSkeleton />
         <ContentSkeleton />

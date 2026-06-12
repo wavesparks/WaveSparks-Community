@@ -140,6 +140,16 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
         title: "Comment added",
         body: "Your reply is now visible in the thread.",
       };
+    case "post_saved":
+      return {
+        title: "Post saved",
+        body: "This thread is now available from your Knowledge saved view.",
+      };
+    case "post_unsaved":
+      return {
+        title: "Post removed from saved",
+        body: "This thread is no longer in your saved Knowledge view.",
+      };
     case "intro_accepted":
       return {
         title: "Intro accepted",

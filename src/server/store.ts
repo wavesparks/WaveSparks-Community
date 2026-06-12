@@ -12,6 +12,7 @@ import {
   seedMemberships,
   seedNotifications,
   seedOrganization,
+  seedPostSaves,
   seedPosts,
   seedProfileLinks,
   seedProfiles,
@@ -41,6 +42,7 @@ import type {
   OrgAnalyticsSnapshot,
   Organization,
   Post,
+  PostSave,
   PostType,
   Profile,
   ProfileLink,
@@ -67,6 +69,7 @@ export interface StoreState {
   posts: Post[];
   comments: Comment[];
   follows: Follow[];
+  postSaves: PostSave[];
   matches: MatchRecord[];
   introRequests: IntroRequest[];
   notifications: Notification[];
@@ -200,6 +203,7 @@ function initializeStore(): StoreState {
     posts: structuredClone(seedPosts),
     comments: structuredClone(seedComments),
     follows: structuredClone(seedFollows),
+    postSaves: structuredClone(seedPostSaves),
     matches: [],
     introRequests: structuredClone(seedIntroRequests),
     notifications: structuredClone(seedNotifications),
@@ -217,6 +221,7 @@ function initializeStore(): StoreState {
 
 function ensureStoreShape(store: StoreState) {
   store.follows ??= structuredClone(seedFollows);
+  store.postSaves ??= structuredClone(seedPostSaves);
   store.passwordCredentials ??= [];
   return store;
 }
@@ -411,6 +416,16 @@ function followFromRow(row: typeof dbSchema.follows.$inferSelect): Follow {
   };
 }
 
+function postSaveFromRow(row: typeof dbSchema.postSaves.$inferSelect): PostSave {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    membershipId: row.membershipId,
+    postId: row.postId,
+    createdAt: requiredIso(row.createdAt),
+  };
+}
+
 function commentFromRow(row: typeof dbSchema.comments.$inferSelect): Comment {
   return {
     id: row.id,
@@ -509,6 +524,13 @@ function postInsert(post: Post): typeof dbSchema.posts.$inferInsert {
     relatedStartupName: post.relatedStartupName ?? "",
     createdAt: new Date(post.createdAt),
     updatedAt: new Date(post.updatedAt),
+  };
+}
+
+function postSaveInsert(save: PostSave): typeof dbSchema.postSaves.$inferInsert {
+  return {
+    ...save,
+    createdAt: new Date(save.createdAt),
   };
 }
 
@@ -2356,6 +2378,127 @@ export async function unfollowMembership(
     )
     .returning({ id: dbSchema.follows.id });
   return deleted.length > 0;
+}
+
+export async function savePostForMembership(
+  orgId: string,
+  membershipId: string,
+  postId: string,
+) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const existing = store.postSaves.find(
+      (save) => save.membershipId === membershipId && save.postId === postId,
+    );
+    if (existing) {
+      return existing;
+    }
+
+    const save: PostSave = {
+      id: `save_${nanoid(8)}`,
+      orgId,
+      membershipId,
+      postId,
+      createdAt: new Date().toISOString(),
+    };
+    store.postSaves.unshift(save);
+    return save;
+  }
+
+  const save: PostSave = {
+    id: `save_${nanoid(8)}`,
+    orgId,
+    membershipId,
+    postId,
+    createdAt: new Date().toISOString(),
+  };
+  const [row] = await getDb()
+    .insert(dbSchema.postSaves)
+    .values(postSaveInsert(save))
+    .onConflictDoNothing({
+      target: [dbSchema.postSaves.membershipId, dbSchema.postSaves.postId],
+    })
+    .returning();
+
+  if (row) {
+    return postSaveFromRow(row);
+  }
+
+  const [existing] = await getDb()
+    .select()
+    .from(dbSchema.postSaves)
+    .where(
+      and(
+        eq(dbSchema.postSaves.membershipId, membershipId),
+        eq(dbSchema.postSaves.postId, postId),
+      ),
+    )
+    .limit(1);
+  return existing ? postSaveFromRow(existing) : null;
+}
+
+export async function unsavePostForMembership(membershipId: string, postId: string) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const before = store.postSaves.length;
+    store.postSaves = store.postSaves.filter(
+      (save) => save.membershipId !== membershipId || save.postId !== postId,
+    );
+    return store.postSaves.length < before;
+  }
+
+  const deleted = await getDb()
+    .delete(dbSchema.postSaves)
+    .where(
+      and(
+        eq(dbSchema.postSaves.membershipId, membershipId),
+        eq(dbSchema.postSaves.postId, postId),
+      ),
+    )
+    .returning({ id: dbSchema.postSaves.id });
+  return deleted.length > 0;
+}
+
+export async function listSavedPostIdsForMembership(
+  membershipId: string,
+  options: { postIds?: string[] } = {},
+) {
+  const scopedPostIds = options.postIds
+    ? [...new Set(options.postIds.filter(Boolean))]
+    : undefined;
+
+  if (scopedPostIds?.length === 0) {
+    return new Map<string, PostSave>();
+  }
+
+  if (!usesDatabase) {
+    const scopedIds = scopedPostIds ? new Set(scopedPostIds) : undefined;
+    return getStore().postSaves.reduce((saves, save) => {
+      if (
+        save.membershipId === membershipId &&
+        (!scopedIds || scopedIds.has(save.postId))
+      ) {
+        saves.set(save.postId, save);
+      }
+      return saves;
+    }, new Map<string, PostSave>());
+  }
+
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.postSaves)
+    .where(
+      and(
+        eq(dbSchema.postSaves.membershipId, membershipId),
+        scopedPostIds ? inArray(dbSchema.postSaves.postId, scopedPostIds) : undefined,
+      ),
+    )
+    .orderBy(desc(dbSchema.postSaves.createdAt));
+
+  return new Map(rows.map((row) => {
+    const save = postSaveFromRow(row);
+    return [save.postId, save] as const;
+  }));
 }
 
 export async function getPostById(postId: string) {

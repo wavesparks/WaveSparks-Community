@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import {
   ArrowRight,
   LockKeyhole,
@@ -8,6 +9,7 @@ import {
 } from "lucide-react";
 
 import { ActivationChecklistCard } from "@/components/community/activation-checklist-card";
+import { ChannelShortcutBar } from "@/components/community/channel-shortcut-bar";
 import { FilterBar } from "@/components/community/filter-bar";
 import { ForumShell } from "@/components/layout/forum-shell";
 import { PostCard } from "@/components/community/post-card";
@@ -16,6 +18,8 @@ import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getOrganizationViewerContext } from "@/lib/auth";
+import { wavesparksAssets } from "@/lib/brand";
+import { getCommunityChannels } from "@/lib/channels";
 import {
   hasFeedFilters,
   parseFeedFilters,
@@ -62,6 +66,7 @@ export default async function FeedPage({
     : allPosts.filter((post) => !pinnedIds.has(post.id));
   const returnPath = pathWithQuery(`/org/${slug}/feed`, query);
   const activeFilterCount = hasFeedFilters(filters);
+  const channels = getCommunityChannels(slug);
   const totalDisplayedPosts = recommendedPosts.length + posts.length;
   const memberSetupHref = viewer
     ? viewer.membership.status === "approved"
@@ -90,47 +95,81 @@ export default async function FeedPage({
   return (
     <ForumShell currentPath={`/org/${slug}/feed`} org={org} viewer={viewer}>
       <div className="space-y-5">
-        <section className="border-b border-[var(--line)] pb-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <SectionHeading
-              eyebrow="Community signal"
-              level={1}
-              title="Wavespark Forum"
-              description="Read founder asks, updates, opportunities, and warm-intro signals directly. Sign in is only required when you post, follow, reply, or request an intro."
+        <section className="ws-hero-art relative overflow-hidden rounded-lg px-5 py-6 text-white shadow-[0_28px_80px_rgba(34,27,68,0.22)] sm:p-7 lg:p-8">
+          <div className="absolute right-6 top-5 hidden h-20 w-20 opacity-80 sm:block sm:h-24 sm:w-24">
+            <Image
+              alt=""
+              aria-hidden="true"
+              fill
+              priority
+              sizes="96px"
+              src={wavesparksAssets.sparkGroup}
             />
-            <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
-              <Button asChild>
-                <Link href={primaryAction.href}>
-                  <PrimaryActionIcon className="size-4" />
-                  {primaryAction.label}
-                </Link>
-              </Button>
-              {viewerCanInteract ? (
-                <Button asChild variant="secondary">
-                  <Link href={`/org/${slug}/matches`}>
-                    <Sparkles className="size-4" />
-                    Matches
+          </div>
+          <div className="relative z-10 grid gap-6 lg:grid-cols-[1.05fr_0.95fr] lg:items-end">
+            <div className="space-y-5">
+              <SectionHeading
+                eyebrow="Community signal"
+                level={1}
+                title="Wavespark Forum"
+                description="Read founder asks, updates, opportunities, and warm-intro signals directly. Sign in is only required when you post, follow, reply, or request an intro."
+                tone="inverse"
+              />
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  asChild
+                  className="bg-white text-[var(--night)] ring-white/20 hover:bg-[var(--cyan-soft)]"
+                >
+                  <Link href={primaryAction.href}>
+                    <PrimaryActionIcon className="size-4" />
+                    {primaryAction.label}
                   </Link>
                 </Button>
-              ) : null}
+                {viewerCanInteract ? (
+                  <Button
+                    asChild
+                    className="bg-white/[0.12] text-white ring-white/20 hover:bg-white/20"
+                    variant="secondary"
+                  >
+                    <Link href={`/org/${slug}/matches`}>
+                      <Sparkles className="size-4" />
+                      Matches
+                    </Link>
+                  </Button>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs font-semibold text-white/[0.82]">
+                <span className="rounded-full bg-white/[0.12] px-3 py-1 ring-1 ring-white/15">
+                  {totalDisplayedPosts || allPosts.length} visible posts
+                </span>
+                <span className="rounded-full bg-white/[0.12] px-3 py-1 ring-1 ring-white/15">
+                  {viewerCanInteract
+                    ? "Posting enabled"
+                    : viewer
+                      ? "Profile required to interact"
+                      : "Public reading enabled"}
+                </span>
+              </div>
             </div>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--ink-soft)]">
-            <span className="rounded-full bg-white px-3 py-1 ring-1 ring-[var(--line)]">
-              {totalDisplayedPosts || allPosts.length} visible posts
-            </span>
-            <span className="rounded-full bg-white px-3 py-1 ring-1 ring-[var(--line)]">
-              {viewerCanInteract
-                ? "Posting enabled"
-                : viewer
-                  ? "Profile required to interact"
-                  : "Public reading enabled"}
-            </span>
+
+            <div className="relative min-h-[230px] overflow-hidden rounded-lg border border-white/[0.12] bg-white/[0.06] shadow-[0_24px_70px_rgba(0,0,0,0.22)]">
+              <Image
+                alt=""
+                aria-hidden="true"
+                className="object-cover opacity-90"
+                fill
+                priority
+                sizes="(min-width: 1024px) 470px, 100vw"
+                src={wavesparksAssets.overview}
+              />
+              <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(34,27,68,0.08),rgba(34,27,68,0.02))]" />
+            </div>
           </div>
         </section>
 
         <StatusBanner status={singleQueryValue(query.status)} />
         {activation ? <ActivationChecklistCard activation={activation} /> : null}
+        {viewerCanInteract ? <ChannelShortcutBar channels={channels} /> : null}
 
         <div className="space-y-6" id="latest-posts">
           <FilterBar

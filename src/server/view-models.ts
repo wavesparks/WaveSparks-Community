@@ -13,6 +13,7 @@ import {
   listIntroRequestsForOrg,
   listIntroRequestsForMembership,
   listMembershipUserRecordsByIds,
+  listMembershipProfileRecordsForOrg,
   listMembershipUserRecordsForOrg,
   listMembershipProfileRecordsByIds,
   listMatchTargetRecordsForProfile,
@@ -20,19 +21,23 @@ import {
   listPostsForOrg,
   listProfileMembershipRecordsByIds,
   listProfileLinks,
+  listSavedPostIdsForMembership,
   listVisibleCommentCountsForOrg,
   listVisibleMatchTargetMembershipIdsForMembership,
   listVisibleMatchTargetMembershipIdsForProfile,
 } from "@/server/store";
-import type { PostThreadRecord } from "@/server/store";
+import type { MembershipRecord, PostThreadRecord } from "@/server/store";
 import type {
   FeedPostView,
   FullAdminProfile,
   IntroRequestView,
   IntroStatus,
+  KnowledgePostView,
   Comment,
   LimitedProfileCard,
   MatchCardView,
+  MemberDirectoryFilters,
+  MemberDirectoryProfileView,
   MemberActivationState,
   Membership,
   NotificationView,
@@ -62,6 +67,8 @@ export interface FeedFilters {
   recommendedOnly?: boolean;
 }
 
+export type KnowledgeMode = "all" | "saved";
+
 export interface FeedViewOptions {
   viewerMembershipId?: string;
   viewerProfileId?: string;
@@ -71,11 +78,25 @@ export interface FeedViewOptions {
   limit?: number;
 }
 
+export interface MemberDirectoryViewOptions {
+  viewerMembershipId: string;
+  filters?: MemberDirectoryFilters;
+  limit?: number;
+}
+
+export interface KnowledgeViewOptions {
+  viewerMembershipId: string;
+  viewerProfileId?: string;
+  mode?: KnowledgeMode;
+  q?: string;
+  limit?: number;
+}
+
 export interface AdminIntroRequestDashboardOptions {
   requestLimit?: number;
   candidateLimit?: number;
   requestStatus?: IntroStatus;
-  sourceType?: "match" | "post" | "admin_manual";
+  sourceType?: "match" | "post" | "profile" | "admin_manual";
 }
 
 export interface AdminManualIntroCandidateView {
@@ -131,6 +152,7 @@ export interface AdminPostModerationDashboardView {
 export interface PostThreadIntroContext {
   thread?: PostThreadRecord;
   existingIntroStatus?: IntroStatus;
+  isPostSaved: boolean;
 }
 
 export interface IntroRequestViewOptions {
@@ -157,6 +179,15 @@ function includesNormalized(values: string[], candidate?: string) {
   }
 
   return values.some((value) => value.toLowerCase().includes(needle));
+}
+
+function matchesNormalized(value: string | undefined, candidate?: string) {
+  const needle = normalized(candidate);
+  if (!needle) {
+    return true;
+  }
+
+  return normalized(value).includes(needle);
 }
 
 function hasNonPostListFilters(filters: FeedFilters, normalizedQuery: string) {
@@ -229,6 +260,277 @@ export function toFullAdminProfile(profile: Profile, membership: Membership): Fu
   };
 }
 
+function toMemberDirectoryProfileView(input: {
+  profile: Profile;
+  membership: Membership;
+  profileLinks: ProfileLink[];
+  following: boolean;
+  introStatus?: IntroStatus;
+}): MemberDirectoryProfileView {
+  return {
+    ...toLimitedProfileCard(input.profile, input.membership),
+    stage: input.profile.stage,
+    startupName: input.profile.startupName,
+    startupDescription: input.profile.startupDescription,
+    currentProgress: input.profile.currentProgress,
+    tractionSummary: input.profile.tractionSummary,
+    industryTags: input.profile.industryTags,
+    problemSpaceTags: input.profile.problemSpaceTags,
+    skillTags: input.profile.skillTags,
+    desiredRoles: input.profile.desiredRoles,
+    mentorOffers: input.profile.mentorOffers,
+    profileLinks: input.profileLinks,
+    isFollowing: input.following,
+    ...(input.introStatus ? { introStatus: input.introStatus } : {}),
+  };
+}
+
+function directoryProfileMatchesFilters(
+  profile: Profile,
+  membership: Membership,
+  filters: MemberDirectoryFilters,
+) {
+  if (filters.affiliation && membership.affiliationType !== filters.affiliation) {
+    return false;
+  }
+
+  if (filters.stage && profile.stage !== filters.stage) {
+    return false;
+  }
+
+  if (!includesNormalized(profile.industryTags, filters.industry)) {
+    return false;
+  }
+
+  if (
+    !includesNormalized(
+      [
+        ...profile.lookingForTypes,
+        ...profile.desiredRoles,
+        ...profile.helpNeededTags,
+        ...profile.mentorOffers,
+      ],
+      filters.need,
+    )
+  ) {
+    return false;
+  }
+
+  if (!includesNormalized(profile.skillTags, filters.skill)) {
+    return false;
+  }
+
+  const query = normalized(filters.q);
+  if (!query) {
+    return true;
+  }
+
+  const haystack = [
+    profile.fullName,
+    profile.preferredName,
+    profile.headline,
+    profile.shortBio,
+    profile.startupName,
+    profile.startupOneLiner,
+    profile.startupDescription,
+    profile.stage,
+    profile.industryTags.join(" "),
+    profile.problemSpaceTags.join(" "),
+    profile.skillTags.join(" "),
+    profile.lookingForTypes.join(" "),
+    profile.desiredRoles.join(" "),
+    membership.affiliationType,
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return haystack.includes(query);
+}
+
+function profileCanAppearInDirectory(profile?: Profile, membership?: Membership) {
+  return Boolean(
+    profile &&
+      membership?.status === "approved" &&
+      profile.onboardingComplete &&
+      profile.profileVisibleInMatching,
+  );
+}
+
+export async function getMemberDirectoryViewsForOrg(
+  org: Organization,
+  options: MemberDirectoryViewOptions,
+) {
+  const filters = options.filters ?? {};
+  const hasFilters = Object.values(filters).some(Boolean);
+  const records = await listMembershipProfileRecordsForOrg(org.id, {
+    profileRequired: true,
+    status: "approved",
+    limit: hasFilters ? undefined : options.limit ? Math.max(options.limit * 2, options.limit) : 160,
+  });
+  const visibleRecords = records
+    .filter(
+      (record): record is MembershipRecord & { profile: Profile } => {
+        if (!record.profile) {
+          return false;
+        }
+
+        return (
+          profileCanAppearInDirectory(record.profile, record.membership) &&
+          directoryProfileMatchesFilters(record.profile, record.membership, filters)
+        );
+      },
+    )
+    .sort((left, right) => {
+      const featuredDelta =
+        Number(Boolean(right.profile.featured)) - Number(Boolean(left.profile.featured));
+      if (featuredDelta) {
+        return featuredDelta;
+      }
+      return right.profile.lastActiveAt.localeCompare(left.profile.lastActiveAt);
+    });
+  const limitedRecords = options.limit ? visibleRecords.slice(0, options.limit) : visibleRecords;
+  const membershipIds = limitedRecords.map((record) => record.membership.id);
+  const [
+    followedMembershipIds,
+    introStatusByReceiver,
+    profileLinksByProfileId,
+  ] = await Promise.all([
+    listFollowedMembershipIdsForMembership(options.viewerMembershipId, {
+      followedMembershipIds: membershipIds,
+    }),
+    listActiveIntroRequestStatusesForRequester(options.viewerMembershipId, membershipIds),
+    Promise.all(
+      limitedRecords.map(async (record): Promise<[string, ProfileLink[]]> => [
+        record.profile.id,
+        await listProfileLinks(record.profile.id),
+      ]),
+    ).then((entries) =>
+      new Map<string, ProfileLink[]>(entries),
+    ),
+  ]);
+  const followedIds = new Set(followedMembershipIds);
+
+  return limitedRecords
+    .map((record) => {
+      return toMemberDirectoryProfileView({
+        profile: record.profile,
+        membership: record.membership,
+        profileLinks: profileLinksByProfileId.get(record.profile.id) ?? [],
+        following: followedIds.has(record.membership.id),
+        introStatus: introStatusByReceiver.get(record.membership.id),
+      });
+    });
+}
+
+export async function getMemberDirectoryProfileView(input: {
+  orgId: string;
+  membershipId: string;
+  viewerMembershipId: string;
+}) {
+  const [record] = await listMembershipProfileRecordsByIds([input.membershipId], {
+    orgId: input.orgId,
+  });
+  if (!record?.profile || !profileCanAppearInDirectory(record.profile, record.membership)) {
+    return undefined;
+  }
+
+  const [
+    profileLinks,
+    followedMembershipIds,
+    introStatusByReceiver,
+  ] = await Promise.all([
+    listProfileLinks(record.profile.id),
+    listFollowedMembershipIdsForMembership(input.viewerMembershipId, {
+      followedMembershipIds: [record.membership.id],
+    }),
+    listActiveIntroRequestStatusesForRequester(input.viewerMembershipId, [
+      record.membership.id,
+    ]),
+  ]);
+
+  return toMemberDirectoryProfileView({
+    profile: record.profile,
+    membership: record.membership,
+    profileLinks,
+    following: followedMembershipIds.includes(record.membership.id),
+    introStatus: introStatusByReceiver.get(record.membership.id),
+  });
+}
+
+function knowledgeReasonForPost(post: FeedPostView): KnowledgePostView["knowledgeReason"] | null {
+  if (post.type === "resource") {
+    return "resource";
+  }
+
+  if (post.featured) {
+    return "featured";
+  }
+
+  if (post.commentCount >= 2) {
+    return "active_discussion";
+  }
+
+  if (post.isSaved) {
+    return "saved";
+  }
+
+  return null;
+}
+
+export async function getKnowledgePostViewsForOrg(
+  org: Organization,
+  options: KnowledgeViewOptions,
+) {
+  const [feedPosts, savedPostsById] = await Promise.all([
+    getFeedViewsForOrg(org, {
+      viewerMembershipId: options.viewerMembershipId,
+      viewerProfileId: options.viewerProfileId,
+      filters: { q: options.q },
+      includeMatchedRecommendationSignals: false,
+    }),
+    listSavedPostIdsForMembership(options.viewerMembershipId),
+  ]);
+
+  const posts = feedPosts
+    .filter((post) => (options.mode === "saved" ? post.isSaved : Boolean(knowledgeReasonForPost(post))))
+    .filter((post) =>
+      matchesNormalized(
+        [
+          post.title,
+          post.body,
+          post.tags.join(" "),
+          post.author.displayName,
+          post.author.headline,
+        ].join(" "),
+        options.q,
+      ),
+    )
+    .map((post) => {
+      const savedAt = savedPostsById.get(post.id)?.createdAt;
+      return {
+        ...post,
+        knowledgeReason:
+          options.mode === "saved"
+            ? "saved"
+            : (knowledgeReasonForPost(post) ?? "saved"),
+        ...(savedAt ? { savedAt } : {}),
+      } satisfies KnowledgePostView;
+    })
+    .sort((left, right) => {
+      if (options.mode === "saved") {
+        return (right.savedAt ?? "").localeCompare(left.savedAt ?? "");
+      }
+      const reasonRank = { resource: 3, featured: 2, active_discussion: 1, saved: 0 };
+      const rankDelta = reasonRank[right.knowledgeReason] - reasonRank[left.knowledgeReason];
+      if (rankDelta) {
+        return rankDelta;
+      }
+      return right.createdAt.localeCompare(left.createdAt);
+    });
+
+  return options.limit ? posts.slice(0, options.limit) : posts;
+}
+
 export async function getFeedViewsForOrg(org: Organization, options: FeedViewOptions = {}) {
   const filters = options.filters ?? {};
   const normalizedQuery = normalized(filters.q);
@@ -262,6 +564,7 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
   const [
     membershipRecords,
     followedMembershipIds,
+    savedPostsById,
     visibleCommentCountByPostId,
   ] = await Promise.all([
     listMembershipProfileRecordsByIds(
@@ -273,6 +576,11 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
           followedMembershipIds: authorMembershipIds,
         })
       : Promise.resolve([]),
+    options.viewerMembershipId
+      ? listSavedPostIdsForMembership(options.viewerMembershipId, {
+          postIds: relevantPosts.map((post) => post.id),
+        })
+      : Promise.resolve(new Map()),
     listVisibleCommentCountsForOrg(org.id, {
       postIds: relevantPosts.map((post) => post.id),
     }),
@@ -315,6 +623,7 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
         author: toLimitedProfileCard(profile, membership),
         commentCount: visibleCommentCountByPostId.get(post.id) ?? 0,
         isFollowingAuthor: followedIds.has(membership.id),
+        isSaved: savedPostsById.has(post.id),
         isRecommended: recommendationReasons.length > 0,
         recommendationReasons,
       };
@@ -470,16 +779,22 @@ export async function getPostThreadIntroContext(input: {
   orgId: string;
   viewerMembershipId?: string;
 }): Promise<PostThreadIntroContext> {
-  const [thread, introStatusByReceiver] = await Promise.all([
+  const [thread, introStatusByReceiver, savedPostsById] = await Promise.all([
     getPostThreadRecord(input.postId, input.orgId),
     input.viewerMembershipId
       ? listActiveIntroRequestStatusesForRequester(input.viewerMembershipId)
       : Promise.resolve(new Map<string, IntroStatus>()),
+    input.viewerMembershipId
+      ? listSavedPostIdsForMembership(input.viewerMembershipId, {
+          postIds: [input.postId],
+        })
+      : Promise.resolve(new Map()),
   ]);
   const authorMembershipId = thread?.author?.membership.id;
 
   return {
     thread,
+    isPostSaved: savedPostsById.has(input.postId),
     existingIntroStatus:
       input.viewerMembershipId &&
       authorMembershipId &&

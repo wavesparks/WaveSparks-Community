@@ -148,7 +148,7 @@ export default async function AdminMembersPage({
               })}
             </div>
           </div>
-          <div className="grid gap-3 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 lg:grid-cols-[1.2fr_0.8fr_1.2fr_auto]">
+          <div className="grid gap-3 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase text-slate-500 lg:grid-cols-[1.2fr_0.8fr_1.2fr_auto]">
             <span>Member</span>
             <span>Status</span>
             <span>Admin note</span>

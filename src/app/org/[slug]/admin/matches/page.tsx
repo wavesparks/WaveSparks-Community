@@ -112,7 +112,7 @@ export default async function AdminMatchesPage({
               <Card className="space-y-4" key={match.id}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                    <p className="text-xs font-semibold uppercase text-slate-500">
                       {match.matchType.replaceAll("_", " ")}
                     </p>
                     <h3 className="mt-2 text-xl font-semibold text-slate-950">

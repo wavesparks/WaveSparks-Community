@@ -24,17 +24,23 @@ import {
   listPostsForOrg,
   listProfileMembershipRecordsByIds,
   listProfileRecordsByIds,
+  listSavedPostIdsForMembership,
   listVisibleCommentCountsForOrg,
   listVisibleMatchTargetMembershipIdsForMembership,
   listVisibleMatchTargetMembershipIdsForProfile,
   resetStore,
+  savePostForMembership,
   unfollowMembership,
+  unsavePostForMembership,
   updateCommentStatus,
 } from "@/server/store";
 import {
   getFeedViewsForOrg,
+  getKnowledgePostViewsForOrg,
   getMatchCardViewsForProfile,
   getMatchViews,
+  getMemberDirectoryProfileView,
+  getMemberDirectoryViewsForOrg,
   getPostThreadIntroContext,
 } from "@/server/view-models";
 import type { OpportunitySource, PostType } from "@/lib/domain";
@@ -144,6 +150,107 @@ describe("feed filters and social recommendations", () => {
 
     expect(followedView.recommendationReasons).toContain("Followed");
     expect(matchedView.recommendationReasons).toContain("Matched");
+  });
+
+  it("tracks saved posts once and exposes saved state in feed views", async () => {
+    const org = (await getOrganizationBySlug("wavespark"))!;
+    const firstSave = await savePostForMembership(org.id, "mem_jules", "pst_8");
+    const duplicateSave = await savePostForMembership(org.id, "mem_jules", "pst_8");
+    const savedPosts = await listSavedPostIdsForMembership("mem_jules", {
+      postIds: ["pst_8"],
+    });
+    const [feedView] = await getFeedViewsForOrg(org, {
+      viewerMembershipId: "mem_jules",
+      filters: { q: "full people directory" },
+    });
+
+    expect(duplicateSave?.id).toBe(firstSave?.id);
+    expect(savedPosts.get("pst_8")?.id).toBe(firstSave?.id);
+    expect(feedView.id).toBe("pst_8");
+    expect(feedView.isSaved).toBe(true);
+    await expect(unsavePostForMembership("mem_jules", "pst_8")).resolves.toBe(true);
+    await expect(unsavePostForMembership("mem_jules", "pst_8")).resolves.toBe(false);
+    await expect(
+      listSavedPostIdsForMembership("mem_jules", { postIds: ["pst_8"] }),
+    ).resolves.toEqual(new Map());
+  });
+
+  it("builds a limited searchable people directory without contact fields", async () => {
+    const org = (await getOrganizationBySlug("wavespark"))!;
+    const hiddenProfile = (await getProfileByMembershipId("mem_marcus"))!;
+    hiddenProfile.profileVisibleInMatching = false;
+
+    const climateProfiles = await getMemberDirectoryViewsForOrg(org, {
+      viewerMembershipId: "mem_jules",
+      filters: { q: "climate" },
+      limit: 20,
+    });
+    const mentorProfiles = await getMemberDirectoryViewsForOrg(org, {
+      viewerMembershipId: "mem_jules",
+      filters: { affiliation: "mentor" },
+      limit: 20,
+    });
+
+    expect(climateProfiles.length).toBeGreaterThan(0);
+    expect(climateProfiles.some((profile) => profile.membershipId === "mem_marcus")).toBe(false);
+    expect(climateProfiles.every((profile) => !("emailForIntro" in profile))).toBe(true);
+    expect(climateProfiles.every((profile) => !("whatsappNumber" in profile))).toBe(true);
+    expect(mentorProfiles.every((profile) => profile.affiliationLabel === "mentor")).toBe(true);
+  });
+
+  it("loads safe member profile detail with follow and profile-intro state", async () => {
+    const org = (await getOrganizationBySlug("wavespark"))!;
+    const targetProfile = (await getProfileByMembershipId("mem_kai"))!;
+
+    await followMembership(org.id, "mem_jules", "mem_kai");
+    await createIntroRequest({
+      orgId: org.id,
+      requesterMembershipId: "mem_jules",
+      receiverMembershipId: "mem_kai",
+      sourceType: "profile",
+      sourceId: targetProfile.id,
+      introPurpose: "profile discovery",
+      note: "Testing profile intro source.",
+      status: "pending",
+      suggestedFirstMessage: "A short first message.",
+    });
+
+    const detail = await getMemberDirectoryProfileView({
+      orgId: org.id,
+      membershipId: "mem_kai",
+      viewerMembershipId: "mem_jules",
+    });
+
+    expect(detail).toMatchObject({
+      membershipId: "mem_kai",
+      isFollowing: true,
+      introStatus: "pending",
+    });
+    expect(detail && "emailForIntro" in detail).toBe(false);
+    expect(detail?.profileLinks.every((link) => Boolean(link.url))).toBe(true);
+  });
+
+  it("builds knowledge views from resources, featured threads, active discussions, and saved posts", async () => {
+    const org = (await getOrganizationBySlug("wavespark"))!;
+    await savePostForMembership(org.id, "mem_jules", "pst_8");
+
+    const library = await getKnowledgePostViewsForOrg(org, {
+      viewerMembershipId: "mem_jules",
+    });
+    const saved = await getKnowledgePostViewsForOrg(org, {
+      viewerMembershipId: "mem_jules",
+      mode: "saved",
+    });
+
+    expect(library.map((post) => post.id)).toContain("pst_4");
+    expect(library.map((post) => post.id)).toContain("pst_8");
+    expect(
+      library.find((post) => post.id === "pst_4")?.knowledgeReason,
+    ).toBe("resource");
+    expect(saved.map((post) => post.id)).toEqual(
+      expect.arrayContaining(["pst_3", "pst_8", "pst_16"]),
+    );
+    expect(saved.every((post) => post.isSaved)).toBe(true);
   });
 
   it("can skip matched recommendation signals while preserving follow state", async () => {

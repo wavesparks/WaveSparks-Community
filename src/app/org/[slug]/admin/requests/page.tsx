@@ -20,6 +20,7 @@ const introRequestQueues = [
   { label: "Accepted", status: "accepted", sourceType: undefined },
   { label: "Manual", status: undefined, sourceType: "admin_manual" },
   { label: "From matches", status: undefined, sourceType: "match" },
+  { label: "From profiles", status: undefined, sourceType: "profile" },
 ] satisfies Array<{
   label: string;
   status?: IntroStatus;
@@ -36,7 +37,7 @@ function introStatusFromQuery(value?: string) {
 }
 
 function introSourceTypeFromQuery(value?: string) {
-  return value === "match" || value === "post" || value === "admin_manual"
+  return value === "match" || value === "post" || value === "profile" || value === "admin_manual"
     ? value
     : undefined;
 }

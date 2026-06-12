@@ -15,10 +15,10 @@ export function ActivationChecklistCard({
   compact?: boolean;
 }) {
   return (
-    <Card className="space-y-4 border-[var(--accent)]/25 bg-white">
+    <Card className="space-y-4 overflow-hidden border-[var(--accent)]/25 bg-white/[0.88] before:absolute before:inset-x-0 before:top-0 before:h-1 before:bg-[linear-gradient(90deg,var(--cyan),var(--accent),var(--gold))]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
+          <p className="text-xs font-semibold uppercase text-[var(--accent)]">
             Activation
           </p>
           <h2 className="mt-1 text-xl font-semibold text-[var(--ink)]">

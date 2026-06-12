@@ -15,6 +15,13 @@
       "when": 1776790000000,
       "tag": "0001_private_follows_opportunity_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781247212075,
+      "tag": "0002_member_directory_knowledge_saves",
+      "breakpoints": true
     }
   ]
 }

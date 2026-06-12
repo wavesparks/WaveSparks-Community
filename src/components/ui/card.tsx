@@ -7,7 +7,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-lg border border-[var(--line)] bg-white p-5 shadow-[0_18px_45px_rgba(1,2,10,0.06)]",
+        "ws-card-glow relative rounded-lg border border-[var(--line)] bg-white/[0.88] p-5 backdrop-blur-sm",
         className,
       )}
       {...props}

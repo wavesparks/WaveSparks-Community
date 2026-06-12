@@ -22,7 +22,7 @@ export function Avatar({
   return (
     <div
       className={cn(
-        "grid size-12 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--accent-soft)] text-sm font-semibold text-[var(--ink)] ring-1 ring-white/70",
+        "grid size-12 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--accent-soft)] text-sm font-semibold text-[var(--ink)] ring-2 ring-white/80 shadow-[0_10px_24px_rgba(34,27,68,0.12)]",
         className,
       )}
     >

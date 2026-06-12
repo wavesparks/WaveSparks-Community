@@ -11,7 +11,7 @@ export function MetricCard({
 }) {
   return (
     <Card className="space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
+      <p className="text-xs font-semibold uppercase text-[var(--accent)]">
         {label}
       </p>
       <p className="text-3xl font-semibold leading-none text-[var(--ink)]">{value}</p>

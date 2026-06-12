@@ -85,7 +85,7 @@ export function OnboardingForm({
       >
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
+            <p className="text-xs font-semibold uppercase text-[var(--accent)]">
               Profile readiness
             </p>
             <h2 className="mt-1 text-xl font-semibold text-slate-950">
@@ -98,7 +98,7 @@ export function OnboardingForm({
             </p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-right">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+            <p className="text-xs font-semibold uppercase text-slate-500">
               Complete
             </p>
             <p className="text-2xl font-semibold text-slate-950">
@@ -145,7 +145,7 @@ export function OnboardingForm({
             onClick={() => setStep(index)}
             type="button"
           >
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+            <p className="text-xs font-semibold uppercase text-slate-500">
               Step {index + 1}
             </p>
             <h3 className="mt-2 text-sm font-semibold text-slate-950">{item.title}</h3>

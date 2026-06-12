@@ -7,7 +7,7 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 - Multi-tenant org routing under `/org/[slug]`
 - Clerk-backed sign-in/sign-up and user invitations, with local fallback auth for unconfigured development
 - Structured onboarding and profile completion flow
-- Community feed, opportunities, post detail, comments, and intro requests
+- Community feed, limited member directory, knowledge library, opportunities, post detail, comments, saved posts, and intro requests
 - AI-assisted cofounder and mentor matches with explainable scoring
 - Admin console for approvals, moderation, manual intros, analytics, and org settings
 - Drizzle schema, generated SQL migration, seed script, and match recompute cron stub
@@ -163,7 +163,7 @@ pnpm readiness:prod
 
 ## Notes
 
-- Member discovery is intentionally limited. There is no full people directory for regular members.
+- Member discovery uses a limited approved-member directory. Regular members can search safe profile summaries, but contact details remain hidden.
 - Contact details remain hidden until an intro request is accepted.
 - Upload routes for avatars and org logos are included and expect Supabase Storage credentials.
 - Email notifications use Resend when configured and otherwise log the attempted delivery in development.

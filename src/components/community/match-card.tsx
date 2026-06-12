@@ -21,7 +21,7 @@ export function MatchCard({
             src={match.target.photo}
           />
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
+            <p className="text-xs font-semibold uppercase text-[var(--accent)]">
               {match.matchType.replaceAll("_", " ")}
             </p>
             <h3 className="mt-1 text-xl font-semibold leading-tight text-[var(--ink)]">
@@ -33,7 +33,7 @@ export function MatchCard({
           </div>
         </div>
         <div className="w-full rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-4 py-3 sm:w-auto sm:min-w-28 sm:text-right">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
+          <p className="text-xs font-semibold uppercase text-[var(--accent)]">
             Score
           </p>
           <p className="text-2xl font-semibold text-[var(--ink)]">{match.score}</p>

@@ -31,7 +31,7 @@ export function ProviderSignInButtons({
             <h3 className="text-lg font-semibold text-slate-950">{provider.label}</h3>
             <p className="text-sm text-slate-600">{provider.description}</p>
             {provider.email ? (
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              <p className="text-xs font-semibold uppercase text-slate-500">
                 {provider.email}
               </p>
             ) : null}

@@ -8,6 +8,7 @@ import type {
   Notification,
   Organization,
   Post,
+  PostSave,
   Profile,
   ProfileLink,
   User,
@@ -47,19 +48,19 @@ export const seedOrganization: Organization = {
   id: "org_wavespark",
   name: "Wavespark",
   slug: "wavespark",
-  logoUrl: "https://images.unsplash.com/photo-1545239351-1141bd82e8a6?auto=format&fit=crop&w=300&q=80",
+  logoUrl: "/wavesparks-assets/wavesparks-avatar-gradient.png",
   theme: {
-    accent: "#6f4bff",
-    accentSoft: "#eee8ff",
-    canvas: "#f8f7f3",
-    ink: "#01020a",
+    accent: "#8958f0",
+    accentSoft: "#f0e9ff",
+    canvas: "#f7f9ff",
+    ink: "#221b44",
   },
   tagline: "The warm founder network for serious early-stage builders.",
   description:
     "A semi-private community where founders, mentors, and operators get surfaced through context, not noise.",
   membershipRules: [
     "Access is admin-approved after sign-in.",
-    "Members discover others through the feed, matches, and intro requests instead of a public directory.",
+    "Approved members can search limited profiles while contact details stay private.",
     "Contact details unlock only after an intro is accepted.",
   ],
   allowedDomains: ["wavespark.co", "yfs.community"],
@@ -1934,6 +1935,30 @@ export const seedFollows: Follow[] = [
     followerMembershipId: "mem_avery",
     followedMembershipId: "mem_kai",
     createdAt: daysAgo(4),
+  },
+];
+
+export const seedPostSaves: PostSave[] = [
+  {
+    id: "save_jules_pst_3",
+    orgId: seedOrganization.id,
+    membershipId: "mem_jules",
+    postId: "pst_3",
+    createdAt: daysAgo(2),
+  },
+  {
+    id: "save_jules_pst_16",
+    orgId: seedOrganization.id,
+    membershipId: "mem_jules",
+    postId: "pst_16",
+    createdAt: daysAgo(1),
+  },
+  {
+    id: "save_kai_pst_8",
+    orgId: seedOrganization.id,
+    membershipId: "mem_kai",
+    postId: "pst_8",
+    createdAt: hoursAgo(10),
   },
 ];
 

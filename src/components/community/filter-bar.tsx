@@ -36,7 +36,7 @@ export function FilterBar({
   });
 
   return (
-    <Card className="p-3">
+    <Card className="border-[rgba(137,88,240,0.14)] bg-white/[0.82] p-3">
       <Form action={clearHref} className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <label className="relative min-w-[220px] flex-1">
@@ -49,7 +49,7 @@ export function FilterBar({
             />
           </label>
           <details className="group">
-            <summary className="inline-flex h-11 cursor-pointer list-none items-center justify-center gap-2 rounded-full bg-white px-4 text-sm font-semibold text-[var(--ink)] ring-1 ring-[var(--line)] transition hover:bg-[var(--surface-muted)]">
+            <summary className="inline-flex h-11 cursor-pointer list-none items-center justify-center gap-2 rounded-full bg-white/[0.92] px-4 text-sm font-semibold text-[var(--ink)] ring-1 ring-[var(--line)] transition hover:bg-[var(--cyan-soft)]">
               <SlidersHorizontal className="size-4" />
               Filters
               {activeCount ? (
@@ -110,7 +110,7 @@ export function FilterBar({
               <Input defaultValue={filters.authorIndustry} name="industry" placeholder="Industry" />
               <Input defaultValue={filters.roleNeeded} name="role" placeholder="Role needed" />
               {showRecommendedFilter ? (
-                <label className="flex h-11 items-center gap-2 rounded-full bg-white px-3 text-sm text-[var(--ink-soft)] ring-1 ring-[var(--line)]">
+                <label className="flex h-11 items-center gap-2 rounded-full bg-white/[0.92] px-3 text-sm text-[var(--ink-soft)] ring-1 ring-[var(--line)]">
                   <input
                     defaultChecked={filters.recommendedOnly}
                     name="recommended"

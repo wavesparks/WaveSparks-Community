@@ -14,7 +14,7 @@ export function IntroRequestCard({
     <Card className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--accent)]">
+          <p className="text-xs font-semibold uppercase text-[var(--accent)]">
             {request.isIncoming ? "Incoming" : "Outgoing"} · {request.sourceType.replaceAll("_", " ")}
           </p>
           <h3 className="mt-1 text-xl font-semibold leading-tight text-[var(--ink)]">

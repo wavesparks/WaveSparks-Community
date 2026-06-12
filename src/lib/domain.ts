@@ -24,7 +24,7 @@ export type PostStatus = "active" | "closed" | "archived";
 export type CommentStatus = "visible" | "removed";
 export type MatchType = "cofounder_match" | "mentor_match";
 export type IntroStatus = "pending" | "accepted" | "declined" | "expired";
-export type IntroSourceType = "match" | "post" | "admin_manual";
+export type IntroSourceType = "match" | "post" | "profile" | "admin_manual";
 export type NotificationType =
   | "membership_approved"
   | "intro_requested"
@@ -190,6 +190,14 @@ export interface Follow {
   createdAt: string;
 }
 
+export interface PostSave {
+  id: string;
+  orgId: string;
+  membershipId: string;
+  postId: string;
+  createdAt: string;
+}
+
 export interface Comment {
   id: string;
   postId: string;
@@ -297,8 +305,39 @@ export interface FeedPostView {
   author: LimitedProfileCard;
   commentCount: number;
   isFollowingAuthor: boolean;
+  isSaved: boolean;
   isRecommended: boolean;
   recommendationReasons: Array<"Followed" | "Matched">;
+}
+
+export interface MemberDirectoryFilters {
+  q?: string;
+  affiliation?: string;
+  stage?: string;
+  industry?: string;
+  need?: string;
+  skill?: string;
+}
+
+export interface MemberDirectoryProfileView extends LimitedProfileCard {
+  stage: string;
+  startupName: string;
+  startupDescription: string;
+  currentProgress: string;
+  tractionSummary: string;
+  industryTags: string[];
+  problemSpaceTags: string[];
+  skillTags: string[];
+  desiredRoles: string[];
+  mentorOffers: string[];
+  profileLinks: ProfileLink[];
+  isFollowing: boolean;
+  introStatus?: IntroStatus;
+}
+
+export interface KnowledgePostView extends FeedPostView {
+  knowledgeReason: "resource" | "featured" | "active_discussion" | "saved";
+  savedAt?: string;
 }
 
 export interface MatchCardView {

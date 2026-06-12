@@ -14,30 +14,32 @@ export default async function DemoPage({
   const { slug } = await params;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-5xl items-center px-4 py-8 sm:px-6 lg:px-8">
-      <div className="w-full space-y-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <SectionHeading
-            eyebrow="Demo mode"
-            level={1}
-            title="Use seeded preview personas"
-            description="Demo access is available only when the demo credentials provider is enabled in the environment."
-          />
-          <Button asChild size="sm" variant="secondary">
-            <Link href={`/org/${slug}/signin`}>Production sign-in</Link>
-          </Button>
-        </div>
-
-        {demoProviderButtons.length ? (
-          <ProviderSignInButtons slug={slug} providers={demoProviderButtons} />
-        ) : (
-          <Card>
+    <main className="ws-page-shell px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-5xl items-center">
+        <div className="w-full space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <SectionHeading
-              title="Demo mode is disabled"
-              description="Set AUTH_DEV_DEMO_ENABLED=true in a local or preview environment to show seeded personas here."
+              eyebrow="Demo mode"
+              level={1}
+              title="Use seeded preview personas"
+              description="Demo access is available only when the demo credentials provider is enabled in the environment."
             />
-          </Card>
-        )}
+            <Button asChild size="sm" variant="secondary">
+              <Link href={`/org/${slug}/signin`}>Production sign-in</Link>
+            </Button>
+          </div>
+
+          {demoProviderButtons.length ? (
+            <ProviderSignInButtons slug={slug} providers={demoProviderButtons} />
+          ) : (
+            <Card>
+              <SectionHeading
+                title="Demo mode is disabled"
+                description="Set AUTH_DEV_DEMO_ENABLED=true in a local or preview environment to show seeded personas here."
+              />
+            </Card>
+          )}
+        </div>
       </div>
     </main>
   );

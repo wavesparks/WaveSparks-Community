@@ -96,7 +96,7 @@ export default async function RequestsPage({
           eyebrow="Requests"
           level={1}
           title="Manage introductions and notifications"
-          description="Accepted intros reveal contact details. Declines stay polite. Pending requests keep the context visible without forcing a directory."
+          description="Accepted intros reveal contact details. Declines stay polite. Pending requests keep context visible without exposing private contact fields."
         />
         <StatusBanner status={singleQueryValue(query.status)} />
 

@@ -31,14 +31,16 @@ import {
   getMembershipById,
   getPostById,
   getProfileByMembershipId,
+  savePostForMembership,
   listActiveIntroRequestStatusesForRequester,
   markNotificationsReadForMembership,
   recomputeMatchesForProfile,
   respondToIntroRequest,
+  unsavePostForMembership,
   unfollowMembership,
   upsertProfile,
 } from "@/server/store";
-import type { IntroStatus, Membership, PostType } from "@/lib/domain";
+import type { IntroSourceType, IntroStatus, Membership, PostType } from "@/lib/domain";
 
 async function requireMemberForAction(
   slug: string,
@@ -126,6 +128,14 @@ function revalidateMemberDiscoveryPaths(slug: string) {
 function revalidateMemberActivationPaths(slug: string) {
   revalidatePath(`/org/${slug}/feed`);
   revalidatePath(`/org/${slug}/profile`);
+}
+
+function revalidatePostSavePaths(slug: string, postId: string, postType: PostType) {
+  for (const path of getPostListRevalidationPaths(slug, postType)) {
+    revalidatePath(path);
+  }
+  revalidatePath(`/org/${slug}/knowledge`);
+  revalidatePath(`/org/${slug}/posts/${postId}`);
 }
 
 export async function saveOnboardingAction(slug: string, membershipId: string, formData: FormData) {
@@ -257,6 +267,54 @@ export async function unfollowMembershipAction(
   );
 }
 
+export async function savePostAction(
+  slug: string,
+  membershipId: string,
+  postId: string,
+  formData?: FormData,
+) {
+  const { org, membership } = await requireMemberForAction(slug, membershipId, {
+    requireFeedAccess: true,
+  });
+  const post = await getPostById(postId);
+  if (!post || post.orgId !== org.id || post.hidden) {
+    throw new Error("Unauthorized.");
+  }
+
+  await savePostForMembership(org.id, membership.id, post.id);
+  revalidatePostSavePaths(slug, post.id, post.type);
+  redirect(
+    withStatus(
+      safeReturnPath(slug, formData, `/org/${slug}/posts/${post.id}`),
+      "post_saved",
+    ),
+  );
+}
+
+export async function unsavePostAction(
+  slug: string,
+  membershipId: string,
+  postId: string,
+  formData?: FormData,
+) {
+  const { org, membership } = await requireMemberForAction(slug, membershipId, {
+    requireFeedAccess: true,
+  });
+  const post = await getPostById(postId);
+  if (!post || post.orgId !== org.id || post.hidden) {
+    throw new Error("Unauthorized.");
+  }
+
+  await unsavePostForMembership(membership.id, post.id);
+  revalidatePostSavePaths(slug, post.id, post.type);
+  redirect(
+    withStatus(
+      safeReturnPath(slug, formData, `/org/${slug}/posts/${post.id}`),
+      "post_unsaved",
+    ),
+  );
+}
+
 export async function addCommentAction(slug: string, membershipId: string, postId: string, formData: FormData) {
   const { org, membership } = await requireMemberForAction(slug, membershipId, {
     requireFeedAccess: true,
@@ -321,6 +379,18 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     throw new Error("Unauthorized.");
   }
 
+  const rawSourceType = String(formData.get("source_type") ?? "match");
+  if (rawSourceType !== "match" && rawSourceType !== "post" && rawSourceType !== "profile") {
+    throw new Error("Unauthorized.");
+  }
+  const sourceType = rawSourceType as IntroSourceType;
+  const sourceId =
+    String(formData.get("source_id") ?? "") ||
+    (sourceType === "profile" ? receiverProfile.id : "");
+  if (sourceType === "profile" && sourceId !== receiverProfile.id) {
+    throw new Error("Unauthorized.");
+  }
+
   const existingIntroStatus = activeIntroStatuses.get(receiverMembership.id);
   if (existingIntroStatus) {
     redirect(`/org/${slug}/requests?status=intro_existing`);
@@ -330,8 +400,8 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     orgId: org.id,
     requesterMembershipId: membership.id,
     receiverMembershipId: receiverMembership.id,
-    sourceType: String(formData.get("source_type") ?? "match") as never,
-    sourceId: String(formData.get("source_id") ?? ""),
+    sourceType,
+    sourceId,
     introPurpose: String(formData.get("intro_purpose") ?? "general connection"),
     note: String(formData.get("note") ?? ""),
     status: "pending",
@@ -373,6 +443,8 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
 
   revalidatePath(`/org/${slug}/requests`);
   revalidatePath(`/org/${slug}/matches`);
+  revalidatePath(`/org/${slug}/people`);
+  revalidatePath(`/org/${slug}/people/${receiverMembership.id}`);
   revalidateMemberActivationPaths(slug);
   redirect(`/org/${slug}/requests?status=intro_requested`);
 }

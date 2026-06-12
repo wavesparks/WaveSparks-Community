@@ -61,6 +61,7 @@ export const introStatusEnum = pgEnum("intro_status", [
 export const introSourceTypeEnum = pgEnum("intro_source_type", [
   "match",
   "post",
+  "profile",
   "admin_manual",
 ]);
 export const notificationTypeEnum = pgEnum("notification_type", [
@@ -262,6 +263,23 @@ export const follows = pgTable(
     followerFollowedIdx: uniqueIndex("follows_follower_followed_idx").on(
       table.followerMembershipId,
       table.followedMembershipId,
+    ),
+  }),
+);
+
+export const postSaves = pgTable(
+  "post_saves",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    membershipId: text("membership_id").notNull(),
+    postId: text("post_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    membershipPostIdx: uniqueIndex("post_saves_membership_post_idx").on(
+      table.membershipId,
+      table.postId,
     ),
   }),
 );

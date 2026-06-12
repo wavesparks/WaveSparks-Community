@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { demoProviderButtons } from "@/lib/auth-buttons";
 import { getViewerContext } from "@/lib/auth";
-import { wavesparksBrand } from "@/lib/brand";
 import { isClerkConfigured } from "@/lib/env";
 import { previewAccountSpecs } from "@/server/preview-accounts";
 
@@ -31,7 +30,7 @@ export default async function SignInPage({
   }
 
   return (
-    <main className="min-h-screen bg-[var(--canvas)] px-4 py-6 sm:px-6 lg:px-8">
+    <main className="ws-page-shell px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-5xl flex-col justify-center gap-5">
         <div className="flex items-center justify-between gap-3">
           <Button asChild size="sm" variant="ghost">
@@ -44,15 +43,10 @@ export default async function SignInPage({
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
           <Card
-            className="min-h-[430px] overflow-hidden border-0 bg-[var(--night)] p-0 text-white"
-            style={{
-              backgroundImage: `linear-gradient(180deg, rgba(1,2,10,0.32), rgba(1,2,10,0.9)), url(${wavesparksBrand.huddleImageUrl})`,
-              backgroundPosition: "center",
-              backgroundSize: "cover",
-            }}
+            className="ws-hero-art min-h-[430px] overflow-hidden border-0 p-0 text-white"
           >
             <div className="flex min-h-[430px] flex-col justify-between p-6 sm:p-7">
-              <BrandLogo className="h-8 w-fit rounded bg-white/90 px-2 py-1" />
+              <BrandLogo className="h-8 w-fit" tone="light" />
               <div>
                 <SectionHeading
                   eyebrow="Sign in"
@@ -78,7 +72,7 @@ export default async function SignInPage({
                 description="Use the account credentials created by the Wavespark admin."
               />
               <PasswordSignInForm slug={slug} />
-              <div className="flex gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--ink-soft)]">
+                <div className="flex gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--ink-soft)]">
                 <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" />
                 <p>Members can browse first. Sign in is only needed to post, reply, follow, or request intros.</p>
               </div>

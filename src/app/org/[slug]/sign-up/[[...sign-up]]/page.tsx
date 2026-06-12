@@ -3,8 +3,8 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { BrandLogo } from "@/components/ui/brand-logo";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { wavesparksBrand } from "@/lib/brand";
 
 export default async function SignUpPage({
   params,
@@ -14,7 +14,7 @@ export default async function SignUpPage({
   const { slug } = await params;
 
   return (
-    <main className="min-h-screen bg-[var(--canvas)] px-4 py-6 sm:px-6 lg:px-8">
+    <main className="ws-page-shell px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-5xl flex-col justify-center gap-6">
         <Button asChild className="w-fit" variant="ghost">
           <Link href={`/org/${slug}/feed`}>
@@ -25,14 +25,10 @@ export default async function SignUpPage({
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr]">
           <Card
-            className="min-h-[350px] overflow-hidden border-0 bg-[var(--night)] p-0 text-white"
-            style={{
-              backgroundImage: `linear-gradient(180deg, rgba(1,2,10,0.25), rgba(1,2,10,0.88)), url(${wavesparksBrand.heroImageUrl})`,
-              backgroundPosition: "center",
-              backgroundSize: "cover",
-            }}
+            className="ws-hero-art min-h-[350px] overflow-hidden border-0 p-0 text-white"
           >
-            <div className="flex min-h-[350px] flex-col justify-end p-6 sm:p-7">
+            <div className="flex min-h-[350px] flex-col justify-between p-6 sm:p-7">
+              <BrandLogo className="h-8 w-fit" tone="light" />
               <SectionHeading
                 eyebrow="Create account"
                 level={1}

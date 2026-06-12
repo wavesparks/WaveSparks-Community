@@ -33,6 +33,17 @@ function defaultOpportunitySource(viewer: Awaited<ReturnType<typeof getViewerCon
   return "member";
 }
 
+function defaultFeedPostType(value?: string) {
+  return value === "ask" ||
+    value === "resource" ||
+    value === "announcement" ||
+    value === "opportunity" ||
+    value === "looking_for_cofounder" ||
+    value === "looking_for_mentor"
+    ? value
+    : "general_update";
+}
+
 export default async function ComposePage({
   params,
   searchParams,
@@ -43,6 +54,7 @@ export default async function ComposePage({
   const { slug } = await params;
   const query = await searchParams;
   const kind = singleQueryValue(query.kind) === "opportunity" ? "opportunity" : "feed";
+  const feedPostType = defaultFeedPostType(singleQueryValue(query.type));
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
     requireApproved: true,
@@ -88,7 +100,7 @@ export default async function ComposePage({
             <div>
               <Label htmlFor="type">Post type</Label>
               <Select
-                defaultValue={opportunityMode ? "opportunity" : "general_update"}
+                defaultValue={opportunityMode ? "opportunity" : feedPostType}
                 id="type"
                 name="type"
               >

@@ -10,7 +10,7 @@ export function AnalyticsBars({
   return (
     <Card className="space-y-4">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+        <p className="text-xs font-semibold uppercase text-slate-500">
           30 day activity
         </p>
         <h3 className="mt-1 text-xl font-semibold text-slate-950">

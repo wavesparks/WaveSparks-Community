@@ -1,6 +1,12 @@
-import { addCommentAction, requestIntroAction } from "@/actions/member";
+import {
+  addCommentAction,
+  requestIntroAction,
+  savePostAction,
+  unsavePostAction,
+} from "@/actions/member";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Bookmark } from "lucide-react";
 import { ForumShell } from "@/components/layout/forum-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,7 +79,7 @@ export default async function PostDetailPage({
   const { org, viewer } = await getOrganizationViewerContext(slug);
   const viewerCanInteract = viewer ? canAccessFeed(viewer.membership, viewer.profile) : false;
 
-  const { existingIntroStatus, thread } = await getPostThreadIntroContext({
+  const { existingIntroStatus, isPostSaved, thread } = await getPostThreadIntroContext({
     postId,
     orgId: org.id,
     viewerMembershipId: viewerCanInteract ? viewer?.membership.id : undefined,
@@ -125,6 +131,25 @@ export default async function PostDetailPage({
               </span>
             </div>
             <SectionHeading level={1} title={post.title} description={post.body} />
+            {viewerCanInteract && viewer ? (
+              <form
+                action={
+                  isPostSaved
+                    ? unsavePostAction.bind(null, slug, viewer.membership.id, post.id)
+                    : savePostAction.bind(null, slug, viewer.membership.id, post.id)
+                }
+              >
+                <input name="return_to" type="hidden" value={`/org/${slug}/posts/${post.id}`} />
+                <SubmitButton
+                  pendingLabel={isPostSaved ? "Removing" : "Saving"}
+                  size="sm"
+                  variant={isPostSaved ? "primary" : "secondary"}
+                >
+                  <Bookmark className="size-4" />
+                  {isPostSaved ? "Saved" : "Save"}
+                </SubmitButton>
+              </form>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               {post.tags.map((tag, index) => (
                 <Badge key={`post-tag-${tag}-${index}`} variant="muted">
