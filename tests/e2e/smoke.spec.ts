@@ -48,7 +48,10 @@ test("public thread is readable while interaction stays gated", async ({ page })
 test("sign-in surface loads", async ({ page }) => {
   await page.goto("/org/wavespark/signin");
   await expect(page.getByRole("heading", { name: "Enter the Wavespark application flow" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Local fallback sign in" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Email sign in" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to forum" })).toBeVisible();
+  await expect(page.getByLabel("Email")).toBeVisible();
+  await expect(page.getByLabel("Password")).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
