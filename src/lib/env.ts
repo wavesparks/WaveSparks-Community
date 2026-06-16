@@ -21,18 +21,12 @@ function nonEmpty(value?: string | null) {
   return trimmed || undefined;
 }
 
-const authDevDemoEnabled = nonEmpty(process.env.AUTH_DEV_DEMO_ENABLED);
-const fallbackNextAuthSecret =
-  process.env.NODE_ENV === "production" ? undefined : "development-secret";
-
 const env = {
   appUrl:
     withHttps(process.env.NEXT_PUBLIC_APP_URL) ??
     withHttps(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
     withHttps(process.env.VERCEL_URL) ??
-    withHttps(process.env.NEXTAUTH_URL) ??
     "http://localhost:3000",
-  nextAuthSecret: nonEmpty(process.env.NEXTAUTH_SECRET) ?? fallbackNextAuthSecret,
   clerkPublishableKey: nonEmpty(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY),
   clerkSecretKey: nonEmpty(process.env.CLERK_SECRET_KEY),
   clerkSignInUrl:
@@ -51,17 +45,10 @@ const env = {
   resendFromEmail:
     nonEmpty(process.env.RESEND_FROM_EMAIL) ?? "hello@wavespark.community",
   cronSecret: nonEmpty(process.env.CRON_SECRET),
-  authDevDemoEnabled:
-    authDevDemoEnabled === undefined
-      ? process.env.NODE_ENV !== "production"
-      : authDevDemoEnabled === "true",
   supabaseUrl: nonEmpty(process.env.SUPABASE_URL),
   supabaseServiceRoleKey: nonEmpty(process.env.SUPABASE_SERVICE_ROLE_KEY),
   supabaseBucket: nonEmpty(process.env.SUPABASE_BUCKET) ?? "wavesparks",
   wavesparkAdminEmails: nonEmpty(process.env.WAVESPARK_ADMIN_EMAILS) ?? "",
-  wavesparkAdminPassword:
-    nonEmpty(process.env.WAVESPARK_ADMIN_PASSWORD) ??
-    (process.env.NODE_ENV === "production" ? "" : "wavespark-admin-dev"),
 };
 
 export function isClerkConfigured() {
@@ -83,10 +70,6 @@ export function isBootstrapAdminEmail(email?: string | null) {
   }
 
   return getBootstrapAdminEmails().includes(email.toLowerCase().trim());
-}
-
-export function getBootstrapAdminPassword() {
-  return env.wavesparkAdminPassword;
 }
 
 export { env };

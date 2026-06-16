@@ -18,7 +18,7 @@ import {
   seedProfiles,
   seedUsers,
 } from "@/data/seed-data";
-import { env, getBootstrapAdminPassword, isBootstrapAdminEmail } from "@/lib/env";
+import { env, isBootstrapAdminEmail } from "@/lib/env";
 import {
   buildDailySeriesFromCounts,
   buildOrgAnalyticsSnapshot,
@@ -765,18 +765,6 @@ function hexToBytes(hex: string) {
   return bytes;
 }
 
-function timingSafeHexEqual(left: string, right: string) {
-  if (left.length !== right.length) {
-    return false;
-  }
-
-  let diff = 0;
-  for (let index = 0; index < left.length; index += 1) {
-    diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  }
-  return diff === 0;
-}
-
 async function hashPassword(password: string, salt = randomSalt()) {
   const passwordKey = await globalThis.crypto.subtle.importKey(
     "raw",
@@ -800,11 +788,6 @@ async function hashPassword(password: string, salt = randomSalt()) {
     passwordHash: bytesToHex(new Uint8Array(derivedBits)),
     passwordSalt: salt,
   };
-}
-
-async function verifyPassword(password: string, credential: PasswordCredential) {
-  const { passwordHash } = await hashPassword(password, credential.passwordSalt);
-  return timingSafeHexEqual(credential.passwordHash, passwordHash);
 }
 
 function passwordCredentialFromAccountRow(
@@ -1062,50 +1045,6 @@ export async function ensureMembership(
   return membershipFromRow(row);
 }
 
-export async function authorizePasswordUser(input: { email?: string; password?: string }) {
-  const email = normalizeEmailAddress(input.email ?? "");
-  const password = input.password ?? "";
-
-  if (!email || !password) {
-    return null;
-  }
-
-  const bootstrapPassword = getBootstrapAdminPassword();
-  const usesBootstrapPassword =
-    isBootstrapAdminEmail(email) &&
-    Boolean(bootstrapPassword) &&
-    password === bootstrapPassword;
-
-  const credential = await getPasswordCredentialByEmail(email);
-  if (credential) {
-    if (!(await verifyPassword(password, credential))) {
-      if (!usesBootstrapPassword) {
-        return null;
-      }
-
-      const user = await upsertSessionUser({
-        email,
-        name: displayNameForEmail(email),
-      });
-      await setPasswordCredential(user.id, email, password);
-      return user;
-    }
-
-    return getUserById(credential.userId);
-  }
-
-  if (!usesBootstrapPassword) {
-    return null;
-  }
-
-  const user = await upsertSessionUser({
-    email,
-    name: displayNameForEmail(email),
-  });
-  await setPasswordCredential(user.id, email, password);
-  return user;
-}
-
 export async function createManagedAccount(input: {
   orgId: string;
   email: string;
@@ -1123,7 +1062,7 @@ export async function createManagedAccount(input: {
   const email = normalizeEmailAddress(input.email);
   const name = input.name.trim() || displayNameForEmail(email);
   const password = input.password?.trim() ?? "";
-  const createPasswordCredential = input.createPasswordCredential ?? true;
+  const createPasswordCredential = input.createPasswordCredential ?? false;
 
   if (!email.includes("@")) {
     throw new Error("A valid email is required.");

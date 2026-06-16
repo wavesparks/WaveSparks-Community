@@ -1,28 +1,24 @@
-import { test, expect, type Page } from "@playwright/test";
+import { existsSync, readFileSync } from "node:fs";
+import { test, expect } from "@playwright/test";
 
-async function signInDemo(
-  page: Page,
-  email: string,
-  targetPath = "/org/wavespark",
-) {
-  await page.context().clearCookies();
+function hasConfiguredClerkKey() {
+  if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    return true;
+  }
 
-  const csrfResponse = await page.request.get("/api/auth/csrf");
-  const { csrfToken } = (await csrfResponse.json()) as { csrfToken: string };
-  const callbackUrl = new URL(targetPath, "http://localhost:3000").toString();
+  if (!existsSync(".env.local")) {
+    return false;
+  }
 
-  const signInResponse = await page.request.post("/api/auth/callback/demo", {
-    form: {
-      email,
-      csrfToken,
-      callbackUrl,
-      json: "true",
-    },
-  });
-
-  expect(signInResponse.ok()).toBe(true);
-  await page.goto(targetPath);
+  return /^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=.+/m.test(
+    readFileSync(".env.local", "utf8"),
+  );
 }
+
+test.skip(
+  hasConfiguredClerkKey() && !process.env.CLERK_TESTING_TOKEN,
+  "Clerk browser E2E requires CLERK_TESTING_TOKEN from the Clerk dashboard.",
+);
 
 test("public forum loads without sign-in", async ({ page }) => {
   await page.goto("/");
@@ -48,50 +44,32 @@ test("public thread is readable while interaction stays gated", async ({ page })
 test("sign-in surface loads", async ({ page }) => {
   await page.goto("/org/wavespark/signin");
   await expect(page.getByRole("heading", { name: "Enter the Wavespark application flow" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Email sign in" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Back to forum" })).toBeVisible();
-  await expect(page.getByLabel("Email")).toBeVisible();
-  await expect(page.getByLabel("Password")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Sign in to Wavespark|Clerk is not configured/ }),
+  ).toBeVisible();
+  await expect(page.getByText("Email sign in")).toHaveCount(0);
+  await expect(page.getByText("Preview accounts use")).toHaveCount(0);
 });
 
 test("sign-up route explains invitation-only access", async ({ page }) => {
   await page.goto("/org/wavespark/sign-up");
   await expect(page.getByRole("heading", { name: "Join Wavespark by invitation" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Use the credentials your admin sent" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Create your Clerk account|Clerk is not configured/ }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "Back to forum" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByText("Use the credentials your admin sent")).toHaveCount(0);
 });
 
-test("demo founder lands in the feed with an activation checklist", async ({ page }) => {
-  await signInDemo(page, "jules@example.com");
-
-  await expect(page).toHaveURL(/\/org\/wavespark\/feed/);
-  await expect(page.getByText("Activation")).toBeVisible();
-  await expect(page.getByText(/core steps complete/)).toBeVisible();
+test("anonymous protected pages redirect to sign-in", async ({ page }) => {
+  await page.goto("/org/wavespark/profile?status=profile_saved");
+  await expect(page).toHaveURL(/\/org\/wavespark\/signin$/);
+  await expect(page.getByRole("heading", { name: "Enter the Wavespark application flow" })).toBeVisible();
 });
 
-test("activation status banners render on completed-action destinations", async ({ page }) => {
-  await signInDemo(page, "jules@example.com", "/org/wavespark/profile?status=profile_saved");
-  await expect(page.getByText("Profile saved")).toBeVisible();
-  await expect(page).toHaveURL(/\/org\/wavespark\/profile$/);
-
+test("public status banners render on completed-action destinations", async ({ page }) => {
   await page.goto("/org/wavespark/feed?status=post_created");
   await expect(page.getByText("Post published")).toBeVisible();
   await expect(page).toHaveURL(/\/org\/wavespark\/feed$/);
-
-  await page.goto("/org/wavespark/requests?status=intro_requested");
-  await expect(page.getByText("Intro request sent")).toBeVisible();
-  await expect(page).toHaveURL(/\/org\/wavespark\/requests$/);
-});
-
-test("pending persona sees the approval timeline and profile edit CTA", async ({ page }) => {
-  await signInDemo(page, "priya@example.com", "/org/wavespark/pending?status=profile_saved");
-
-  await expect(page.getByText("Profile saved")).toBeVisible();
-  await expect(page).toHaveURL(/\/org\/wavespark\/pending$/);
-  await expect(page.getByRole("heading", { name: "Your application is in review" })).toBeVisible();
-  await expect(page.getByText("Profile stays editable")).toBeVisible();
-  await expect(page.getByText("Admin review")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Continue editing your profile" })).toBeVisible();
 });

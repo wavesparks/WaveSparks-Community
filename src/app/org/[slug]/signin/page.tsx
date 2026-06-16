@@ -1,17 +1,14 @@
 import { redirect } from "next/navigation";
-import { ArrowLeft, ShieldCheck } from "lucide-react";
+import { SignIn } from "@clerk/nextjs";
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
-import { PasswordSignInForm } from "@/components/auth/password-signin-form";
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { demoProviderButtons } from "@/lib/auth-buttons";
 import { getViewerContext } from "@/lib/auth";
 import { isClerkConfigured } from "@/lib/env";
-import { previewAccountSpecs } from "@/server/preview-accounts";
 
 export default async function SignInPage({
   params,
@@ -21,9 +18,6 @@ export default async function SignInPage({
   const { slug } = await params;
   const viewer = await getViewerContext(slug);
   const clerkConfigured = isClerkConfigured();
-  const ClerkSignIn = clerkConfigured
-    ? (await import("@clerk/nextjs")).SignIn
-    : null;
 
   if (viewer) {
     redirect(`/org/${slug}`);
@@ -65,43 +59,15 @@ export default async function SignInPage({
           </Card>
 
           <div className="space-y-4">
-            <Card className="space-y-5 border-[var(--accent)]/30">
-              <SectionHeading
-                eyebrow="Account"
-                title="Email sign in"
-                description="Use the account credentials created by the Wavespark admin."
-              />
-              <PasswordSignInForm slug={slug} />
-                <div className="flex gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--ink-soft)]">
-                <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" />
-                <p>Members can browse first. Sign in is only needed to post, reply, follow, or request intros.</p>
-              </div>
-            </Card>
-
-            <Card className="space-y-4">
-              <SectionHeading
-                eyebrow="Preview roles"
-                title="Admin, mentor, and founder test accounts"
-                description="Preview accounts use the email-password form. The temporary password is generated outside source control."
-              />
-              <div className="flex flex-wrap gap-2">
-                {previewAccountSpecs.map((account) => (
-                  <Badge key={account.kind} variant={account.kind === "admin" ? "accent" : "muted"}>
-                    {account.label}
-                  </Badge>
-                ))}
-              </div>
-            </Card>
-
-            {ClerkSignIn ? (
+            {clerkConfigured ? (
               <Card className="space-y-5">
                 <SectionHeading
                   eyebrow="Managed identity"
-                  title="Sign in with Clerk"
-                  description="Use Clerk when the managed identity service is available."
+                  title="Sign in to Wavespark"
+                  description="Use Clerk to access your Wavespark community account."
                 />
                 <div className="flex justify-center">
-                  <ClerkSignIn
+                  <SignIn
                     fallbackRedirectUrl={`/org/${slug}`}
                     path={`/org/${slug}/signin`}
                     routing="path"
@@ -109,18 +75,30 @@ export default async function SignInPage({
                   />
                 </div>
               </Card>
-            ) : demoProviderButtons.length ? (
-              <>
-                <Card className="flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-[var(--ink)]">Demo mode is available</p>
-                    <p className="text-sm text-[var(--ink-soft)]">Use the separate demo entrance for seeded preview personas.</p>
-                  </div>
-                  <Button asChild variant="secondary">
-                    <Link href={`/org/${slug}/demo`}>Open demo</Link>
-                  </Button>
-                </Card>
-              </>
+            ) : (
+              <Card className="space-y-4">
+                <SectionHeading
+                  eyebrow="Configuration"
+                  title="Clerk is not configured"
+                  description="Add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to enable sign-in."
+                />
+              </Card>
+            )}
+            <Card className="text-sm leading-6 text-[var(--ink-soft)]">
+              Members can browse first. Sign in is only needed to post, reply, follow, or request intros.
+            </Card>
+            {clerkConfigured ? (
+              <Card className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--ink)]">Need an account?</p>
+                  <p className="text-sm text-[var(--ink-soft)]">
+                    Create one with Clerk and your local community profile will be linked by email.
+                  </p>
+                </div>
+                <Button asChild variant="secondary">
+                  <Link href={`/org/${slug}/sign-up`}>Sign up</Link>
+                </Button>
+              </Card>
             ) : null}
           </div>
         </div>

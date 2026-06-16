@@ -130,16 +130,10 @@ function buildPreviewProfile(spec: PreviewAccountSpec, membershipId: string) {
 }
 
 export async function provisionPreviewAccounts({
-  password,
   orgId = seedOrganization.id,
 }: {
-  password: string;
   orgId?: string;
 }) {
-  if (password.trim().length < 12) {
-    throw new Error("Preview account password must be at least 12 characters.");
-  }
-
   const provisioned = [];
 
   for (const spec of previewAccountSpecs) {
@@ -147,7 +141,7 @@ export async function provisionPreviewAccounts({
       orgId,
       email: spec.email,
       name: spec.name,
-      password,
+      createPasswordCredential: false,
       role: spec.role,
       status: "approved",
       affiliationType: spec.affiliationType,

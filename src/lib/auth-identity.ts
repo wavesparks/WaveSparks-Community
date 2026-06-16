@@ -1,6 +1,3 @@
-import { getServerSession } from "next-auth";
-
-import { authOptions } from "@/lib/auth-options";
 import { isClerkConfigured } from "@/lib/env";
 
 type ClerkServer = typeof import("@clerk/nextjs/server");
@@ -13,7 +10,7 @@ export interface AuthIdentity {
   email: string;
   name: string;
   imageUrl?: string;
-  provider: "clerk" | "password";
+  provider: "clerk";
 }
 
 function nameForClerkUser(user: NonNullable<ClerkUser>, email: string) {
@@ -86,37 +83,23 @@ function identityFromClerkClaims(
 }
 
 export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
-  if (isClerkConfigured()) {
-    try {
-      const { auth, clerkClient } = await import("@clerk/nextjs/server");
-      const clerkAuth = await auth();
-
-      if (clerkAuth.userId) {
-        const claimsIdentity = identityFromClerkClaims(clerkAuth.sessionClaims);
-
-        if (claimsIdentity) {
-          return claimsIdentity;
-        }
-
-        const client = await clerkClient();
-        return identityFromClerkUser(await client.users.getUser(clerkAuth.userId));
-      }
-    } catch (error) {
-      console.warn("[wavesparks] Clerk auth unavailable; falling back to email session.", error);
-    }
-  }
-
-  const session = await getServerSession(authOptions);
-  const email = session?.user?.email;
-
-  if (!email) {
+  if (!isClerkConfigured()) {
     return null;
   }
 
-  return {
-    email,
-    name: session.user.name ?? email,
-    imageUrl: session.user.image ?? undefined,
-    provider: "password",
-  };
+  const { auth, clerkClient } = await import("@clerk/nextjs/server");
+  const clerkAuth = await auth();
+
+  if (!clerkAuth.userId) {
+    return null;
+  }
+
+  const claimsIdentity = identityFromClerkClaims(clerkAuth.sessionClaims);
+
+  if (claimsIdentity) {
+    return claimsIdentity;
+  }
+
+  const client = await clerkClient();
+  return identityFromClerkUser(await client.users.getUser(clerkAuth.userId));
 }

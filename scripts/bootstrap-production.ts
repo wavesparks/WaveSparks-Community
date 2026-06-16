@@ -17,8 +17,7 @@ async function main() {
   const { seedOrganization } = await import("@/data/seed-data");
   const { getDb, getSqlClient } = await import("@/db/client");
   const { memberships, organizations, users } = await import("@/db/schema");
-  const { env, getBootstrapAdminEmails, getBootstrapAdminPassword } = await import("@/lib/env");
-  const { setPasswordCredential } = await import("@/server/store");
+  const { env, getBootstrapAdminEmails } = await import("@/lib/env");
 
   if (!env.databaseUrl) {
     console.info("DATABASE_URL not configured. Skipping production bootstrap.");
@@ -26,12 +25,8 @@ async function main() {
   }
 
   const emails = getBootstrapAdminEmails();
-  const bootstrapPassword = getBootstrapAdminPassword();
   if (!emails.length) {
     console.info("WAVESPARK_ADMIN_EMAILS is empty. Created org only.");
-  }
-  if (!bootstrapPassword) {
-    console.info("WAVESPARK_ADMIN_PASSWORD is empty. Admin password credentials will not be created.");
   }
 
   const db = getDb();
@@ -84,10 +79,6 @@ async function main() {
         .update(users)
         .set({ platformRole: "platform_owner", updatedAt: now })
         .where(eq(users.id, user.id));
-    }
-
-    if (bootstrapPassword) {
-      await setPasswordCredential(user.id, email, bootstrapPassword);
     }
 
     const [existingMembership] = await db

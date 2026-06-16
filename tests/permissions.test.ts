@@ -4,7 +4,6 @@ import { canAccessFeed, canViewAdminRoute, canViewContactDetails } from "@/serve
 import { seedOrganization } from "@/data/seed-data";
 import {
   addNotification,
-  authorizePasswordUser,
   createIntroRequest,
   createManagedAccount,
   ensureMembership,
@@ -85,82 +84,17 @@ describe("permission guards", () => {
     expect(canViewAdminRoute(user, promoted)).toBe(true);
   });
 
-  it("authenticates the bootstrap admin with the built-in password provider", async () => {
-    const user = await authorizePasswordUser({
-      email: "letsbuild@wavesparks.co",
-      password: "wavespark-admin-dev",
-    });
-
-    expect(user).toMatchObject({
-      email: "letsbuild@wavesparks.co",
-      platformRole: "platform_owner",
-    });
-  });
-
-  it("lets the bootstrap admin password recover an existing local credential", async () => {
-    await createManagedAccount({
-      orgId: seedOrganization.id,
-      email: "letsbuild@wavesparks.co",
-      name: "Lets Build",
-      password: "old-admin-password",
-      role: "org_admin",
-      status: "approved",
-    });
-
-    const recovered = await authorizePasswordUser({
-      email: "letsbuild@wavesparks.co",
-      password: "wavespark-admin-dev",
-    });
-    const oldPassword = await authorizePasswordUser({
-      email: "letsbuild@wavesparks.co",
-      password: "old-admin-password",
-    });
-
-    expect(recovered).toMatchObject({
-      email: "letsbuild@wavesparks.co",
-      platformRole: "platform_owner",
-    });
-    expect(oldPassword).toBeNull();
-  });
-
-  it("creates managed accounts that can sign in with email and password", async () => {
+  it("creates managed memberships for Clerk-owned account access", async () => {
     const { user, membership } = await createManagedAccount({
       orgId: seedOrganization.id,
       email: "new.member@example.com",
       name: "New Member",
-      password: "temporary-password",
       role: "member",
       status: "approved",
-    });
-
-    const authenticated = await authorizePasswordUser({
-      email: "new.member@example.com",
-      password: "temporary-password",
     });
 
     expect(user.email).toBe("new.member@example.com");
     expect(membership).toMatchObject({ role: "member", status: "approved" });
-    expect(authenticated?.id).toBe(user.id);
-  });
-
-  it("creates managed memberships without local passwords when Clerk owns account access", async () => {
-    const { user, membership } = await createManagedAccount({
-      orgId: seedOrganization.id,
-      email: "clerk.member@example.com",
-      name: "Clerk Member",
-      createPasswordCredential: false,
-      role: "member",
-      status: "approved",
-    });
-
-    const authenticated = await authorizePasswordUser({
-      email: "clerk.member@example.com",
-      password: "temporary-password",
-    });
-
-    expect(user.email).toBe("clerk.member@example.com");
-    expect(membership).toMatchObject({ role: "member", status: "approved" });
-    expect(authenticated).toBeNull();
   });
 
   it("only grants feed access to approved members with onboarding complete", async () => {

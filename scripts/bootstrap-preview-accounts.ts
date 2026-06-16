@@ -1,5 +1,4 @@
 import { chmod, writeFile } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
 
 import { getSqlClient } from "@/db/client";
 import { env } from "@/lib/env";
@@ -10,13 +9,8 @@ import {
 
 const credentialsPath = "/tmp/wavesparks-preview-accounts.txt";
 
-function previewPassword() {
-  return process.env.WAVESPARK_PREVIEW_PASSWORD?.trim() || randomBytes(24).toString("base64url");
-}
-
 async function main() {
-  const password = previewPassword();
-  const provisioned = await provisionPreviewAccounts({ password });
+  const provisioned = await provisionPreviewAccounts({});
   const accountLines = provisioned.map(({ spec, membership }) =>
     [
       `${spec.label}`,
@@ -31,11 +25,10 @@ async function main() {
     [
       "Wavespark preview accounts",
       `Generated: ${new Date().toISOString()}`,
-      `Password: ${password}`,
       "",
       ...accountLines,
       "",
-      "Use the same password for all preview accounts.",
+      "Authentication is managed by Clerk. Create or invite matching Clerk users for these emails to sign in.",
     ].join("\n"),
     { mode: 0o600 },
   );

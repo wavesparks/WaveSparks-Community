@@ -9,10 +9,7 @@ const baseProductionEnv: NodeJS.ProcessEnv = {
   CLERK_SECRET_KEY: "sk_live_wavesparks",
   DATABASE_URL: "postgres://wavespark:secret@db.wavesparks.co:5432/wavespark",
   CRON_SECRET: "cron-secret-with-enough-production-entropy",
-  NEXTAUTH_SECRET: "next-auth-secret-with-enough-production-entropy",
   WAVESPARK_ADMIN_EMAILS: "letsbuild@wavesparks.co",
-  WAVESPARK_ADMIN_PASSWORD: "admin-password-with-enough-entropy",
-  AUTH_DEV_DEMO_ENABLED: "false",
   NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/org/wavespark/signin",
   NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/org/wavespark/sign-up",
   NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "/org/wavespark",
@@ -32,14 +29,13 @@ describe("production readiness checks", () => {
     });
   });
 
-  it("blocks local URLs, demo access, and Clerk test keys", () => {
+  it("blocks local URLs and Clerk test keys", () => {
     const result = checkProductionReadiness({
       ...baseProductionEnv,
       NEXT_PUBLIC_APP_URL: "http://localhost:3000",
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_wavesparks",
       CLERK_SECRET_KEY: "sk_test_wavesparks",
       DATABASE_URL: "postgres://postgres:postgres@localhost:5432/wavesparks",
-      AUTH_DEV_DEMO_ENABLED: "true",
     });
 
     expect(result.errors).toEqual(
@@ -49,18 +45,8 @@ describe("production readiness checks", () => {
         "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must use a Clerk live key in production.",
         "CLERK_SECRET_KEY must use a Clerk live key in production.",
         "DATABASE_URL must not point to localhost in production.",
-        "AUTH_DEV_DEMO_ENABLED must be set to false in production.",
       ]),
     );
-  });
-
-  it("requires NextAuth secret because email/password sign-in stays available", () => {
-    const result = checkProductionReadiness({
-      ...baseProductionEnv,
-      NEXTAUTH_SECRET: undefined,
-    });
-
-    expect(result.errors).toContain("NEXTAUTH_SECRET is required for email/password sign-in.");
   });
 
   it("accepts Vercel's system URL when the explicit app URL is not configured", () => {

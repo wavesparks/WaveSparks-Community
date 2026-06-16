@@ -6,7 +6,6 @@ import {
   provisionPreviewAccounts,
 } from "@/server/preview-accounts";
 import {
-  authorizePasswordUser,
   getProfileByMembershipId,
   resetStore,
 } from "@/server/store";
@@ -16,9 +15,8 @@ describe("preview account provisioning", () => {
     resetStore();
   });
 
-  it("creates password-backed admin, mentor, and founder preview accounts", async () => {
-    const password = "preview-password-123";
-    const accounts = await provisionPreviewAccounts({ password });
+  it("creates admin, mentor, and founder preview memberships for Clerk users", async () => {
+    const accounts = await provisionPreviewAccounts({});
 
     expect(accounts.map(({ spec }) => spec.kind).sort()).toEqual([
       "admin",
@@ -29,12 +27,7 @@ describe("preview account provisioning", () => {
     expect(previewAccountSpecs).toHaveLength(3);
 
     for (const { spec, user, membership } of accounts) {
-      await expect(
-        authorizePasswordUser({
-          email: spec.email,
-          password,
-        }),
-      ).resolves.toMatchObject({ id: user.id, email: spec.email });
+      expect(user.email).toBe(spec.email);
 
       const profile = await getProfileByMembershipId(membership.id);
       expect(profile?.onboardingComplete).toBe(true);

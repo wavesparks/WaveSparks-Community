@@ -106,7 +106,6 @@ describe("admin server actions", () => {
     const formData = formDataFromEntries({
       email: "new.clerk.member@example.com",
       name: "New Clerk Member",
-      password: "temporary-password",
       role: "member",
       status: "approved",
     });
@@ -126,16 +125,6 @@ describe("admin server actions", () => {
     expect(membership).toMatchObject({
       role: "member",
       status: "approved",
-    });
-    await expect(
-      import("@/server/store").then(({ authorizePasswordUser }) =>
-        authorizePasswordUser({
-          email: "new.clerk.member@example.com",
-          password: "temporary-password",
-        }),
-      ),
-    ).resolves.toMatchObject({
-      email: "new.clerk.member@example.com",
     });
     expect(createInvitationMock).not.toHaveBeenCalled();
     expect(afterMock).toHaveBeenCalledTimes(1);

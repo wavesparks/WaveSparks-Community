@@ -18,13 +18,4 @@ describe("environment configuration", () => {
 
     expect(isClerkConfigured()).toBe(false);
   });
-
-  it("keeps demo auth disabled by default in production", async () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("AUTH_DEV_DEMO_ENABLED", "");
-
-    const { env } = await loadEnv();
-
-    expect(env.authDevDemoEnabled).toBe(false);
-  });
 });

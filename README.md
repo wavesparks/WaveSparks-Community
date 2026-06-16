@@ -5,7 +5,7 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 ## What’s in this MVP
 
 - Multi-tenant org routing under `/org/[slug]`
-- Clerk-backed sign-in/sign-up and user invitations, with local fallback auth for unconfigured development
+- Clerk-backed sign-in/sign-up and user invitations
 - Structured onboarding and profile completion flow
 - Community feed, limited member directory, knowledge library, opportunities, post detail, comments, saved posts, and intro requests
 - AI-assisted cofounder and mentor matches with explainable scoring
@@ -18,7 +18,6 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 - TypeScript
 - Tailwind CSS v4
 - Clerk user management
-- Auth.js / NextAuth local fallback credentials
 - Drizzle ORM + drizzle-kit
 - PostgreSQL-ready schema with `pgvector`
 - Vitest + Playwright
@@ -47,11 +46,10 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 
 ## Auth behavior
 
-- Production authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`; the app's org-scoped sign-in/sign-up pages pass their Clerk routes directly.
-- If Clerk keys are missing, the app falls back to local Auth.js credentials and seeded demo personas so the product can still be exercised without external auth setup.
+- Authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`; the app's org-scoped sign-in/sign-up pages pass their Clerk routes directly.
+- If Clerk keys are missing, authenticated app areas are unavailable until `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are configured.
 - Admins can invite or update members from `/org/wavespark/admin/members`. With Clerk configured, the action sends a Clerk invitation and stores the Wavespark membership state locally.
 - `letsbuild@wavesparks.co` is a default bootstrap admin. Add more comma-separated admin emails with `WAVESPARK_ADMIN_EMAILS`.
-- In local fallback mode, set `WAVESPARK_ADMIN_PASSWORD` so the bootstrap admin can sign in without Clerk.
 
 ## Database workflow
 
@@ -82,9 +80,8 @@ pnpm db:preview-accounts
 ```
 
 This creates or updates one approved admin, mentor, and founder account. Set
-`WAVESPARK_PREVIEW_PASSWORD` to control the shared temporary password; otherwise
-the script generates one and writes the credentials to
-`/tmp/wavesparks-preview-accounts.txt`.
+up matching Clerk users or invitations for the printed emails to sign in. The
+script writes a summary to `/tmp/wavesparks-preview-accounts.txt`.
 
 ## Useful scripts
 
@@ -109,9 +106,7 @@ Before promoting a deployment to production:
 NEXT_PUBLIC_APP_URL=https://app.wavesparks.co
 DATABASE_URL=<postgres-url-with-pgvector>
 CRON_SECRET=<long-random-secret>
-AUTH_DEV_DEMO_ENABLED=false
 WAVESPARK_ADMIN_EMAILS=letsbuild@wavesparks.co
-WAVESPARK_PREVIEW_PASSWORD=<strong-shared-preview-password>
 RESEND_API_KEY=<resend-key>
 RESEND_FROM_EMAIL=<verified-sender>
 SUPABASE_URL=<supabase-url>
@@ -139,9 +134,8 @@ pnpm db:bootstrap
 ```
 
 `pnpm readiness:prod` expects the real production environment to be present, as it is in
-Vercel/CI. It blocks localhost URLs, placeholder secrets, Clerk test keys, demo auth, and
-partial Resend/Supabase configuration before the deployment is promoted. It does not require
-`NEXTAUTH_SECRET` when Clerk is configured and local fallback auth is disabled.
+Vercel/CI. It blocks localhost URLs, placeholder secrets, Clerk test keys, and partial
+Resend/Supabase configuration before the deployment is promoted.
 
 3. Confirm DNS points the app domain to Vercel. `app.wavesparks.co` should resolve to Vercel before it becomes the member-facing URL.
 

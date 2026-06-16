@@ -7,13 +7,12 @@ vi.mock("@/lib/auth-identity", () => ({
 }));
 
 import { POST } from "@/app/api/internal/preview-accounts/route";
-import { previewAccountSpecs } from "@/server/preview-accounts";
-import { authorizePasswordUser, resetStore } from "@/server/store";
+import { resetStore } from "@/server/store";
 
-function request(password = "preview-password-123") {
+function request() {
   return new Request("http://localhost/api/internal/preview-accounts", {
     method: "POST",
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({}),
   });
 }
 
@@ -34,7 +33,7 @@ describe("preview accounts internal route", () => {
     getCurrentAuthIdentityMock.mockResolvedValue({
       email: "jules@example.com",
       name: "Jules Park",
-      provider: "password",
+      provider: "clerk",
     });
 
     const response = await POST(request());
@@ -43,14 +42,13 @@ describe("preview accounts internal route", () => {
   });
 
   it("provisions the three preview accounts for an admin", async () => {
-    const password = "preview-password-123";
     getCurrentAuthIdentityMock.mockResolvedValue({
       email: "avery@wavespark.co",
       name: "Avery Tan",
-      provider: "password",
+      provider: "clerk",
     });
 
-    const response = await POST(request(password));
+    const response = await POST(request());
     const payload = await response.json();
 
     expect(response.status).toBe(200);
@@ -61,14 +59,5 @@ describe("preview accounts internal route", () => {
       "founder",
       "mentor",
     ]);
-
-    for (const spec of previewAccountSpecs) {
-      await expect(
-        authorizePasswordUser({
-          email: spec.email,
-          password,
-        }),
-      ).resolves.toMatchObject({ email: spec.email });
-    }
   });
 });

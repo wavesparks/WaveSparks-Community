@@ -66,36 +66,31 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   const name = String(formData.get("name") ?? "");
   const role = String(formData.get("role") ?? "member") as never;
   const status = String(formData.get("status") ?? "approved") as never;
-  const clerkConfigured = isClerkConfigured();
+  if (!isClerkConfigured()) {
+    throw new Error("Clerk is not configured.");
+  }
 
   const { membership } = await createManagedAccount({
     orgId: org.id,
     email,
     name,
-    password: String(formData.get("password") ?? ""),
-    createPasswordCredential: true,
+    createPasswordCredential: false,
     role,
     status,
   });
 
-  if (clerkConfigured) {
-    enqueueClerkInvitation({
-      emailAddress: email,
-      redirectUrl: absoluteAppUrl(`/org/${slug}/signin`),
-      publicMetadata: {
-        orgSlug: slug,
-        membershipId: membership.id,
-        membershipRole: membership.role,
-      },
-    });
-  }
+  enqueueClerkInvitation({
+    emailAddress: email,
+    redirectUrl: absoluteAppUrl(`/org/${slug}/signin`),
+    publicMetadata: {
+      orgSlug: slug,
+      membershipId: membership.id,
+      membershipRole: membership.role,
+    },
+  });
 
   revalidatePath(`/org/${slug}/admin/members`);
-  redirect(
-    `/org/${slug}/admin/members?status=${
-      clerkConfigured ? "member_invited" : "member_saved"
-    }`,
-  );
+  redirect(`/org/${slug}/admin/members?status=member_invited`);
 }
 
 export async function updateMembershipAction(slug: string, membershipId: string, formData: FormData) {

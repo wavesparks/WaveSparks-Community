@@ -14,6 +14,7 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "coverage/**",
     "test-results/**",
+    ".agents/**",
     "package/**",
     ".pnpm-store/**",
     ".pnpm-home/**",

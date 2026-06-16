@@ -1,17 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerkAuthMock = vi.hoisted(() => vi.fn());
-const clerkClientMock = vi.hoisted(() => vi.fn());
-const getServerSessionMock = vi.hoisted(() => vi.fn());
+const getUserMock = vi.hoisted(() => vi.fn());
+const clerkClientMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    users: {
+      getUser: getUserMock,
+    },
+  })),
+);
 
 async function loadAuthIdentity() {
   vi.resetModules();
   vi.doMock("@clerk/nextjs/server", () => ({
     auth: clerkAuthMock,
     clerkClient: clerkClientMock,
-  }));
-  vi.doMock("next-auth", () => ({
-    getServerSession: getServerSessionMock,
   }));
 
   return import("@/lib/auth-identity");
@@ -22,57 +25,28 @@ describe("current auth identity", () => {
     vi.clearAllMocks();
     delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
     delete process.env.CLERK_SECRET_KEY;
-    process.env.AUTH_DEV_DEMO_ENABLED = "false";
-    getServerSessionMock.mockResolvedValue(null);
     clerkAuthMock.mockResolvedValue({ userId: null, sessionClaims: null });
-    clerkClientMock.mockResolvedValue({
-      users: {
-        getUser: vi.fn(),
-      },
-    });
+    getUserMock.mockResolvedValue(null);
   });
 
-  it("uses the email/password session even when demo access is disabled", async () => {
-    getServerSessionMock.mockResolvedValue({
-      user: {
-        email: "member@example.com",
-        name: "Member Example",
-        image: "https://example.com/avatar.png",
-      },
-    });
-
+  it("returns null when Clerk is not configured", async () => {
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
-    await expect(getCurrentAuthIdentity()).resolves.toEqual({
-      email: "member@example.com",
-      name: "Member Example",
-      imageUrl: "https://example.com/avatar.png",
-      provider: "password",
-    });
+    await expect(getCurrentAuthIdentity()).resolves.toBeNull();
+    expect(clerkAuthMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to the email/password session when Clerk has no user", async () => {
+  it("returns null when Clerk has no signed-in user", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
     process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
-    getServerSessionMock.mockResolvedValue({
-      user: {
-        email: "fallback@example.com",
-        name: "Fallback Member",
-      },
-    });
 
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
-    await expect(getCurrentAuthIdentity()).resolves.toEqual({
-      email: "fallback@example.com",
-      name: "Fallback Member",
-      imageUrl: undefined,
-      provider: "password",
-    });
+    await expect(getCurrentAuthIdentity()).resolves.toBeNull();
     expect(clerkAuthMock).toHaveBeenCalled();
   });
 
-  it("prefers Clerk claims when a Clerk user is signed in", async () => {
+  it("uses Clerk claims when a Clerk user is signed in", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
     process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
     clerkAuthMock.mockResolvedValue({
@@ -81,12 +55,6 @@ describe("current auth identity", () => {
         email: "clerk@example.com",
         name: "Clerk Member",
         picture: "https://example.com/clerk.png",
-      },
-    });
-    getServerSessionMock.mockResolvedValue({
-      user: {
-        email: "fallback@example.com",
-        name: "Fallback Member",
       },
     });
 
@@ -98,6 +66,35 @@ describe("current auth identity", () => {
       imageUrl: "https://example.com/clerk.png",
       provider: "clerk",
     });
-    expect(getServerSessionMock).not.toHaveBeenCalled();
+    expect(getUserMock).not.toHaveBeenCalled();
+  });
+
+  it("loads the Clerk user when claims do not include an email", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
+    process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
+    clerkAuthMock.mockResolvedValue({
+      userId: "clerk_user",
+      sessionClaims: {},
+    });
+    getUserMock.mockResolvedValue({
+      firstName: "Clerk",
+      lastName: "Member",
+      fullName: null,
+      username: null,
+      imageUrl: "https://example.com/clerk.png",
+      primaryEmailAddress: {
+        emailAddress: "clerk@example.com",
+      },
+      emailAddresses: [],
+    });
+
+    const { getCurrentAuthIdentity } = await loadAuthIdentity();
+
+    await expect(getCurrentAuthIdentity()).resolves.toEqual({
+      email: "clerk@example.com",
+      name: "Clerk Member",
+      imageUrl: "https://example.com/clerk.png",
+      provider: "clerk",
+    });
   });
 });

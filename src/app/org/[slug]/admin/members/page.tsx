@@ -67,19 +67,19 @@ export default async function AdminMembersPage({
           title="Accounts and membership states"
           description={
             clerkConfigured
-              ? "Create email-password access, optionally send Clerk invitations, approve members, and control who can reach admin surfaces."
-              : "Create local fallback accounts, approve members, and control who can reach admin surfaces."
+              ? "Invite members through Clerk, approve membership states, and control who can reach admin surfaces."
+              : "Configure Clerk keys before inviting new members."
           }
         />
         <StatusBanner status={singleQueryValue(query.status)} />
         <Card className="space-y-5">
           <SectionHeading
-            eyebrow={clerkConfigured ? "Member access" : "Local fallback account"}
-            title={clerkConfigured ? "Create access and invite a member" : "Create or update an account"}
+            eyebrow="Member access"
+            title="Create local membership and send a Clerk invite"
             description={
               clerkConfigured
-                ? "Wavespark creates an email-password account first, then attempts a Clerk invitation for managed identity."
-                : "Used only when Clerk keys are not configured in this environment."
+                ? "Wavespark stores the member record locally, then sends the authentication invite through Clerk."
+                : "Clerk keys are missing, so invitations are disabled in this environment."
             }
           />
           <form
@@ -93,10 +93,6 @@ export default async function AdminMembersPage({
             <div>
               <Label htmlFor="email">Email</Label>
               <Input id="email" name="email" placeholder="member@company.com" required type="email" />
-            </div>
-            <div>
-              <Label htmlFor="password">Temporary password</Label>
-              <Input id="password" minLength={8} name="password" required type="password" />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -118,9 +114,10 @@ export default async function AdminMembersPage({
             </div>
             <div className="lg:col-span-2">
               <SubmitButton
-                pendingLabel={clerkConfigured ? "Sending invitation" : "Saving account"}
+                disabled={!clerkConfigured}
+                pendingLabel="Sending invitation"
               >
-                {clerkConfigured ? "Create access and invite" : "Save account"}
+                Create and invite
               </SubmitButton>
             </div>
           </form>
