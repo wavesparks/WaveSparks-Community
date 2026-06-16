@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Host_Grotesk, Urbanist } from "next/font/google";
 import "./globals.css";
 
-import { isClerkConfigured } from "@/lib/env";
+import { env, isClerkConfigured } from "@/lib/env";
 
 const headingFont = Host_Grotesk({
   variable: "--font-heading",
@@ -49,5 +49,15 @@ async function ClerkBoundary({ children }: { children: React.ReactNode }) {
   }
 
   const { ClerkProvider } = await import("@clerk/nextjs");
-  return <ClerkProvider>{children}</ClerkProvider>;
+  return (
+    <ClerkProvider
+      proxyUrl="/__clerk"
+      signInFallbackRedirectUrl={env.clerkSignInFallbackRedirectUrl}
+      signInUrl={env.clerkSignInUrl}
+      signUpFallbackRedirectUrl={env.clerkSignUpFallbackRedirectUrl}
+      signUpUrl={env.clerkSignUpUrl}
+    >
+      {children}
+    </ClerkProvider>
+  );
 }
