@@ -102,7 +102,7 @@ export default async function AdminRequestsPage({
               action={createManualIntroAction.bind(null, slug, viewer.membership.id)}
               className="space-y-4"
             >
-              <select className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950" name="receiver_membership_id">
+              <select className="h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]" name="receiver_membership_id">
                 {manualIntroCandidates.map((candidate) => {
                   return (
                     <option key={candidate.membershipId} value={candidate.membershipId}>
@@ -147,22 +147,22 @@ export default async function AdminRequestsPage({
               return (
                 <Card className="space-y-3" key={request.id}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="font-semibold text-slate-900">{request.introPurpose}</p>
+                    <p className="font-semibold text-[var(--ink)]">{request.introPurpose}</p>
                     <Badge variant={request.status === "accepted" ? "accent" : "default"}>
                       {request.status}
                     </Badge>
                   </div>
-                  <p className="text-sm text-slate-600">
+                  <p className="text-sm text-[var(--ink-soft)]">
                     {request.requesterName} to {request.receiverName}
                   </p>
-                  <p className="text-sm text-slate-700">{request.note}</p>
+                  <p className="text-sm text-[var(--ink-soft)]">{request.note}</p>
                 </Card>
               );
             })}
             {!requests.length ? (
               <Card>
-                <p className="text-sm font-semibold text-slate-950">No requests in this queue</p>
-                <p className="mt-1 text-sm text-slate-600">
+                <p className="text-sm font-semibold text-[var(--ink)]">No requests in this queue</p>
+                <p className="mt-1 text-sm text-[var(--ink-soft)]">
                   Try another request status or source type.
                 </p>
               </Card>

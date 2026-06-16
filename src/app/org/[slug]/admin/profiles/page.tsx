@@ -124,8 +124,8 @@ export default async function AdminProfilesPage({
             <Card className="space-y-4" key={profile.profileId}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-xl font-semibold text-slate-950">{profile.displayName}</h3>
-                  <p className="text-sm text-slate-600">{profile.headline}</p>
+                  <h3 className="text-xl font-semibold text-[var(--ink)]">{profile.displayName}</h3>
+                  <p className="text-sm text-[var(--ink-soft)]">{profile.headline}</p>
                 </div>
                 <div className="flex gap-2">
                   <Badge variant="muted">{profile.affiliationLabel}</Badge>
@@ -135,18 +135,18 @@ export default async function AdminProfilesPage({
                 </div>
               </div>
               <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                  <p className="font-semibold text-slate-900">Contact</p>
+                <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm text-[var(--ink-soft)]">
+                  <p className="font-semibold text-[var(--ink)]">Contact</p>
                   <p className="mt-2">{profile.emailForIntro}</p>
                   <p>{profile.whatsappNumber}</p>
                 </div>
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                  <p className="font-semibold text-slate-900">Roles & offers</p>
+                <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm text-[var(--ink-soft)]">
+                  <p className="font-semibold text-[var(--ink)]">Roles & offers</p>
                   <p className="mt-2">{profile.desiredRoles.join(", ") || "None listed"}</p>
                   <p>{profile.mentorOffers.join(", ") || "No mentor offers"}</p>
                 </div>
               </div>
-              <p className="text-sm text-slate-700">{profile.startupDescription}</p>
+              <p className="text-sm text-[var(--ink-soft)]">{profile.startupDescription}</p>
               <form
                 action={updateProfileFlagsAction.bind(null, slug, profile.profileId)}
                 className="flex flex-wrap gap-3"
@@ -171,8 +171,8 @@ export default async function AdminProfilesPage({
           ))}
           {!profiles.length ? (
             <Card>
-              <p className="text-sm font-semibold text-slate-950">No profiles found yet</p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="text-sm font-semibold text-[var(--ink)]">No profiles found yet</p>
+              <p className="mt-1 text-sm text-[var(--ink-soft)]">
                 Completed member profiles will appear here. Use export for full CSV access.
               </p>
             </Card>

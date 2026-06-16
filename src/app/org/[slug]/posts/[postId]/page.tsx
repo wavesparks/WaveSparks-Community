@@ -49,11 +49,11 @@ function InteractionGate({
   const signedIn = Boolean(viewer);
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <p className="text-sm font-semibold text-slate-950">
+    <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+      <p className="text-sm font-semibold text-[var(--ink)]">
         {signedIn ? "Member setup required" : "Sign in required"}
       </p>
-      <p className="mt-1 text-sm text-slate-600">
+      <p className="mt-1 text-sm text-[var(--ink-soft)]">
         {signedIn
           ? `Finish member setup to ${action}.`
           : `Sign in to ${action}.`}
@@ -126,7 +126,7 @@ export default async function PostDetailPage({
               <Badge>{post.type.replaceAll("_", " ")}</Badge>
               {post.status !== "active" ? <Badge variant="muted">{post.status}</Badge> : null}
               {post.commentsLocked ? <Badge variant="muted">comments locked</Badge> : null}
-              <span className="text-xs font-medium text-slate-500">
+              <span className="text-xs font-medium text-[var(--ink-soft)]">
                 {formatDate(post.createdAt)}
               </span>
             </div>
@@ -157,9 +157,9 @@ export default async function PostDetailPage({
                 </Badge>
               ))}
             </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="font-semibold text-slate-900">{author.displayName}</p>
-              <p className="mt-1 text-sm text-slate-600">{author.headline}</p>
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+              <p className="font-semibold text-[var(--ink)]">{author.displayName}</p>
+              <p className="mt-1 text-sm text-[var(--ink-soft)]">{author.headline}</p>
             </div>
           </Card>
 
@@ -168,24 +168,24 @@ export default async function PostDetailPage({
             <div className="space-y-4">
               {commentCards.length ? commentCards.map(({ card, comment }) => {
                 return (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4" key={comment.id}>
-                    <p className="font-semibold text-slate-900">{card?.displayName}</p>
-                    <p className="mt-2 text-sm text-slate-700">{comment.body}</p>
+                  <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4" key={comment.id}>
+                    <p className="font-semibold text-[var(--ink)]">{card?.displayName}</p>
+                    <p className="mt-2 text-sm text-[var(--ink-soft)]">{comment.body}</p>
                   </div>
                 );
               }) : (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-sm font-semibold text-slate-950">No comments yet</p>
-                  <p className="mt-1 text-sm text-slate-600">
+                <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                  <p className="text-sm font-semibold text-[var(--ink)]">No comments yet</p>
+                  <p className="mt-1 text-sm text-[var(--ink-soft)]">
                     Be the first member to add context.
                   </p>
                 </div>
               )}
             </div>
             {commentUnavailableReason ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-950">Commenting unavailable</p>
-                <p className="mt-1 text-sm text-slate-600">{commentUnavailableReason}</p>
+              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                <p className="text-sm font-semibold text-[var(--ink)]">Commenting unavailable</p>
+                <p className="mt-1 text-sm text-[var(--ink-soft)]">{commentUnavailableReason}</p>
               </div>
             ) : viewerCanInteract && viewer ? (
               <form action={addCommentAction.bind(null, slug, viewer.membership.id, post.id)} className="space-y-3">
@@ -204,17 +204,17 @@ export default async function PostDetailPage({
             {!viewerCanInteract || !viewer ? (
               <InteractionGate action="request intro" slug={slug} viewer={viewer} />
             ) : author.membershipId === viewer.membership.id ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm font-semibold text-slate-950">This is your thread</p>
-                <p className="mt-1 text-sm text-slate-600">
+              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                <p className="text-sm font-semibold text-[var(--ink)]">This is your thread</p>
+                <p className="mt-1 text-sm text-[var(--ink-soft)]">
                   Members can request intros from your post when it feels relevant.
                 </p>
               </div>
             ) : introCopy ? (
-              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                 <div>
-                  <p className="text-sm font-semibold text-slate-950">{introCopy.title}</p>
-                  <p className="mt-1 text-sm text-slate-600">{introCopy.body}</p>
+                  <p className="text-sm font-semibold text-[var(--ink)]">{introCopy.title}</p>
+                  <p className="mt-1 text-sm text-[var(--ink-soft)]">{introCopy.body}</p>
                 </div>
                 <Button asChild className="w-full" variant="secondary">
                   <Link href={`/org/${slug}/requests`}>Open requests</Link>

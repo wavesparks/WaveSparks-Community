@@ -30,13 +30,13 @@ export default async function OnboardingPage({
         {
           "--accent": viewer.org.theme.accent,
           "--accent-soft": viewer.org.theme.accentSoft,
-          "--canvas": "#f6f7fb",
+          "--canvas": viewer.org.theme.canvas,
           "--ink": viewer.org.theme.ink,
         } as CSSProperties
       }
     >
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
-        <section className="rounded-lg bg-[#111827] p-5 text-white shadow-sm">
+        <section className="ws-hero-art rounded-lg p-5 text-[var(--surface)] shadow-sm">
           <SectionHeading
             eyebrow="Onboarding"
             level={1}

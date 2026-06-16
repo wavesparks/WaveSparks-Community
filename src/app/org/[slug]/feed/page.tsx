@@ -95,7 +95,7 @@ export default async function FeedPage({
   return (
     <ForumShell currentPath={`/org/${slug}/feed`} org={org} viewer={viewer}>
       <div className="space-y-5">
-        <section className="ws-hero-art relative overflow-hidden rounded-lg px-5 py-6 text-white shadow-[0_28px_80px_rgba(34,27,68,0.22)] sm:p-7 lg:p-8">
+        <section className="ws-hero-art relative overflow-hidden rounded-lg px-5 py-6 text-[var(--surface)] shadow-[0_28px_80px_rgba(34,27,68,0.22)] sm:p-7 lg:p-8">
           <div className="absolute right-6 top-5 hidden h-20 w-20 opacity-80 sm:block sm:h-24 sm:w-24">
             <Image
               alt=""
@@ -118,7 +118,7 @@ export default async function FeedPage({
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
                   asChild
-                  className="bg-white text-[var(--night)] ring-white/20 hover:bg-[var(--cyan-soft)]"
+                  className="bg-[var(--surface)] text-[var(--night)] ring-[var(--surface)] hover:bg-[var(--cyan-soft)]"
                 >
                   <Link href={primaryAction.href}>
                     <PrimaryActionIcon className="size-4" />
@@ -128,7 +128,7 @@ export default async function FeedPage({
                 {viewerCanInteract ? (
                   <Button
                     asChild
-                    className="bg-white/[0.12] text-white ring-white/20 hover:bg-white/20"
+                    className="bg-[var(--blue)] text-[var(--surface)] ring-[var(--cyan)] hover:bg-[var(--night)]"
                     variant="secondary"
                   >
                     <Link href={`/org/${slug}/matches`}>
@@ -138,11 +138,11 @@ export default async function FeedPage({
                   </Button>
                 ) : null}
               </div>
-              <div className="flex flex-wrap gap-2 text-xs font-semibold text-white/[0.82]">
-                <span className="rounded-full bg-white/[0.12] px-3 py-1 ring-1 ring-white/15">
+              <div className="flex flex-wrap gap-2 text-xs font-semibold text-[var(--surface)]">
+                <span className="rounded-full bg-[var(--blue)] px-3 py-1 ring-1 ring-[var(--cyan)]">
                   {totalDisplayedPosts || allPosts.length} visible posts
                 </span>
-                <span className="rounded-full bg-white/[0.12] px-3 py-1 ring-1 ring-white/15">
+                <span className="rounded-full bg-[var(--blue)] px-3 py-1 ring-1 ring-[var(--cyan)]">
                   {viewerCanInteract
                     ? "Posting enabled"
                     : viewer
@@ -152,7 +152,7 @@ export default async function FeedPage({
               </div>
             </div>
 
-            <div className="relative min-h-[230px] overflow-hidden rounded-lg border border-white/[0.12] bg-white/[0.06] shadow-[0_24px_70px_rgba(0,0,0,0.22)]">
+            <div className="relative min-h-[230px] overflow-hidden rounded-lg border border-[var(--cyan)] bg-[var(--surface)] shadow-[0_24px_70px_rgba(0,0,0,0.22)]">
               <Image
                 alt=""
                 aria-hidden="true"

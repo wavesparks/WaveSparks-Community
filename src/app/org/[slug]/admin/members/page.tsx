@@ -126,7 +126,7 @@ export default async function AdminMembersPage({
           </form>
         </Card>
         <Card className="overflow-hidden p-0">
-          <div className="space-y-4 border-b border-slate-200 px-4 py-4">
+          <div className="space-y-4 border-b border-[var(--line)] px-4 py-4">
             <SectionHeading eyebrow="Latest" title="Member records" />
             <div className="flex flex-wrap gap-2">
               {memberStatusFilters.map((filter) => {
@@ -148,13 +148,13 @@ export default async function AdminMembersPage({
               })}
             </div>
           </div>
-          <div className="grid gap-3 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase text-slate-500 lg:grid-cols-[1.2fr_0.8fr_1.2fr_auto]">
+          <div className="grid gap-3 bg-[var(--surface-muted)] px-4 py-3 text-xs font-semibold uppercase text-[var(--ink-soft)] lg:grid-cols-[1.2fr_0.8fr_1.2fr_auto]">
             <span>Member</span>
             <span>Status</span>
             <span>Admin note</span>
             <span className="text-right">Action</span>
           </div>
-          <div className="divide-y divide-slate-200">
+          <div className="divide-y divide-[var(--line)]">
             {memberCards.map(({ membership, profile, user }) => {
               return (
                 <form
@@ -164,23 +164,23 @@ export default async function AdminMembersPage({
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-sm font-semibold text-slate-950">
+                      <h3 className="text-sm font-semibold text-[var(--ink)]">
                         {user?.name ?? membership.id}
                       </h3>
                       <Badge variant={membership.status === "approved" ? "accent" : "default"}>
                         {membership.status}
                       </Badge>
                     </div>
-                    <p className="mt-1 text-sm text-slate-600">
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
                       {membership.affiliationType} · {membership.programName} ·{" "}
                       {membership.cohortNameOrYear}
                     </p>
-                    <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-700">
+                    <p className="mt-2 line-clamp-2 text-sm leading-5 text-[var(--ink-soft)]">
                       {profile?.headline ?? "No profile headline yet."}
                     </p>
                   </div>
                   <select
-                    className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
+                    className="h-10 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]"
                     defaultValue={membership.status}
                     name="status"
                   >
@@ -203,7 +203,7 @@ export default async function AdminMembersPage({
             })}
             {!memberCards.length ? (
               <div className="px-4 py-6">
-                <p className="text-sm text-slate-600">No members found yet.</p>
+                <p className="text-sm text-[var(--ink-soft)]">No members found yet.</p>
               </div>
             ) : null}
           </div>

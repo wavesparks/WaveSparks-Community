@@ -101,10 +101,10 @@ export default async function OpportunitiesPage({
           {layerLinks.map((layer) => (
             <Link
               className={cn(
-                "rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-slate-200 transition",
+                "rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-[var(--line)] transition",
                 source === layer.source || (!source && layer.source === "official")
-                  ? "bg-[var(--accent)] text-white ring-transparent"
-                  : "bg-white text-slate-700 hover:bg-slate-50",
+                  ? "bg-[var(--accent)] text-[var(--surface)] ring-transparent"
+                  : "bg-[var(--surface)] text-[var(--ink-soft)] hover:bg-[var(--surface-muted)]",
               )}
               href={hrefForSource(layer.source)}
               key={layer.source}
@@ -139,7 +139,7 @@ export default async function OpportunitiesPage({
                     ))}
                   </div>
                 ) : (
-                  <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
+                  <p className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 text-sm text-[var(--ink-soft)] shadow-sm">
                     No opportunities match these filters.
                   </p>
                 )}

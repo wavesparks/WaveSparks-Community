@@ -15,8 +15,8 @@ export function SignOutButton({
 }) {
   const className = cn(
     tone === "dark"
-      ? "text-slate-300 hover:bg-white/10 hover:text-white"
-      : "text-slate-700 hover:bg-slate-100 hover:text-slate-950",
+      ? "text-[var(--cyan-soft)] hover:bg-[var(--blue)] hover:text-[var(--surface)]"
+      : "text-[var(--ink-soft)] hover:bg-[var(--accent-soft)] hover:text-[var(--ink)]",
   );
 
   async function handleSignOut() {

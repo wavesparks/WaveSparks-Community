@@ -158,8 +158,8 @@ export default async function RequestsPage({
             ))}
             {!requests.length ? (
               <Card>
-                <p className="text-sm font-semibold text-slate-950">No intro requests yet</p>
-                <p className="mt-1 text-sm text-slate-600">
+                <p className="text-sm font-semibold text-[var(--ink)]">No intro requests yet</p>
+                <p className="mt-1 text-sm text-[var(--ink-soft)]">
                   Requests from matches and posts will appear here with their context.
                 </p>
               </Card>
@@ -187,21 +187,21 @@ export default async function RequestsPage({
               <div className="space-y-3">
                 {notifications.map((notification) => (
                   <div
-                    className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+                    className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4"
                     key={notification.id}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="font-semibold text-slate-900">{notification.title}</p>
-                        <p className="mt-1 text-sm text-slate-600">{notification.body}</p>
+                        <p className="font-semibold text-[var(--ink)]">{notification.title}</p>
+                        <p className="mt-1 text-sm text-[var(--ink-soft)]">{notification.body}</p>
                       </div>
                       {!notification.readAt ? <Badge variant="accent">new</Badge> : null}
                     </div>
                   </div>
                 ))}
                 {!notifications.length ? (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm text-slate-600">No notifications yet.</p>
+                  <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                    <p className="text-sm text-[var(--ink-soft)]">No notifications yet.</p>
                   </div>
                 ) : null}
               </div>

@@ -63,29 +63,29 @@ export default async function PendingPage({
 
             return (
               <div
-                className="flex gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
+                className="flex gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4"
                 key={item.title}
               >
                 <Icon className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
                 <div>
-                  <p className="text-sm font-semibold text-slate-950">{item.title}</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-700">
+                  <p className="text-sm font-semibold text-[var(--ink)]">{item.title}</p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
                     {item.description}
                   </p>
                 </div>
               </div>
             );
           })}
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p className="text-sm font-semibold text-slate-950">{experience.noteLabel}</p>
-            <p className="text-sm text-slate-700">
+          <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+            <p className="text-sm font-semibold text-[var(--ink)]">{experience.noteLabel}</p>
+            <p className="text-sm text-[var(--ink-soft)]">
               {viewer.membership.approvalNote ?? "No admin note yet."}
             </p>
           </div>
         </div>
         {experience.primaryHref && experience.primaryLabel ? (
           <Link
-            className="inline-flex h-10 items-center rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
+            className="inline-flex h-10 items-center rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-[var(--surface)] shadow-sm transition hover:brightness-95"
             href={`/org/${slug}/${experience.primaryHref}`}
           >
             {experience.primaryLabel}

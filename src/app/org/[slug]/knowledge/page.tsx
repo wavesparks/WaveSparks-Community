@@ -101,8 +101,8 @@ export default async function KnowledgePage({
               className={cn(
                 "rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-[var(--line)] transition",
                 mode === item.mode
-                  ? "bg-[var(--accent)] text-white ring-transparent"
-                  : "bg-white text-[var(--ink-soft)] hover:bg-[var(--surface-muted)]",
+                  ? "bg-[var(--accent)] text-[var(--surface)] ring-transparent"
+                  : "bg-[var(--surface)] text-[var(--ink-soft)] hover:bg-[var(--surface-muted)]",
               )}
               href={modeHref(slug, item.mode, q)}
               key={item.mode}
@@ -116,7 +116,7 @@ export default async function KnowledgePage({
           <form action={`/org/${slug}/knowledge`} className="flex flex-wrap items-center gap-3">
             {mode === "saved" ? <input name="mode" type="hidden" value="saved" /> : null}
             <label className="relative min-w-[220px] flex-1">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--ink-soft)]" />
               <Input
                 className="pl-9"
                 defaultValue={q}

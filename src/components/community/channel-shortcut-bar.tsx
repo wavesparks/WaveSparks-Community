@@ -20,7 +20,7 @@ export function ChannelShortcutBar({
       <div className="flex gap-2 overflow-x-auto pb-1">
         {channels.map((channel) => (
           <Link
-            className="min-w-40 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 transition hover:border-[var(--accent)]/40 hover:bg-white"
+            className="min-w-40 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 transition hover:border-[var(--accent)]/40 hover:bg-[var(--surface)]"
             href={channel.href}
             key={channel.id}
           >

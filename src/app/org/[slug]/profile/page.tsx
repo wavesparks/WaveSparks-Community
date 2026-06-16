@@ -60,7 +60,7 @@ export default async function ProfilePage({
             />
           </div>
           <Link
-            className="inline-flex h-10 items-center rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
+            className="inline-flex h-10 items-center rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-[var(--surface)] shadow-sm transition hover:brightness-95"
             href={`/org/${slug}/onboarding`}
           >
             Edit profile
@@ -71,7 +71,7 @@ export default async function ProfilePage({
           <div className="space-y-6">
             <ActivationChecklistCard activation={activation} compact />
             <Card className="space-y-4">
-              <p className="text-sm text-slate-700">{viewer.profile.longBio}</p>
+              <p className="text-sm text-[var(--ink-soft)]">{viewer.profile.longBio}</p>
               <div className="flex flex-wrap gap-2">
                 {[...viewer.profile.industryTags, ...viewer.profile.skillTags].map((tag, index) => (
                   <Badge key={`profile-tag-${tag}-${index}`} variant="muted">
@@ -82,14 +82,14 @@ export default async function ProfilePage({
             </Card>
 
             <Card className="space-y-4">
-              <h2 className="text-xl font-semibold text-slate-950">What you’re building</h2>
-              <p className="text-sm text-slate-700">{viewer.profile.startupOneLiner}</p>
-              <p className="text-sm text-slate-600">{viewer.profile.startupDescription}</p>
+              <h2 className="text-xl font-semibold text-[var(--ink)]">What you’re building</h2>
+              <p className="text-sm text-[var(--ink-soft)]">{viewer.profile.startupOneLiner}</p>
+              <p className="text-sm text-[var(--ink-soft)]">{viewer.profile.startupDescription}</p>
             </Card>
 
             <Card className="space-y-4">
-              <h2 className="text-xl font-semibold text-slate-950">What you’re looking for</h2>
-              <p className="text-sm text-slate-700">{viewer.profile.idealMatchDescription}</p>
+              <h2 className="text-xl font-semibold text-[var(--ink)]">What you’re looking for</h2>
+              <p className="text-sm text-[var(--ink-soft)]">{viewer.profile.idealMatchDescription}</p>
               <div className="flex flex-wrap gap-2">
                 {viewer.profile.desiredRoles.map((role, index) => (
                   <Badge key={`desired-role-${role}-${index}`}>{role}</Badge>
@@ -100,19 +100,19 @@ export default async function ProfilePage({
 
           <div className="space-y-6">
             <Card className="space-y-4">
-              <p className="text-xs font-semibold uppercase text-slate-500">
+              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">
                 Profile completion
               </p>
-              <p className="text-4xl font-semibold text-slate-950">
+              <p className="text-4xl font-semibold text-[var(--ink)]">
                 {formatPercent(viewer.profile.profileCompletionPercent)}
               </p>
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-[var(--ink-soft)]">
                 Matching visibility: {viewer.profile.profileVisibleInMatching ? "on" : "off"}
               </p>
             </Card>
             <Card className="space-y-4">
-              <h3 className="text-xl font-semibold text-slate-950">Links</h3>
-              <div className="space-y-2 text-sm text-slate-700">
+              <h3 className="text-xl font-semibold text-[var(--ink)]">Links</h3>
+              <div className="space-y-2 text-sm text-[var(--ink-soft)]">
                 {links.map((link) => (
                   <a className="block underline" href={link.url} key={link.id} target="_blank">
                     {link.type}
@@ -121,9 +121,9 @@ export default async function ProfilePage({
               </div>
             </Card>
             <Card className="space-y-4">
-              <h3 className="text-xl font-semibold text-slate-950">Intro settings</h3>
-              <p className="text-sm text-slate-700">Intro opt-in: {viewer.profile.introOptIn ? "on" : "off"}</p>
-              <p className="text-sm text-slate-700">
+              <h3 className="text-xl font-semibold text-[var(--ink)]">Intro settings</h3>
+              <p className="text-sm text-[var(--ink-soft)]">Intro opt-in: {viewer.profile.introOptIn ? "on" : "off"}</p>
+              <p className="text-sm text-[var(--ink-soft)]">
                 WhatsApp reveals after accept: {viewer.profile.whatsappVisibleAfterAccept ? "yes" : "no"}
               </p>
             </Card>

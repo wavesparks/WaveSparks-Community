@@ -48,8 +48,8 @@ export default async function AdminPostsPage({
               <Card className="space-y-4" key={post.id}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-xl font-semibold text-slate-950">{post.title}</h3>
-                    <p className="text-sm text-slate-600">
+                    <h3 className="text-xl font-semibold text-[var(--ink)]">{post.title}</h3>
+                    <p className="text-sm text-[var(--ink-soft)]">
                       {post.authorName} · {post.type.replaceAll("_", " ")}
                     </p>
                   </div>
@@ -58,7 +58,7 @@ export default async function AdminPostsPage({
                     {post.hidden ? <Badge>hidden</Badge> : null}
                   </div>
                 </div>
-                <p className="text-sm text-slate-700">{post.body}</p>
+                <p className="text-sm text-[var(--ink-soft)]">{post.body}</p>
                 <div className="flex flex-wrap gap-3">
                   <form action={updatePostModerationAction.bind(null, slug, post.id)}>
                     <input name="hidden" type="hidden" value={String(!post.hidden)} />
@@ -98,8 +98,8 @@ export default async function AdminPostsPage({
           })}
           {!dashboard.posts.length ? (
             <Card>
-              <p className="text-sm font-semibold text-slate-950">No posts to review yet</p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="text-sm font-semibold text-[var(--ink)]">No posts to review yet</p>
+              <p className="mt-1 text-sm text-[var(--ink-soft)]">
                 New member posts will appear here for moderation.
               </p>
             </Card>
@@ -107,20 +107,20 @@ export default async function AdminPostsPage({
         </div>
 
         <Card className="space-y-4">
-          <h3 className="text-xl font-semibold text-slate-950">Latest comment moderation</h3>
+          <h3 className="text-xl font-semibold text-[var(--ink)]">Latest comment moderation</h3>
           <div className="space-y-3">
             {dashboard.comments.map((comment) => (
               <div
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4"
                 key={comment.id}
               >
                 <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-semibold text-slate-950">{comment.authorName}</p>
+                    <p className="text-sm font-semibold text-[var(--ink)]">{comment.authorName}</p>
                     <Badge>{comment.status}</Badge>
                   </div>
-                  <p className="text-xs text-slate-500">On {comment.postTitle}</p>
-                  <p className="text-sm text-slate-700">{comment.body}</p>
+                  <p className="text-xs text-[var(--ink-soft)]">On {comment.postTitle}</p>
+                  <p className="text-sm text-[var(--ink-soft)]">{comment.body}</p>
                 </div>
                 <form
                   action={moderateCommentAction.bind(
@@ -137,8 +137,8 @@ export default async function AdminPostsPage({
               </div>
             ))}
             {!dashboard.comments.length ? (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                <p className="text-sm text-slate-600">No comments to review yet.</p>
+              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                <p className="text-sm text-[var(--ink-soft)]">No comments to review yet.</p>
               </div>
             ) : null}
           </div>

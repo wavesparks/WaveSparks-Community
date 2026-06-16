@@ -102,7 +102,7 @@ export function PasswordSignInForm({ slug }: { slug: string }) {
           type="password"
         />
       </div>
-      {error ? <p className="text-sm font-medium text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm font-medium text-[var(--accent)]">{error}</p> : null}
       <Button className="w-full" disabled={pending || !ready} type="submit">
         {pending ? <LoaderCircle className="size-4 animate-spin" /> : null}
         Sign in

@@ -10,12 +10,12 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          "bg-[var(--night)] px-4 py-2.5 text-white shadow-[0_14px_30px_rgba(34,27,68,0.22)] ring-1 ring-white/10 hover:bg-[var(--blue)]",
+          "bg-[var(--night)] px-4 py-2.5 text-[var(--surface)] shadow-[0_14px_30px_rgba(34,27,68,0.22)] ring-1 ring-[var(--surface)] hover:bg-[var(--blue)]",
         secondary:
-          "bg-white/90 px-4 py-2.5 text-[var(--ink)] ring-1 ring-[var(--line)] hover:bg-[var(--cyan-soft)] hover:text-[var(--night)]",
-        ghost: "px-3 py-2 text-[var(--ink-soft)] hover:bg-white/70 hover:text-[var(--ink)]",
+          "bg-[var(--surface)] px-4 py-2.5 text-[var(--ink)] ring-1 ring-[var(--line)] hover:bg-[var(--cyan-soft)] hover:text-[var(--night)]",
+        ghost: "px-3 py-2 text-[var(--ink-soft)] hover:bg-[var(--surface)] hover:text-[var(--ink)]",
         destructive:
-          "bg-rose-600 px-4 py-2.5 text-white shadow-sm hover:bg-rose-500",
+          "bg-[var(--night)] px-4 py-2.5 text-[var(--gold)] shadow-sm ring-1 ring-[var(--gold)] hover:bg-[var(--blue)] hover:text-[var(--surface)]",
       },
       size: {
         sm: "h-9 px-3 text-xs",

@@ -67,7 +67,7 @@ export function ForumShell({
         } as CSSProperties
       }
     >
-      <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-white/[0.84] backdrop-blur-xl">
+      <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-[var(--surface)] backdrop-blur-xl">
         <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <Link
             className="flex min-w-0 items-center gap-3"
@@ -96,7 +96,7 @@ export function ForumShell({
                   className={cn(
                     "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition",
                     currentPath === href
-                      ? "bg-[var(--night)] text-white shadow-[0_10px_24px_rgba(34,27,68,0.18)]"
+                      ? "bg-[var(--night)] text-[var(--surface)] shadow-[0_10px_24px_rgba(34,27,68,0.18)]"
                       : "text-[var(--ink-soft)] hover:bg-[var(--cyan-soft)] hover:text-[var(--ink)]",
                   )}
                   href={href}

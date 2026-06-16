@@ -36,7 +36,7 @@ export function SectionHeading({
             level === 1
               ? "text-4xl font-semibold leading-tight sm:text-5xl"
               : "text-2xl font-semibold leading-tight sm:text-3xl",
-            inverse ? "text-white" : "text-[var(--ink)]",
+            inverse ? "text-[var(--surface)]" : "text-[var(--ink)]",
           )}
         >
           {title}
@@ -45,7 +45,7 @@ export function SectionHeading({
           <p
             className={cn(
               "max-w-2xl text-sm leading-6",
-              inverse ? "text-white/75" : "text-[var(--ink-soft)]",
+              inverse ? "text-[var(--surface)]/75" : "text-[var(--ink-soft)]",
             )}
           >
             {description}

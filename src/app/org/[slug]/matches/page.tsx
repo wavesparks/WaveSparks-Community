@@ -56,7 +56,7 @@ export default async function MatchesPage({
             const introCopy = getActiveIntroStatusCopy(introStatus);
             return (
               <MatchCard key={match.id} match={match}>
-                <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="space-y-4 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                   <form
                     action={
                       following
@@ -84,12 +84,12 @@ export default async function MatchesPage({
                     </SubmitButton>
                   </form>
                   {introCopy ? (
-                    <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4">
                       <div>
-                        <p className="text-sm font-semibold text-slate-950">
+                        <p className="text-sm font-semibold text-[var(--ink)]">
                           {introCopy.title}
                         </p>
-                        <p className="mt-1 text-sm text-slate-600">{introCopy.body}</p>
+                        <p className="mt-1 text-sm text-[var(--ink-soft)]">{introCopy.body}</p>
                       </div>
                       <Button asChild className="w-full" variant="secondary">
                         <Link href={`/org/${slug}/requests`}>Open requests</Link>
@@ -139,8 +139,8 @@ export default async function MatchesPage({
           })}
           {!matchCards.length ? (
             <Card>
-              <p className="text-sm font-semibold text-slate-950">No matches surfaced yet</p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="text-sm font-semibold text-[var(--ink)]">No matches surfaced yet</p>
+              <p className="mt-1 text-sm text-[var(--ink-soft)]">
                 Complete more profile context or ask an admin to recompute matches.
               </p>
             </Card>

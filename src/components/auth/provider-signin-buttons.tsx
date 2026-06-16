@@ -28,10 +28,10 @@ export function ProviderSignInButtons({
       {providers.map((provider) => (
         <Card className="space-y-4" key={`${provider.id}-${provider.email ?? "credential"}`}>
           <div className="space-y-2">
-            <h3 className="text-lg font-semibold text-slate-950">{provider.label}</h3>
-            <p className="text-sm text-slate-600">{provider.description}</p>
+            <h3 className="text-lg font-semibold text-[var(--ink)]">{provider.label}</h3>
+            <p className="text-sm text-[var(--ink-soft)]">{provider.description}</p>
             {provider.email ? (
-              <p className="text-xs font-semibold uppercase text-slate-500">
+              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">
                 {provider.email}
               </p>
             ) : null}

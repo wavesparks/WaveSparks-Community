@@ -90,7 +90,7 @@ export default async function PeoplePage({
           <form action={`/org/${slug}/people`} className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
               <label className="relative min-w-[220px] flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--ink-soft)]" />
                 <Input
                   className="pl-9"
                   defaultValue={filters.q}

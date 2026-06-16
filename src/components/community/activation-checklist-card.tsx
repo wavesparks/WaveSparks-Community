@@ -15,7 +15,7 @@ export function ActivationChecklistCard({
   compact?: boolean;
 }) {
   return (
-    <Card className="space-y-4 overflow-hidden border-[var(--accent)]/25 bg-white/[0.88] before:absolute before:inset-x-0 before:top-0 before:h-1 before:bg-[linear-gradient(90deg,var(--cyan),var(--accent),var(--gold))]">
+    <Card className="space-y-4 overflow-hidden border-[var(--accent)]/25 bg-[var(--surface)] before:absolute before:inset-x-0 before:top-0 before:h-1 before:bg-[linear-gradient(90deg,var(--cyan),var(--accent),var(--gold))]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase text-[var(--accent)]">
@@ -51,7 +51,7 @@ export function ActivationChecklistCard({
                 <Icon
                   className={cn(
                     "mt-0.5 size-5 shrink-0",
-                    item.complete ? "text-[var(--accent)]" : "text-slate-400",
+                    item.complete ? "text-[var(--accent)]" : "text-[var(--ink-soft)]",
                   )}
                 />
                 <div className="min-w-0 flex-1">

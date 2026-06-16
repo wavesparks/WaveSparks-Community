@@ -49,15 +49,15 @@ export default async function AdminOverviewPage({
             }))}
           />
           <Card className="space-y-4">
-            <h3 className="text-xl font-semibold text-slate-950">Recent intro flow</h3>
+            <h3 className="text-xl font-semibold text-[var(--ink)]">Recent intro flow</h3>
             <div className="space-y-3">
               {recentRequests.map((request) => (
                 <div
-                  className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+                  className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4"
                   key={request.id}
                 >
-                  <p className="font-semibold text-slate-900">{request.introPurpose}</p>
-                  <p className="mt-1 text-sm text-slate-600">{request.status}</p>
+                  <p className="font-semibold text-[var(--ink)]">{request.introPurpose}</p>
+                  <p className="mt-1 text-sm text-[var(--ink-soft)]">{request.status}</p>
                 </div>
               ))}
             </div>
@@ -65,15 +65,15 @@ export default async function AdminOverviewPage({
         </div>
 
         <Card className="space-y-4">
-          <h3 className="text-xl font-semibold text-slate-950">Recent posts</h3>
+          <h3 className="text-xl font-semibold text-[var(--ink)]">Recent posts</h3>
           <div className="grid gap-4 md:grid-cols-2">
             {recentPosts.map((post) => (
               <div
-                className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+                className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4"
                 key={post.id}
               >
-                <p className="font-semibold text-slate-900">{post.title}</p>
-                <p className="mt-2 text-sm text-slate-600">{post.type.replaceAll("_", " ")}</p>
+                <p className="font-semibold text-[var(--ink)]">{post.title}</p>
+                <p className="mt-2 text-sm text-[var(--ink-soft)]">{post.type.replaceAll("_", " ")}</p>
               </div>
             ))}
           </div>

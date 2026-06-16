@@ -42,9 +42,9 @@ export function OrgLogoUploadField({
   }
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+    <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
       <div className="flex flex-wrap items-center gap-4">
-        <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-500">
+        <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--surface)] text-sm font-semibold text-[var(--ink-soft)]">
           {logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img alt={`${orgName} logo`} className="size-full object-contain p-2" src={logoUrl} />
@@ -79,7 +79,7 @@ export function OrgLogoUploadField({
               value={logoUrl}
             />
           </div>
-          {status ? <p className="text-xs text-slate-500">{status}</p> : null}
+          {status ? <p className="text-xs text-[var(--ink-soft)]">{status}</p> : null}
         </div>
       </div>
       <input name="logo_url" type="hidden" value={logoUrl} />

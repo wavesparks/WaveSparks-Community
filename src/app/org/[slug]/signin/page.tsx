@@ -43,7 +43,7 @@ export default async function SignInPage({
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
           <Card
-            className="ws-hero-art min-h-[430px] overflow-hidden border-0 p-0 text-white"
+            className="ws-hero-art min-h-[430px] overflow-hidden border-0 p-0 text-[var(--surface)]"
           >
             <div className="flex min-h-[430px] flex-col justify-between p-6 sm:p-7">
               <BrandLogo className="h-8 w-fit" tone="light" />
@@ -55,7 +55,7 @@ export default async function SignInPage({
                   description="Use the account your admin created for this community."
                   tone="inverse"
                 />
-                <div className="mt-6 grid gap-3 text-sm text-white/80">
+                <div className="mt-6 grid gap-3 text-sm text-[var(--surface)]/80">
                   <p>Browse first; interact only when you are ready.</p>
                   <p>Profiles surface through posts, match cards, and accepted intros.</p>
                   <p>Contact details stay hidden until both sides agree.</p>
@@ -113,8 +113,8 @@ export default async function SignInPage({
               <>
                 <Card className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm font-semibold text-slate-950">Demo mode is available</p>
-                    <p className="text-sm text-slate-600">Use the separate demo entrance for seeded preview personas.</p>
+                    <p className="text-sm font-semibold text-[var(--ink)]">Demo mode is available</p>
+                    <p className="text-sm text-[var(--ink-soft)]">Use the separate demo entrance for seeded preview personas.</p>
                   </div>
                   <Button asChild variant="secondary">
                     <Link href={`/org/${slug}/demo`}>Open demo</Link>

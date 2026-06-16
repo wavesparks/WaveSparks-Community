@@ -73,19 +73,19 @@ export function AppShell({
       }
     >
       <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-[280px_1fr]">
-        <aside className="ws-night-panel border-b border-white/10 text-white lg:min-h-screen lg:border-b-0 lg:border-r">
+        <aside className="ws-night-panel border-b border-[var(--surface)] text-[var(--surface)] lg:min-h-screen lg:border-b-0 lg:border-r">
           <div className="flex h-full flex-col gap-3 p-3 sm:p-4 lg:gap-6 lg:p-5">
-            <div className="overflow-hidden rounded-lg border border-white/[0.12] bg-white/[0.06] p-3 shadow-[0_22px_60px_rgba(0,0,0,0.22)] lg:p-4">
+            <div className="overflow-hidden rounded-lg border border-[var(--cyan)] bg-[var(--blue)] p-3 shadow-[0_22px_60px_rgba(0,0,0,0.22)] lg:p-4">
               <div className="space-y-3">
                 <BrandLogo className="h-7 max-w-[190px]" tone="light" />
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-white">{viewer.org.name} Community</p>
-                  <p className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-white/70">
+                  <p className="text-sm font-semibold text-[var(--surface)]">{viewer.org.name} Community</p>
+                  <p className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-[var(--surface)]/70">
                     {viewer.org.tagline}
                   </p>
                 </div>
               </div>
-              <Badge className="mt-3 bg-white/[0.12] text-white ring-white/15 lg:mt-4">
+              <Badge className="mt-3 bg-[var(--gold)] text-[var(--night)] ring-[var(--surface)] lg:mt-4">
                 {viewer.membership.affiliationType}
               </Badge>
             </div>
@@ -104,8 +104,8 @@ export function AppShell({
                     className={cn(
                       "flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm transition",
                       active
-                        ? "bg-white text-[var(--night)] shadow-[0_12px_30px_rgba(0,0,0,0.18)]"
-                        : "text-white/[0.72] hover:bg-white/10 hover:text-white",
+                        ? "bg-[var(--surface)] text-[var(--night)] shadow-[0_12px_30px_rgba(0,0,0,0.18)]"
+                        : "text-[var(--cyan-soft)] hover:bg-[var(--blue)] hover:text-[var(--surface)]",
                     )}
                     href={href}
                     key={href}
@@ -118,8 +118,8 @@ export function AppShell({
             </nav>
 
             {viewer.canAdmin ? (
-              <div className="rounded-lg border border-white/10 bg-white/[0.04] p-3">
-                <div className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold uppercase text-white/[0.48]">
+              <div className="rounded-lg border border-[var(--cyan)] bg-[var(--blue)] p-3">
+                <div className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold uppercase text-[var(--cyan-soft)]">
                   <Shield className="size-4" />
                   Admin
                 </div>
@@ -133,8 +133,8 @@ export function AppShell({
                         className={cn(
                           "flex min-h-9 items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
                           active
-                            ? "bg-white text-[var(--night)] shadow-sm"
-                            : "text-white/70 hover:bg-white/10 hover:text-white",
+                            ? "bg-[var(--surface)] text-[var(--night)] shadow-sm"
+                            : "text-[var(--cyan-soft)] hover:bg-[var(--night)] hover:text-[var(--surface)]",
                         )}
                         href={href}
                         key={href}
@@ -147,10 +147,10 @@ export function AppShell({
               </div>
             ) : null}
 
-            <div className="mt-auto flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.06] p-3">
+            <div className="mt-auto flex items-center justify-between gap-3 rounded-lg border border-[var(--cyan)] bg-[var(--blue)] p-3">
               <div className="flex min-w-0 items-center gap-3">
                 <Avatar
-                  className="size-10 ring-white/20"
+                  className="size-10 ring-[var(--gold)]"
                   name={viewer.profile?.preferredName ?? viewer.user.name}
                   src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
                 />
@@ -158,7 +158,7 @@ export function AppShell({
                   <p className="truncate text-sm font-semibold">
                     {viewer.profile?.preferredName ?? viewer.user.name}
                   </p>
-                  <p className="text-xs capitalize text-white/50">
+                  <p className="text-xs capitalize text-[var(--cyan-soft)]">
                     {viewer.membership.status}
                   </p>
                 </div>

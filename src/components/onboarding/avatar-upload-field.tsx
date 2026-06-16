@@ -41,7 +41,7 @@ export function AvatarUploadField({
   }
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 md:col-span-2">
+    <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 md:col-span-2">
       <div className="flex flex-wrap items-center gap-4">
         <Avatar className="size-20" name={displayName} src={photoUrl} />
         <div className="min-w-0 flex-1 space-y-3">
@@ -71,7 +71,7 @@ export function AvatarUploadField({
               value={photoUrl}
             />
           </div>
-          {status ? <p className="text-xs text-slate-500">{status}</p> : null}
+          {status ? <p className="text-xs text-[var(--ink-soft)]">{status}</p> : null}
         </div>
       </div>
       <input name="profile_photo" type="hidden" value={photoUrl} />

@@ -112,10 +112,10 @@ export default async function AdminMatchesPage({
               <Card className="space-y-4" key={match.id}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase text-slate-500">
+                    <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">
                       {match.matchType.replaceAll("_", " ")}
                     </p>
-                    <h3 className="mt-2 text-xl font-semibold text-slate-950">
+                    <h3 className="mt-2 text-xl font-semibold text-[var(--ink)]">
                       {sourceProfile?.preferredName ?? "Source"} → {targetProfile?.preferredName ?? "Target"}
                     </h3>
                   </div>
@@ -123,14 +123,14 @@ export default async function AdminMatchesPage({
                     {match.score}
                   </Badge>
                 </div>
-                <p className="text-sm text-slate-700">{match.explanationText}</p>
+                <p className="text-sm text-[var(--ink-soft)]">{match.explanationText}</p>
               </Card>
             );
           })}
           {!matchCards.length ? (
             <Card>
-              <p className="text-sm font-semibold text-slate-950">No matches in this queue</p>
-              <p className="mt-1 text-sm text-slate-600">
+              <p className="text-sm font-semibold text-[var(--ink)]">No matches in this queue</p>
+              <p className="mt-1 text-sm text-[var(--ink-soft)]">
                 Try another score band or recompute matches after member profiles change.
               </p>
             </Card>
