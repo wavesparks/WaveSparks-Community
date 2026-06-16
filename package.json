@@ -16,6 +16,7 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:bootstrap": "tsx scripts/bootstrap-production.ts",
     "db:preview-accounts": "tsx scripts/bootstrap-preview-accounts.ts",
+    "clerk:sync-orgs": "tsx scripts/sync-clerk-organizations.ts",
     "cron:matches": "tsx scripts/recompute-matches.ts",
     "readiness:prod": "tsx scripts/check-production-readiness.ts"
   },

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { OrganizationProfile } from "@clerk/nextjs";
 
 import { createManagedAccountAction, updateMembershipAction } from "@/actions/admin";
 import { AppShell } from "@/components/layout/app-shell";
@@ -74,11 +75,27 @@ export default async function AdminMembersPage({
         <StatusBanner status={singleQueryValue(query.status)} />
         <Card className="space-y-5">
           <SectionHeading
-            eyebrow="Member access"
-            title="Create local membership and send a Clerk invite"
+            eyebrow="Clerk organization"
+            title="Invite members and manage Clerk roles"
             description={
               clerkConfigured
-                ? "Wavespark stores the member record locally, then sends the authentication invite through Clerk."
+                ? "Clerk is the source of truth for identities, organization membership, invitations, and roles."
+                : "Clerk keys are missing, so organization membership management is disabled in this environment."
+            }
+          />
+          {clerkConfigured ? (
+            <div className="overflow-hidden rounded-lg border border-[var(--line)]">
+              <OrganizationProfile />
+            </div>
+          ) : null}
+        </Card>
+        <Card className="space-y-5">
+          <SectionHeading
+            eyebrow="Community status"
+            title="Create local review record and send a Clerk org invite"
+            description={
+              clerkConfigured
+                ? "Use this for Wavespark-specific review status, onboarding defaults, and matching metadata."
                 : "Clerk keys are missing, so invitations are disabled in this environment."
             }
           />

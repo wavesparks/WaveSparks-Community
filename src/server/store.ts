@@ -19,6 +19,7 @@ import {
   seedUsers,
 } from "@/data/seed-data";
 import { env, isBootstrapAdminEmail } from "@/lib/env";
+import { localRoleFromClerkRole } from "@/lib/clerk-roles";
 import {
   buildDailySeriesFromCounts,
   buildOrgAnalyticsSnapshot,
@@ -34,6 +35,7 @@ import type {
   MatchRecord,
   MatchType,
   AffiliationType,
+  ClerkOrgRole,
   Membership,
   MembershipRole,
   MembershipStatus,
@@ -59,10 +61,17 @@ interface PasswordCredential {
   updatedAt: string;
 }
 
+interface ClerkWebhookEventRecord {
+  id: string;
+  eventType: string;
+  createdAt: string;
+}
+
 export interface StoreState {
   organizations: Organization[];
   users: User[];
   passwordCredentials: PasswordCredential[];
+  clerkWebhookEvents: ClerkWebhookEventRecord[];
   memberships: Membership[];
   profiles: Profile[];
   profileLinks: ProfileLink[];
@@ -197,6 +206,7 @@ function initializeStore(): StoreState {
     organizations: structuredClone([seedOrganization]),
     users: structuredClone(seedUsers),
     passwordCredentials: [],
+    clerkWebhookEvents: [],
     memberships: structuredClone(seedMemberships),
     profiles: structuredClone(seedProfiles),
     profileLinks: structuredClone(seedProfileLinks),
@@ -223,6 +233,7 @@ function ensureStoreShape(store: StoreState) {
   store.follows ??= structuredClone(seedFollows);
   store.postSaves ??= structuredClone(seedPostSaves);
   store.passwordCredentials ??= [];
+  store.clerkWebhookEvents ??= [];
   return store;
 }
 
@@ -254,6 +265,7 @@ function maybeDate(value?: string) {
 function organizationFromRow(row: typeof dbSchema.organizations.$inferSelect): Organization {
   return {
     id: row.id,
+    clerkOrgId: row.clerkOrgId ?? undefined,
     name: row.name,
     slug: row.slug,
     logoUrl: row.logoUrl,
@@ -271,6 +283,7 @@ function organizationFromRow(row: typeof dbSchema.organizations.$inferSelect): O
 function userFromRow(row: typeof dbSchema.users.$inferSelect): User {
   return {
     id: row.id,
+    clerkUserId: row.clerkUserId ?? undefined,
     email: row.email,
     name: row.name,
     imageUrl: row.imageUrl,
@@ -283,6 +296,8 @@ function userFromRow(row: typeof dbSchema.users.$inferSelect): User {
 function membershipFromRow(row: typeof dbSchema.memberships.$inferSelect): Membership {
   return {
     id: row.id,
+    clerkMembershipId: row.clerkMembershipId ?? undefined,
+    clerkRole: row.clerkRole as ClerkOrgRole | undefined,
     orgId: row.orgId,
     userId: row.userId,
     role: row.role,
@@ -591,6 +606,31 @@ function analyticsEventInsert(event: AnalyticsEvent): typeof dbSchema.analyticsE
   };
 }
 
+export async function recordClerkWebhookEvent(id: string, eventType: string) {
+  const createdAt = new Date().toISOString();
+
+  if (!usesDatabase) {
+    const store = getStore();
+    if (store.clerkWebhookEvents.some((event) => event.id === id)) {
+      return false;
+    }
+    store.clerkWebhookEvents.unshift({ id, eventType, createdAt });
+    return true;
+  }
+
+  const [row] = await getDb()
+    .insert(dbSchema.clerkWebhookEvents)
+    .values({
+      id,
+      eventType,
+      createdAt: new Date(createdAt),
+    })
+    .onConflictDoNothing()
+    .returning({ id: dbSchema.clerkWebhookEvents.id });
+
+  return Boolean(row);
+}
+
 export async function getOrganizationBySlug(slug: string) {
   if (!usesDatabase) {
     return getStore().organizations.find((organization) => organization.slug === slug);
@@ -601,6 +641,38 @@ export async function getOrganizationBySlug(slug: string) {
     .from(dbSchema.organizations)
     .where(eq(dbSchema.organizations.slug, slug))
     .limit(1);
+  return row ? organizationFromRow(row) : undefined;
+}
+
+export async function getOrganizationByClerkOrgId(clerkOrgId: string) {
+  if (!usesDatabase) {
+    return getStore().organizations.find(
+      (organization) => organization.clerkOrgId === clerkOrgId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.organizations)
+    .where(eq(dbSchema.organizations.clerkOrgId, clerkOrgId))
+    .limit(1);
+  return row ? organizationFromRow(row) : undefined;
+}
+
+export async function linkOrganizationToClerkOrg(orgId: string, clerkOrgId: string) {
+  if (!usesDatabase) {
+    const organization = getStore().organizations.find((candidate) => candidate.id === orgId);
+    if (organization) {
+      organization.clerkOrgId = clerkOrgId;
+    }
+    return organization;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.organizations)
+    .set({ clerkOrgId })
+    .where(eq(dbSchema.organizations.id, orgId))
+    .returning();
   return row ? organizationFromRow(row) : undefined;
 }
 
@@ -708,6 +780,19 @@ export async function getUserByEmail(email: string) {
     .select()
     .from(dbSchema.users)
     .where(sql`lower(${dbSchema.users.email}) = ${email.toLowerCase()}`)
+    .limit(1);
+  return row ? userFromRow(row) : undefined;
+}
+
+export async function getUserByClerkUserId(clerkUserId: string) {
+  if (!usesDatabase) {
+    return getStore().users.find((user) => user.clerkUserId === clerkUserId);
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.users)
+    .where(eq(dbSchema.users.clerkUserId, clerkUserId))
     .limit(1);
   return row ? userFromRow(row) : undefined;
 }
@@ -902,10 +987,17 @@ export async function setPasswordCredential(userId: string, email: string, passw
   });
 }
 
-export async function upsertSessionUser(input: { email: string; name: string; imageUrl?: string }) {
+export async function upsertSessionUser(input: {
+  clerkUserId?: string;
+  email: string;
+  name: string;
+  imageUrl?: string;
+}) {
   const now = new Date().toISOString();
   const email = normalizeEmailAddress(input.email);
-  const existing = await getUserByEmail(email);
+  const existing =
+    (input.clerkUserId ? await getUserByClerkUserId(input.clerkUserId) : undefined) ??
+    (await getUserByEmail(email));
   const platformRole = isBootstrapAdminEmail(email)
     ? "platform_owner"
     : existing?.platformRole ?? "standard";
@@ -915,6 +1007,7 @@ export async function upsertSessionUser(input: { email: string; name: string; im
     if (existing) {
       existing.name = input.name;
       existing.imageUrl = input.imageUrl ?? existing.imageUrl;
+      existing.clerkUserId = input.clerkUserId ?? existing.clerkUserId;
       existing.platformRole = platformRole;
       existing.updatedAt = now;
       return existing;
@@ -922,6 +1015,7 @@ export async function upsertSessionUser(input: { email: string; name: string; im
 
     const next: User = {
       id: `usr_${nanoid(8)}`,
+      clerkUserId: input.clerkUserId,
       email,
       name: input.name,
       imageUrl: input.imageUrl ?? `https://api.dicebear.com/9.x/notionists/svg?seed=${input.name}`,
@@ -939,6 +1033,7 @@ export async function upsertSessionUser(input: { email: string; name: string; im
     const [row] = await db
       .update(dbSchema.users)
       .set({
+        clerkUserId: input.clerkUserId ?? existing.clerkUserId,
         name: input.name,
         imageUrl: input.imageUrl ?? existing.imageUrl,
         platformRole,
@@ -951,6 +1046,7 @@ export async function upsertSessionUser(input: { email: string; name: string; im
 
   const user: User = {
     id: `usr_${nanoid(8)}`,
+    clerkUserId: input.clerkUserId,
     email,
     name: input.name,
     imageUrl: input.imageUrl ?? `https://api.dicebear.com/9.x/notionists/svg?seed=${input.name}`,
@@ -965,7 +1061,12 @@ export async function upsertSessionUser(input: { email: string; name: string; im
 export async function ensureMembership(
   userId: string,
   orgId: string,
-  options: { existingUser?: User; existingMembership?: Membership } = {},
+  options: {
+    clerkMembershipId?: string;
+    clerkRole?: ClerkOrgRole | string;
+    existingUser?: User;
+    existingMembership?: Membership;
+  } = {},
 ) {
   const existingMembership =
     options.existingMembership?.userId === userId &&
@@ -980,7 +1081,12 @@ export async function ensureMembership(
       ? Promise.resolve(existingMembership)
       : getMembershipByUserAndOrg(userId, orgId),
   ]);
-  const adminBootstrap = isBootstrapAdminEmail(user?.email) || user?.platformRole === "platform_owner";
+  const clerkRole = options.clerkRole;
+  const roleFromClerk = clerkRole ? localRoleFromClerkRole(clerkRole) : undefined;
+  const adminBootstrap =
+    roleFromClerk === "org_admin" ||
+    isBootstrapAdminEmail(user?.email) ||
+    user?.platformRole === "platform_owner";
   if (existing) {
     if (
       adminBootstrap &&
@@ -989,6 +1095,8 @@ export async function ensureMembership(
       const now = new Date().toISOString();
       const promoted: Membership = {
         ...existing,
+        clerkMembershipId: options.clerkMembershipId ?? existing.clerkMembershipId,
+        clerkRole: (clerkRole as ClerkOrgRole | undefined) ?? existing.clerkRole,
         role: "org_admin",
         status: "approved",
         approvedAt: existing.approvedAt ?? now,
@@ -1004,11 +1112,42 @@ export async function ensureMembership(
       const [row] = await getDb()
         .update(dbSchema.memberships)
         .set({
+          clerkMembershipId: promoted.clerkMembershipId,
+          clerkRole: promoted.clerkRole,
           role: promoted.role,
           status: promoted.status,
           approvedAt: maybeDate(promoted.approvedAt),
           approvalNote: promoted.approvalNote,
           updatedAt: new Date(promoted.updatedAt),
+        })
+        .where(eq(dbSchema.memberships.id, existing.id))
+        .returning();
+      return membershipFromRow(row);
+    }
+
+    if (
+      (options.clerkMembershipId && existing.clerkMembershipId !== options.clerkMembershipId) ||
+      (clerkRole && existing.clerkRole !== clerkRole) ||
+      (roleFromClerk && existing.role !== roleFromClerk)
+    ) {
+      const nextRole = roleFromClerk ?? existing.role;
+      const now = new Date().toISOString();
+
+      if (!usesDatabase) {
+        existing.clerkMembershipId = options.clerkMembershipId ?? existing.clerkMembershipId;
+        existing.clerkRole = (clerkRole as ClerkOrgRole | undefined) ?? existing.clerkRole;
+        existing.role = nextRole;
+        existing.updatedAt = now;
+        return existing;
+      }
+
+      const [row] = await getDb()
+        .update(dbSchema.memberships)
+        .set({
+          clerkMembershipId: options.clerkMembershipId ?? existing.clerkMembershipId,
+          clerkRole: clerkRole ?? existing.clerkRole,
+          role: nextRole,
+          updatedAt: new Date(now),
         })
         .where(eq(dbSchema.memberships.id, existing.id))
         .returning();
@@ -1020,9 +1159,11 @@ export async function ensureMembership(
   const now = new Date().toISOString();
   const membership: Membership = {
     id: `mem_${nanoid(8)}`,
+    clerkMembershipId: options.clerkMembershipId,
+    clerkRole: clerkRole as ClerkOrgRole | undefined,
     orgId,
     userId,
-    role: adminBootstrap ? "org_admin" : "member",
+    role: roleFromClerk ?? (adminBootstrap ? "org_admin" : "member"),
     affiliationType: adminBootstrap ? "current participant" : "invited outsider",
     status: adminBootstrap ? "approved" : "pending",
     archetypes: adminBootstrap ? ["mentor"] : ["invited_outsider"],
@@ -1047,6 +1188,9 @@ export async function ensureMembership(
 
 export async function createManagedAccount(input: {
   orgId: string;
+  clerkUserId?: string;
+  clerkMembershipId?: string;
+  clerkRole?: ClerkOrgRole | string;
   email: string;
   name: string;
   password?: string;
@@ -1072,7 +1216,8 @@ export async function createManagedAccount(input: {
     throw new Error("Password must be at least 8 characters.");
   }
 
-  const user = await upsertSessionUser({ email, name });
+  const clerkRole = input.clerkRole ?? (input.role === "org_admin" ? "org:admin" : "org:member");
+  const user = await upsertSessionUser({ clerkUserId: input.clerkUserId, email, name });
   if (createPasswordCredential) {
     await setPasswordCredential(user.id, email, password);
   }
@@ -1088,6 +1233,8 @@ export async function createManagedAccount(input: {
   const cohortNameOrYear = input.cohortNameOrYear ?? (role === "org_admin" ? "Core" : "Rolling");
   const managedMembership: Membership = {
     id: existing?.id ?? `mem_${nanoid(8)}`,
+    clerkMembershipId: input.clerkMembershipId ?? existing?.clerkMembershipId,
+    clerkRole: (clerkRole as ClerkOrgRole | undefined) ?? existing?.clerkRole,
     orgId: input.orgId,
     userId: user.id,
     role,
@@ -1120,6 +1267,8 @@ export async function createManagedAccount(input: {
     const [row] = await getDb()
       .update(dbSchema.memberships)
       .set({
+        clerkMembershipId: managedMembership.clerkMembershipId,
+        clerkRole: managedMembership.clerkRole,
         role: managedMembership.role,
         affiliationType: managedMembership.affiliationType,
         status: managedMembership.status,
@@ -1153,6 +1302,21 @@ export async function getMembershipByUserAndOrg(userId: string, orgId: string) {
     .select()
     .from(dbSchema.memberships)
     .where(and(eq(dbSchema.memberships.userId, userId), eq(dbSchema.memberships.orgId, orgId)))
+    .limit(1);
+  return row ? membershipFromRow(row) : undefined;
+}
+
+export async function getMembershipByClerkMembershipId(clerkMembershipId: string) {
+  if (!usesDatabase) {
+    return getStore().memberships.find(
+      (membership) => membership.clerkMembershipId === clerkMembershipId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.memberships)
+    .where(eq(dbSchema.memberships.clerkMembershipId, clerkMembershipId))
     .limit(1);
   return row ? membershipFromRow(row) : undefined;
 }

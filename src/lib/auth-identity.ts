@@ -7,18 +7,31 @@ type ClerkClient = Awaited<ReturnType<ClerkServer["clerkClient"]>>;
 type ClerkUser = Awaited<ReturnType<ClerkClient["users"]["getUser"]>>;
 
 export interface AuthIdentity {
+  clerkUserId: string;
+  clerkOrgId?: string;
+  clerkOrgSlug?: string;
+  clerkOrgRole?: string;
+  canManageOrgMemberships: boolean;
   email: string;
   name: string;
   imageUrl?: string;
   provider: "clerk";
 }
 
+type ClerkOrgIdentity = Pick<
+  AuthIdentity,
+  "canManageOrgMemberships" | "clerkOrgId" | "clerkOrgRole" | "clerkOrgSlug" | "clerkUserId"
+>;
+
 function nameForClerkUser(user: NonNullable<ClerkUser>, email: string) {
   const composedName = [user.firstName, user.lastName].filter(Boolean).join(" ");
   return user.fullName || composedName || user.username || email;
 }
 
-function identityFromClerkUser(user: ClerkUser): AuthIdentity | null {
+function identityFromClerkUser(
+  user: ClerkUser,
+  orgIdentity: ClerkOrgIdentity,
+): AuthIdentity | null {
   const email =
     user?.primaryEmailAddress?.emailAddress ??
     user?.emailAddresses.at(0)?.emailAddress;
@@ -28,6 +41,7 @@ function identityFromClerkUser(user: ClerkUser): AuthIdentity | null {
   }
 
   return {
+    ...orgIdentity,
     email,
     name: nameForClerkUser(user, email),
     imageUrl: user.imageUrl,
@@ -52,6 +66,7 @@ function stringClaim(
 
 function identityFromClerkClaims(
   claims: ClerkSessionClaims | null | undefined,
+  orgIdentity: ClerkOrgIdentity,
 ): AuthIdentity | null {
   if (!claims) {
     return null;
@@ -75,6 +90,7 @@ function identityFromClerkClaims(
     (composedName || email);
 
   return {
+    ...orgIdentity,
     email,
     name,
     imageUrl: stringClaim(claims, ["picture", "image_url", "imageUrl"]),
@@ -94,12 +110,26 @@ export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
     return null;
   }
 
-  const claimsIdentity = identityFromClerkClaims(clerkAuth.sessionClaims);
+  const orgIdentity: ClerkOrgIdentity = {
+    clerkUserId: clerkAuth.userId,
+    clerkOrgId: clerkAuth.orgId ?? undefined,
+    clerkOrgSlug: clerkAuth.orgSlug ?? undefined,
+    clerkOrgRole: clerkAuth.orgRole ?? undefined,
+    canManageOrgMemberships: Boolean(clerkAuth.has?.({ role: "org:admin" })),
+  };
+
+  const claimsIdentity = identityFromClerkClaims(
+    clerkAuth.sessionClaims,
+    orgIdentity,
+  );
 
   if (claimsIdentity) {
     return claimsIdentity;
   }
 
   const client = await clerkClient();
-  return identityFromClerkUser(await client.users.getUser(clerkAuth.userId));
+  return identityFromClerkUser(
+    await client.users.getUser(clerkAuth.userId),
+    orgIdentity,
+  );
 }

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Host_Grotesk, Urbanist } from "next/font/google";
 import {
   ClerkProvider,
+  OrganizationSwitcher,
   Show,
   SignInButton,
   SignUpButton,
@@ -57,11 +58,11 @@ function ClerkBoundary({ children }: { children: React.ReactNode }) {
 
   return (
     <ClerkProvider
-      proxyUrl="/__clerk"
       signInFallbackRedirectUrl={env.clerkSignInFallbackRedirectUrl}
       signInUrl={env.clerkSignInUrl}
       signUpFallbackRedirectUrl={env.clerkSignUpFallbackRedirectUrl}
       signUpUrl={env.clerkSignUpUrl}
+      taskUrls={{ "choose-organization": "/session-tasks/choose-organization" }}
     >
       <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--surface)]/95 backdrop-blur">
         <div className="mx-auto flex min-h-12 w-full max-w-7xl items-center justify-end gap-2 px-4 sm:px-6 lg:px-8">
@@ -84,6 +85,12 @@ function ClerkBoundary({ children }: { children: React.ReactNode }) {
             </SignUpButton>
           </Show>
           <Show when="signed-in">
+            <OrganizationSwitcher
+              afterCreateOrganizationUrl="/org/:slug/feed"
+              afterLeaveOrganizationUrl="/org/wavespark/feed"
+              afterSelectOrganizationUrl="/org/:slug/feed"
+              hidePersonal
+            />
             <UserButton />
           </Show>
         </div>

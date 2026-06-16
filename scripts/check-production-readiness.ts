@@ -1,6 +1,7 @@
 const requiredEnv = [
   "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
   "CLERK_SECRET_KEY",
+  "CLERK_WEBHOOK_SIGNING_SECRET",
   "DATABASE_URL",
   "CRON_SECRET",
   "WAVESPARK_ADMIN_EMAILS",
@@ -131,6 +132,7 @@ function checkProductionSecret(
 function checkClerkKeys(env: NodeJS.ProcessEnv, errors: string[], warnings: string[]) {
   const publishableKey = readEnv(env, "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
   const secretKey = readEnv(env, "CLERK_SECRET_KEY");
+  const webhookSecret = readEnv(env, "CLERK_WEBHOOK_SIGNING_SECRET");
 
   if (publishableKey.startsWith("pk_test_")) {
     errors.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must use a Clerk live key in production.");
@@ -142,6 +144,10 @@ function checkClerkKeys(env: NodeJS.ProcessEnv, errors: string[], warnings: stri
     errors.push("CLERK_SECRET_KEY must use a Clerk live key in production.");
   } else if (secretKey && !secretKey.startsWith("sk_live_")) {
     warnings.push("CLERK_SECRET_KEY does not look like a Clerk live key.");
+  }
+
+  if (webhookSecret && !webhookSecret.startsWith("whsec_")) {
+    warnings.push("CLERK_WEBHOOK_SIGNING_SECRET does not look like a Clerk webhook secret.");
   }
 }
 

@@ -3,9 +3,9 @@ import { SignIn } from "@clerk/nextjs";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
-import { Card } from "@/components/ui/card";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getViewerContext } from "@/lib/auth";
 import { isClerkConfigured } from "@/lib/env";
@@ -13,7 +13,7 @@ import { isClerkConfigured } from "@/lib/env";
 export default async function SignInPage({
   params,
 }: {
-  params: Promise<{ slug: string }>;
+  params: Promise<{ slug: string; "sign-in"?: string[] }>;
 }) {
   const { slug } = await params;
   const viewer = await getViewerContext(slug);
@@ -36,17 +36,15 @@ export default async function SignInPage({
         </div>
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
-          <Card
-            className="ws-hero-art min-h-[430px] overflow-hidden border-0 p-0 text-[var(--surface)]"
-          >
+          <Card className="ws-hero-art min-h-[430px] overflow-hidden border-0 p-0 text-[var(--surface)]">
             <div className="flex min-h-[430px] flex-col justify-between p-6 sm:p-7">
               <BrandLogo className="h-8 w-fit" tone="light" />
               <div>
                 <SectionHeading
+                  description="Use the account your admin invited to this community."
                   eyebrow="Sign in"
                   level={1}
                   title="Enter the Wavespark application flow"
-                  description="Use the account your admin created for this community."
                   tone="inverse"
                 />
                 <div className="mt-6 grid gap-3 text-sm text-[var(--surface)]/80">
@@ -62,13 +60,13 @@ export default async function SignInPage({
             {clerkConfigured ? (
               <Card className="space-y-5">
                 <SectionHeading
+                  description="Use Clerk to access your Wavespark community account."
                   eyebrow="Managed identity"
                   title="Sign in to Wavespark"
-                  description="Use Clerk to access your Wavespark community account."
                 />
-                <div className="flex justify-center">
+                <div className="flex min-h-[360px] justify-center">
                   <SignIn
-                    fallbackRedirectUrl={`/org/${slug}`}
+                    fallbackRedirectUrl={`/org/${slug}/onboarding`}
                     path={`/org/${slug}/signin`}
                     routing="path"
                     signUpUrl={`/org/${slug}/sign-up`}
@@ -78,9 +76,9 @@ export default async function SignInPage({
             ) : (
               <Card className="space-y-4">
                 <SectionHeading
+                  description="Add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to enable sign-in."
                   eyebrow="Configuration"
                   title="Clerk is not configured"
-                  description="Add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to enable sign-in."
                 />
               </Card>
             )}
@@ -92,7 +90,7 @@ export default async function SignInPage({
                 <div>
                   <p className="text-sm font-semibold text-[var(--ink)]">Need an account?</p>
                   <p className="text-sm text-[var(--ink-soft)]">
-                    Create one with Clerk and your local community profile will be linked by email.
+                    Join with a Clerk organization invitation from a Wavespark admin.
                   </p>
                 </div>
                 <Button asChild variant="secondary">

@@ -1,5 +1,6 @@
 export type PlatformRole = "platform_owner" | "standard";
 export type MembershipRole = "org_admin" | "member";
+export type ClerkOrgRole = "org:admin" | "org:member" | (string & {});
 export type MembershipStatus =
   | "pending"
   | "approved"
@@ -36,6 +37,7 @@ export type ProfileLinkType = "linkedin" | "github" | "website" | "x";
 
 export interface Organization {
   id: string;
+  clerkOrgId?: string;
   name: string;
   slug: string;
   logoUrl: string;
@@ -56,6 +58,7 @@ export interface Organization {
 
 export interface User {
   id: string;
+  clerkUserId?: string;
   email: string;
   name: string;
   imageUrl: string;
@@ -66,6 +69,8 @@ export interface User {
 
 export interface Membership {
   id: string;
+  clerkMembershipId?: string;
+  clerkRole?: ClerkOrgRole;
   orgId: string;
   userId: string;
   role: MembershipRole;

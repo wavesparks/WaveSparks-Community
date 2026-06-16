@@ -61,24 +61,29 @@ export function enqueueMembershipEmail(input: {
   });
 }
 
-export function enqueueClerkInvitation(input: {
+export function enqueueClerkOrganizationInvitation(input: {
   emailAddress: string;
+  inviterUserId: string;
+  organizationId: string;
   redirectUrl: string;
+  role: string;
   publicMetadata: Record<string, string>;
 }) {
   after(async () => {
     try {
       const { clerkClient } = await import("@clerk/nextjs/server");
       const client = await clerkClient();
-      await client.invitations.createInvitation({
+      await client.organizations.createOrganizationInvitation({
         emailAddress: input.emailAddress,
+        inviterUserId: input.inviterUserId,
+        organizationId: input.organizationId,
         redirectUrl: input.redirectUrl,
-        ignoreExisting: true,
+        role: input.role,
         publicMetadata: input.publicMetadata,
       });
     } catch (error) {
       console.error(
-        "[wavesparks] clerk invitation failed",
+        "[wavesparks] clerk organization invitation failed",
         input.emailAddress,
         error,
       );

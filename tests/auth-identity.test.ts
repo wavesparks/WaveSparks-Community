@@ -50,6 +50,10 @@ describe("current auth identity", () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
     process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
     clerkAuthMock.mockResolvedValue({
+      has: vi.fn(() => false),
+      orgId: "org_clerk",
+      orgRole: "org:member",
+      orgSlug: "wavespark",
       userId: "clerk_user",
       sessionClaims: {
         email: "clerk@example.com",
@@ -61,6 +65,11 @@ describe("current auth identity", () => {
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
     await expect(getCurrentAuthIdentity()).resolves.toEqual({
+      canManageOrgMemberships: false,
+      clerkOrgId: "org_clerk",
+      clerkOrgRole: "org:member",
+      clerkOrgSlug: "wavespark",
+      clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
       imageUrl: "https://example.com/clerk.png",
@@ -73,6 +82,10 @@ describe("current auth identity", () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
     process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
     clerkAuthMock.mockResolvedValue({
+      has: vi.fn(() => true),
+      orgId: "org_clerk",
+      orgRole: "org:admin",
+      orgSlug: "wavespark",
       userId: "clerk_user",
       sessionClaims: {},
     });
@@ -91,6 +104,11 @@ describe("current auth identity", () => {
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
     await expect(getCurrentAuthIdentity()).resolves.toEqual({
+      canManageOrgMemberships: true,
+      clerkOrgId: "org_clerk",
+      clerkOrgRole: "org:admin",
+      clerkOrgSlug: "wavespark",
+      clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
       imageUrl: "https://example.com/clerk.png",

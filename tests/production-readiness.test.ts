@@ -7,6 +7,7 @@ const baseProductionEnv: NodeJS.ProcessEnv = {
   NEXT_PUBLIC_APP_URL: "https://app.wavesparks.co",
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_live_wavesparks",
   CLERK_SECRET_KEY: "sk_live_wavesparks",
+  CLERK_WEBHOOK_SIGNING_SECRET: "whsec_wavesparks",
   DATABASE_URL: "postgres://wavespark:secret@db.wavesparks.co:5432/wavespark",
   CRON_SECRET: "cron-secret-with-enough-production-entropy",
   WAVESPARK_ADMIN_EMAILS: "letsbuild@wavesparks.co",

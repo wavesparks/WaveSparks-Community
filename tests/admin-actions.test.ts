@@ -11,11 +11,18 @@ const redirectMock = vi.hoisted(() =>
 const revalidatePathMock = vi.hoisted(() => vi.fn());
 const afterMock = vi.hoisted(() => vi.fn());
 const viewerRef = vi.hoisted(() => ({ current: null as ViewerContext | null }));
-const createInvitationMock = vi.hoisted(() => {
+const createOrganizationInvitationMock = vi.hoisted(() => {
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_wavesparks";
   process.env.CLERK_SECRET_KEY = "sk_test_wavesparks";
   return vi.fn();
 });
+const authMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    has: vi.fn(({ role }: { role: string }) => role === "org:admin"),
+    orgId: "org_clerk_wavespark",
+    userId: "user_clerk_admin",
+  })),
+);
 
 vi.mock("next/navigation", () => ({
   redirect: redirectMock,
@@ -30,9 +37,10 @@ vi.mock("next/server", () => ({
 }));
 
 vi.mock("@clerk/nextjs/server", () => ({
+  auth: authMock,
   clerkClient: vi.fn(async () => ({
-    invitations: {
-      createInvitation: createInvitationMock,
+    organizations: {
+      createOrganizationInvitation: createOrganizationInvitationMock,
     },
   })),
 }));
@@ -126,16 +134,18 @@ describe("admin server actions", () => {
       role: "member",
       status: "approved",
     });
-    expect(createInvitationMock).not.toHaveBeenCalled();
+    expect(createOrganizationInvitationMock).not.toHaveBeenCalled();
     expect(afterMock).toHaveBeenCalledTimes(1);
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/admin/members");
 
     await runAfterCallbacks();
 
-    expect(createInvitationMock).toHaveBeenCalledWith({
+    expect(createOrganizationInvitationMock).toHaveBeenCalledWith({
       emailAddress: "new.clerk.member@example.com",
+      inviterUserId: "user_clerk_admin",
+      organizationId: "org_clerk_wavespark",
       redirectUrl: "http://localhost:3000/org/wavespark/signin",
-      ignoreExisting: true,
+      role: "org:member",
       publicMetadata: {
         orgSlug: "wavespark",
         membershipId: membership?.id,

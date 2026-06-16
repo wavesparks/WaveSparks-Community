@@ -29,6 +29,7 @@ const env = {
     "http://localhost:3000",
   clerkPublishableKey: nonEmpty(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY),
   clerkSecretKey: nonEmpty(process.env.CLERK_SECRET_KEY),
+  clerkWebhookSigningSecret: nonEmpty(process.env.CLERK_WEBHOOK_SIGNING_SECRET),
   clerkSignInUrl:
     nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL) ?? "/org/wavespark/signin",
   clerkSignUpUrl:
@@ -53,6 +54,10 @@ const env = {
 
 export function isClerkConfigured() {
   return Boolean(env.clerkPublishableKey && env.clerkSecretKey);
+}
+
+export function isClerkWebhookConfigured() {
+  return Boolean(env.clerkWebhookSigningSecret);
 }
 
 export function getBootstrapAdminEmails() {

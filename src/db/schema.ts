@@ -78,6 +78,7 @@ export const users = pgTable(
   "users",
   {
     id: text("id").primaryKey(),
+    clerkUserId: text("clerk_user_id"),
     email: text("email").notNull(),
     name: text("name").notNull(),
     imageUrl: text("image_url").notNull(),
@@ -86,6 +87,7 @@ export const users = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
   (table) => ({
+    clerkUserIdx: uniqueIndex("users_clerk_user_id_idx").on(table.clerkUserId),
     emailIdx: uniqueIndex("users_email_idx").on(table.email),
   }),
 );
@@ -104,6 +106,7 @@ export const organizations = pgTable(
   "organizations",
   {
     id: text("id").primaryKey(),
+    clerkOrgId: text("clerk_org_id"),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
     logoUrl: text("logo_url").notNull(),
@@ -124,12 +127,15 @@ export const organizations = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (table) => ({
+    clerkOrgIdx: uniqueIndex("organizations_clerk_org_id_idx").on(table.clerkOrgId),
     slugIdx: uniqueIndex("organizations_slug_idx").on(table.slug),
   }),
 );
 
 export const memberships = pgTable("memberships", {
   id: text("id").primaryKey(),
+  clerkMembershipId: text("clerk_membership_id"),
+  clerkRole: text("clerk_role"),
   orgId: text("org_id").notNull(),
   userId: text("user_id").notNull(),
   role: membershipRoleEnum("role").notNull().default("member"),
@@ -143,6 +149,16 @@ export const memberships = pgTable("memberships", {
   approvedAt: timestamp("approved_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+}, (table) => ({
+  clerkMembershipIdx: uniqueIndex("memberships_clerk_membership_id_idx").on(
+    table.clerkMembershipId,
+  ),
+}));
+
+export const clerkWebhookEvents = pgTable("clerk_webhook_events", {
+  id: text("id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
 
 export const profiles = pgTable("profiles", {

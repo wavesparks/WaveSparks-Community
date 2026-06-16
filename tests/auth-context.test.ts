@@ -31,18 +31,19 @@ vi.mock("@/lib/auth-identity", () => ({
 }));
 
 vi.mock("@/server/store", () => ({
-  ensureMembership: vi.fn(),
+  ensureMembership: vi.fn(() => membership),
   getOrganizationBySlug: vi.fn(() => {
     calls.push("org");
     return mockState.org;
   }),
-  getProfileByMembershipId: vi.fn(),
+  getProfileByMembershipId: vi.fn(() => profile),
   getViewerRecordByEmailAndOrgId: vi.fn((orgId: string, email: string) => {
     calls.push(`viewer:${orgId}:${email}`);
     return mockState.viewerRecord;
   }),
   getViewerRecordByEmailAndSlug: vi.fn(),
-  upsertSessionUser: vi.fn(),
+  linkOrganizationToClerkOrg: vi.fn(() => org),
+  upsertSessionUser: vi.fn(() => user),
 }));
 
 import { getOrganizationViewerContext } from "@/lib/auth";
@@ -135,6 +136,11 @@ describe("organization viewer context", () => {
 
   it("reuses the known organization id when resolving an authenticated viewer", async () => {
     mockState.identity = Promise.resolve({
+      canManageOrgMemberships: false,
+      clerkOrgId: "org_clerk_test",
+      clerkOrgRole: "org:member",
+      clerkOrgSlug: "test",
+      clerkUserId: "user_clerk_test",
       email: user.email,
       name: user.name,
       provider: "clerk",

@@ -8,6 +8,7 @@ import {
   getProfileByMembershipId,
   getViewerRecordByEmailAndOrgId,
   getViewerRecordByEmailAndSlug,
+  linkOrganizationToClerkOrg,
   upsertSessionUser,
 } from "@/server/store";
 import type { Membership, Organization, Profile, User, ViewerContext } from "@/lib/domain";
@@ -37,11 +38,13 @@ async function buildViewerContextForOrg(
 
   if (!user || !membership) {
     user = await upsertSessionUser({
+      clerkUserId: identity.clerkUserId,
       email: identity.email,
       name: identity.name,
       imageUrl: identity.imageUrl,
     });
     membership = await ensureMembership(user.id, org.id, {
+      clerkRole: identity.clerkOrgRole,
       existingUser: user,
     });
     profile = await getProfileByMembershipId(membership.id);
@@ -50,13 +53,35 @@ async function buildViewerContextForOrg(
     (membership.role !== "org_admin" || membership.status !== "approved")
   ) {
     membership = await ensureMembership(user.id, org.id, {
+      clerkRole: identity.clerkOrgRole,
       existingUser: user,
       existingMembership: membership,
     });
     profile = await getProfileByMembershipId(membership.id);
+  } else if (
+    user.clerkUserId !== identity.clerkUserId ||
+    membership.clerkRole !== identity.clerkOrgRole
+  ) {
+    user = await upsertSessionUser({
+      clerkUserId: identity.clerkUserId,
+      email: identity.email,
+      name: identity.name,
+      imageUrl: identity.imageUrl,
+    });
+    membership = await ensureMembership(user.id, org.id, {
+      clerkRole: identity.clerkOrgRole,
+      existingUser: user,
+      existingMembership: membership,
+    });
   }
 
-  const canAdmin = canAdminOrganization(user, membership);
+  if (identity.clerkOrgId && org.clerkOrgId !== identity.clerkOrgId) {
+    await linkOrganizationToClerkOrg(org.id, identity.clerkOrgId);
+    org.clerkOrgId = identity.clerkOrgId;
+  }
+
+  const canAdmin =
+    identity.canManageOrgMemberships || canAdminOrganization(user, membership);
 
   return {
     org,
@@ -88,6 +113,10 @@ async function resolveViewerContext(slug: string) {
     return { org, viewer: null, authenticated: false };
   }
 
+  if (identity.clerkOrgSlug && identity.clerkOrgSlug !== org.slug) {
+    return { org, viewer: null, authenticated: true };
+  }
+
   return {
     org,
     authenticated: true,
@@ -107,6 +136,10 @@ async function resolveOrganizationViewerContext(slug: string) {
 
   if (!identity) {
     return { org, viewer: null, authenticated: false };
+  }
+
+  if (identity.clerkOrgSlug && identity.clerkOrgSlug !== org.slug) {
+    return { org, viewer: null, authenticated: true };
   }
 
   const viewerRecord = await getViewerRecordByEmailAndOrgId(org.id, identity.email);

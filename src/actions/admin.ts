@@ -3,15 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { nanoid } from "nanoid";
 
 import { getViewerContextForAction } from "@/lib/auth";
+import { clerkRoleFromLocalRole } from "@/lib/clerk-roles";
 import { isClerkConfigured } from "@/lib/env";
 import { getPostCommentRevalidationPaths } from "@/lib/post-action-routing";
 import { absoluteAppUrl } from "@/lib/urls";
 import {
   enqueueAnalyticsEvent,
-  enqueueClerkInvitation,
+  enqueueClerkOrganizationInvitation,
   enqueueMembershipEmail,
   enqueueNotificationWrite,
 } from "@/server/action-side-effects";
@@ -37,7 +39,11 @@ import {
 async function requireAdminForAction(slug: string) {
   const viewer = await getViewerContextForAction(slug);
 
-  if (!viewer || !canViewAdminRoute(viewer.user, viewer.membership)) {
+  if (
+    !viewer ||
+    !viewer.canAdmin ||
+    !canViewAdminRoute(viewer.user, viewer.membership)
+  ) {
     throw new Error("Unauthorized.");
   }
 
@@ -62,12 +68,19 @@ function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: st
 
 export async function createManagedAccountAction(slug: string, formData: FormData) {
   const { org } = await requireAdminForAction(slug);
+  const clerkAuth = await auth();
   const email = String(formData.get("email") ?? "");
   const name = String(formData.get("name") ?? "");
-  const role = String(formData.get("role") ?? "member") as never;
+  const role = String(formData.get("role") ?? "member") as "org_admin" | "member";
   const status = String(formData.get("status") ?? "approved") as never;
   if (!isClerkConfigured()) {
     throw new Error("Clerk is not configured.");
+  }
+  if (!clerkAuth.userId || !clerkAuth.orgId) {
+    throw new Error("A Clerk organization session is required.");
+  }
+  if (!clerkAuth.has?.({ role: "org:admin" })) {
+    throw new Error("Missing Clerk organization membership permissions.");
   }
 
   const { membership } = await createManagedAccount({
@@ -75,13 +88,17 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
     email,
     name,
     createPasswordCredential: false,
+    clerkRole: clerkRoleFromLocalRole(role),
     role,
     status,
   });
 
-  enqueueClerkInvitation({
+  enqueueClerkOrganizationInvitation({
     emailAddress: email,
+    inviterUserId: clerkAuth.userId,
+    organizationId: clerkAuth.orgId,
     redirectUrl: absoluteAppUrl(`/org/${slug}/signin`),
+    role: clerkRoleFromLocalRole(role),
     publicMetadata: {
       orgSlug: slug,
       membershipId: membership.id,

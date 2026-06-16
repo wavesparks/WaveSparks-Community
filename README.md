@@ -48,7 +48,8 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 
 - Authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`; the app's org-scoped sign-in/sign-up pages pass their Clerk routes directly.
 - If Clerk keys are missing, authenticated app areas are unavailable until `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are configured.
-- Admins can invite or update members from `/org/wavespark/admin/members`. With Clerk configured, the action sends a Clerk invitation and stores the Wavespark membership state locally.
+- Admins can invite or update members from `/org/wavespark/admin/members`. With Clerk configured, the action sends a Clerk organization invitation and stores the Wavespark membership state locally.
+- Clerk manages identity, organizations, roles, and organization membership. Wavespark stores community profile data, approval status, content, and matching.
 - `letsbuild@wavesparks.co` is a default bootstrap admin. Add more comma-separated admin emails with `WAVESPARK_ADMIN_EMAILS`.
 
 ## Database workflow
@@ -83,6 +84,17 @@ This creates or updates one approved admin, mentor, and founder account. Set
 up matching Clerk users or invitations for the printed emails to sign in. The
 script writes a summary to `/tmp/wavesparks-preview-accounts.txt`.
 
+Sync existing local members to Clerk Organizations:
+
+```bash
+pnpm clerk:sync-orgs
+pnpm clerk:sync-orgs -- --send-invites
+```
+
+The first command links local users to existing Clerk users by email and adds them to the
+`wavespark` Clerk organization. The second command also sends Clerk organization invitations
+for local members who do not yet have a Clerk user.
+
 ## Useful scripts
 
 ```bash
@@ -94,6 +106,7 @@ pnpm test:e2e
 pnpm build
 pnpm cron:matches
 pnpm readiness:prod
+pnpm clerk:sync-orgs
 ```
 
 ## Production rollout checklist
@@ -115,7 +128,13 @@ SUPABASE_BUCKET=wavesparks
 ```
 
 The Vercel Clerk integration should supply `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
-`CLERK_SECRET_KEY`. Optional Clerk route overrides are only needed if you want Clerk's
+`CLERK_SECRET_KEY`. Add the webhook signing secret from the Clerk webhook endpoint too:
+
+```bash
+CLERK_WEBHOOK_SIGNING_SECRET=<whsec_...>
+```
+
+Optional Clerk route overrides are only needed if you want Clerk's
 global defaults to match the Wavespark org routes:
 
 ```bash
@@ -131,6 +150,7 @@ NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/org/wavespark
 pnpm readiness:prod
 pnpm db:migrate
 pnpm db:bootstrap
+pnpm clerk:sync-orgs
 ```
 
 `pnpm readiness:prod` expects the real production environment to be present, as it is in
@@ -142,6 +162,12 @@ Resend/Supabase configuration before the deployment is promoted.
 4. Keep Vercel Authentication on preview deployments only. Production access should be controlled by the app sign-in, onboarding, and approval flow.
 
 5. After the first admin signs in through Clerk, invite managed members from the admin members page.
+
+For future Clerk work in this project, install Clerk skills and restart the agent after installation:
+
+```bash
+npx skills add clerk/skills
+```
 
 ## Verification
 
