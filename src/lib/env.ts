@@ -29,9 +29,7 @@ const appUrl =
 
 const env = {
   appUrl,
-  clerkProxyUrl:
-    withHttps(process.env.NEXT_PUBLIC_CLERK_PROXY_URL) ??
-    `${appUrl.replace(/\/$/, "")}/__clerk`,
+  clerkProxyUrl: withHttps(process.env.NEXT_PUBLIC_CLERK_PROXY_URL),
   clerkPublishableKey: nonEmpty(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY),
   clerkSecretKey: nonEmpty(process.env.CLERK_SECRET_KEY),
   clerkWebhookSigningSecret: nonEmpty(process.env.CLERK_WEBHOOK_SIGNING_SECRET),

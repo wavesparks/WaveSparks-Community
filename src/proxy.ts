@@ -4,11 +4,16 @@ import { NextResponse } from "next/server";
 const clerkKeysConfigured = Boolean(
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY,
 );
+const clerkFrontendApiProxyConfigured = Boolean(
+  process.env.NEXT_PUBLIC_CLERK_PROXY_URL,
+);
 
 export default clerkKeysConfigured
-  ? clerkMiddleware({
-      frontendApiProxy: { enabled: true },
-    })
+  ? clerkMiddleware(
+      clerkFrontendApiProxyConfigured
+        ? { frontendApiProxy: { enabled: true } }
+        : undefined,
+    )
   : function proxy() {
       return NextResponse.next();
     };

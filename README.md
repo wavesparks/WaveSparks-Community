@@ -128,12 +128,16 @@ SUPABASE_BUCKET=wavesparks
 ```
 
 The Vercel Clerk integration should supply `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
-`CLERK_SECRET_KEY`. `NEXT_PUBLIC_CLERK_PROXY_URL` should point at the app-hosted
-Frontend API proxy when Clerk's `clerk.wavesparks.co` DNS record is not available:
+`CLERK_SECRET_KEY`. Clerk production domains also need the DNS records shown in the
+Clerk Dashboard, including the Frontend API CNAME:
 
 ```bash
-NEXT_PUBLIC_CLERK_PROXY_URL=https://app.wavesparks.co/__clerk
+clerk.wavesparks.co CNAME frontend-api.clerk.services
 ```
+
+Only set `NEXT_PUBLIC_CLERK_PROXY_URL` after enabling proxying for the domain in
+Clerk. Without that Clerk-side domain setting, proxied Frontend API requests are
+rejected as an invalid host.
 
 Add the webhook signing secret from the Clerk webhook endpoint too:
 
