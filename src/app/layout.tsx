@@ -58,6 +58,7 @@ function ClerkBoundary({ children }: { children: React.ReactNode }) {
 
   return (
     <ClerkProvider
+      proxyUrl={env.clerkProxyUrl}
       signInFallbackRedirectUrl={env.clerkSignInFallbackRedirectUrl}
       signInUrl={env.clerkSignInUrl}
       signUpFallbackRedirectUrl={env.clerkSignUpFallbackRedirectUrl}

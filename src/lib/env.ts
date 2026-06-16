@@ -21,12 +21,17 @@ function nonEmpty(value?: string | null) {
   return trimmed || undefined;
 }
 
+const appUrl =
+  withHttps(process.env.NEXT_PUBLIC_APP_URL) ??
+  withHttps(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
+  withHttps(process.env.VERCEL_URL) ??
+  "http://localhost:3000";
+
 const env = {
-  appUrl:
-    withHttps(process.env.NEXT_PUBLIC_APP_URL) ??
-    withHttps(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
-    withHttps(process.env.VERCEL_URL) ??
-    "http://localhost:3000",
+  appUrl,
+  clerkProxyUrl:
+    withHttps(process.env.NEXT_PUBLIC_CLERK_PROXY_URL) ??
+    `${appUrl.replace(/\/$/, "")}/__clerk`,
   clerkPublishableKey: nonEmpty(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY),
   clerkSecretKey: nonEmpty(process.env.CLERK_SECRET_KEY),
   clerkWebhookSigningSecret: nonEmpty(process.env.CLERK_WEBHOOK_SIGNING_SECRET),

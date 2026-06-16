@@ -128,7 +128,14 @@ SUPABASE_BUCKET=wavesparks
 ```
 
 The Vercel Clerk integration should supply `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
-`CLERK_SECRET_KEY`. Add the webhook signing secret from the Clerk webhook endpoint too:
+`CLERK_SECRET_KEY`. `NEXT_PUBLIC_CLERK_PROXY_URL` should point at the app-hosted
+Frontend API proxy when Clerk's `clerk.wavesparks.co` DNS record is not available:
+
+```bash
+NEXT_PUBLIC_CLERK_PROXY_URL=https://app.wavesparks.co/__clerk
+```
+
+Add the webhook signing secret from the Clerk webhook endpoint too:
 
 ```bash
 CLERK_WEBHOOK_SIGNING_SECRET=<whsec_...>

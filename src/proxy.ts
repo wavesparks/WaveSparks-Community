@@ -6,7 +6,9 @@ const clerkKeysConfigured = Boolean(
 );
 
 export default clerkKeysConfigured
-  ? clerkMiddleware()
+  ? clerkMiddleware({
+      frontendApiProxy: { enabled: true },
+    })
   : function proxy() {
       return NextResponse.next();
     };
