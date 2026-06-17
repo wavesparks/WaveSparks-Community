@@ -1,4 +1,3 @@
-import { SignUp } from "@clerk/nextjs";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
@@ -6,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { isClerkConfigured } from "@/lib/env";
 
 export default async function SignUpPage({
   params,
@@ -14,7 +12,6 @@ export default async function SignUpPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const clerkConfigured = isClerkConfigured();
 
   return (
     <main className="ws-page-shell px-4 py-6 sm:px-6 lg:px-8">
@@ -42,34 +39,20 @@ export default async function SignUpPage({
             </div>
           </Card>
 
-          {clerkConfigured ? (
-            <Card className="space-y-5">
-              <SectionHeading
-                eyebrow="Managed identity"
-                title="Create your Clerk account"
-                description="Sign up with Clerk to enter the Wavespark community flow."
-              />
-              <div className="flex justify-center">
-                <SignUp
-                  fallbackRedirectUrl={`/org/${slug}`}
-                  path={`/org/${slug}/sign-up`}
-                  routing="path"
-                  signInUrl={`/org/${slug}/signin`}
-                />
-              </div>
-            </Card>
-          ) : (
-            <Card className="space-y-5">
-              <SectionHeading
-                eyebrow="Configuration"
-                title="Clerk is not configured"
-                description="Add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to enable account creation."
-              />
-              <Button asChild>
-                <Link href={`/org/${slug}/signin`}>Sign in</Link>
-              </Button>
-            </Card>
-          )}
+          <Card className="space-y-5">
+            <SectionHeading
+              eyebrow="Invitation only"
+              title="Ask an admin for an invitation"
+              description="Wavespark accounts are created from Clerk organization invitations. Use the invite link sent by your community admin to create or access your account."
+            />
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-6 text-[var(--ink-soft)]">
+              Direct public registration is closed so membership stays limited to
+              approved community invitees.
+            </div>
+            <Button asChild>
+              <Link href={`/org/${slug}/signin`}>Sign in with an invited account</Link>
+            </Button>
+          </Card>
         </div>
       </div>
     </main>

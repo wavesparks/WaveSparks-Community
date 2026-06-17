@@ -69,7 +69,7 @@ export default async function SignInPage({
                     fallbackRedirectUrl={`/org/${slug}/onboarding`}
                     path={`/org/${slug}/signin`}
                     routing="path"
-                    signUpUrl={`/org/${slug}/sign-up`}
+                    withSignUp={false}
                   />
                 </div>
               </Card>
@@ -86,16 +86,12 @@ export default async function SignInPage({
               Members can browse first. Sign in is only needed to post, reply, follow, or request intros.
             </Card>
             {clerkConfigured ? (
-              <Card className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold text-[var(--ink)]">Need an account?</p>
-                  <p className="text-sm text-[var(--ink-soft)]">
-                    Join with a Clerk organization invitation from a Wavespark admin.
-                  </p>
-                </div>
-                <Button asChild variant="secondary">
-                  <Link href={`/org/${slug}/sign-up`}>Sign up</Link>
-                </Button>
+              <Card className="space-y-2 text-sm leading-6 text-[var(--ink-soft)]">
+                <p className="font-semibold text-[var(--ink)]">Invitation required</p>
+                <p>
+                  New member accounts are created from a Wavespark admin invitation.
+                  Ask your community admin to send an invite to your email address.
+                </p>
               </Card>
             ) : null}
           </div>
