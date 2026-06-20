@@ -7,6 +7,7 @@ import {
   UserCircle2,
   UsersRound,
 } from "lucide-react";
+import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
@@ -14,6 +15,7 @@ import { SignOutButton } from "@/components/layout/sign-out-button";
 import { Avatar } from "@/components/ui/avatar";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { Button } from "@/components/ui/button";
+import { isClerkConfigured } from "@/lib/env";
 import { wavesparksBrand } from "@/lib/brand";
 import type { Organization, ViewerContext } from "@/lib/domain";
 import { cn } from "@/lib/utils";
@@ -48,6 +50,7 @@ export function ForumShell({
   const canInteract = viewer ? canAccessFeed(viewer.membership, viewer.profile) : false;
   const visibleLinks = canInteract ? memberLinks : memberLinks.slice(0, 1);
   const theme = wavesparksBrand.theme;
+  const clerkConfigured = isClerkConfigured();
 
   return (
     <div
@@ -152,12 +155,26 @@ export function ForumShell({
 
             {viewer ? (
               <div className="hidden items-center gap-2 border-l border-[var(--line)] pl-2 lg:flex">
-                <Avatar
-                  className="size-8"
-                  name={viewer.profile?.preferredName ?? viewer.user.name}
-                  src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
-                />
-                <SignOutButton callbackUrl={`/org/${org.slug}/feed`} tone="light" />
+                {clerkConfigured ? (
+                  <>
+                    <OrganizationSwitcher
+                      afterCreateOrganizationUrl="/org/:slug/feed"
+                      afterLeaveOrganizationUrl="/org/wavespark/feed"
+                      afterSelectOrganizationUrl="/org/:slug/feed"
+                      hidePersonal
+                    />
+                    <UserButton />
+                  </>
+                ) : (
+                  <>
+                    <Avatar
+                      className="size-8"
+                      name={viewer.profile?.preferredName ?? viewer.user.name}
+                      src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
+                    />
+                    <SignOutButton callbackUrl={`/org/${org.slug}/feed`} tone="light" />
+                  </>
+                )}
               </div>
             ) : null}
           </div>

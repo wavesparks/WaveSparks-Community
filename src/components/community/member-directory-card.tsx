@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ExternalLink, UserPlus } from "lucide-react";
+import { BriefcaseBusiness, ExternalLink, Handshake, MapPin, UserPlus } from "lucide-react";
 
 import {
   followMembershipAction,
@@ -30,29 +30,29 @@ export function MemberDirectoryCard({
     ? unfollowMembershipAction.bind(null, slug, viewerMembershipId, profile.membershipId)
     : followMembershipAction.bind(null, slug, viewerMembershipId, profile.membershipId);
   const introCopy = getActiveIntroStatusCopy(profile.introStatus);
+  const needs = [...profile.whatTheyNeed, ...profile.desiredRoles].slice(0, 4);
+  const expertise = [...profile.skillTags, ...profile.mentorOffers].slice(0, 5);
 
   return (
-    <Card className="space-y-4">
-      <div className="flex items-start gap-4">
-        <Avatar className="size-14" name={profile.displayName} src={profile.photo} />
+    <Card className="space-y-4 p-4">
+      <div className="flex items-start gap-3">
+        <Avatar className="size-12" name={profile.displayName} src={profile.photo} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-xl font-semibold text-[var(--ink)]">
-              {profile.displayName}
-            </h3>
+            <h3 className="text-lg font-semibold text-[var(--ink)]">{profile.displayName}</h3>
             <Badge variant="muted">{profile.affiliationLabel}</Badge>
+            <Badge variant="accent">{profile.stage}</Badge>
           </div>
           <p className="mt-1 line-clamp-2 text-sm leading-5 text-[var(--ink-soft)]">
             {profile.headline}
           </p>
-          <p className="mt-2 text-sm font-medium text-[var(--ink)]">
+          <p className="mt-2 line-clamp-2 text-sm font-medium leading-5 text-[var(--ink)]">
             {profile.whatTheyAreBuilding || profile.startupName}
           </p>
         </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Badge>{profile.stage}</Badge>
         {profile.keyTags.map((tag, index) => (
           <Badge key={`${profile.profileId}-tag-${tag}-${index}`} variant="muted">
             {tag}
@@ -60,17 +60,31 @@ export function MemberDirectoryCard({
         ))}
       </div>
 
-      <div className="grid gap-3 text-sm text-[var(--ink-soft)] sm:grid-cols-2">
+      <div className="grid gap-2 text-sm text-[var(--ink-soft)] sm:grid-cols-3">
         <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3">
-          <p className="font-semibold text-[var(--ink)]">Needs</p>
-          <p className="mt-1">
-            {[...profile.whatTheyNeed, ...profile.desiredRoles].slice(0, 4).join(", ") ||
-              "Open to useful conversations"}
+          <p className="flex items-center gap-2 font-semibold text-[var(--ink)]">
+            <Handshake className="size-4 text-[var(--accent)]" />
+            Needs
+          </p>
+          <p className="mt-1 line-clamp-2">
+            {needs.join(", ") || "Open to useful conversations"}
           </p>
         </div>
         <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3">
-          <p className="font-semibold text-[var(--ink)]">Location</p>
-          <p className="mt-1">{profile.location || "Remote / flexible"}</p>
+          <p className="flex items-center gap-2 font-semibold text-[var(--ink)]">
+            <BriefcaseBusiness className="size-4 text-[var(--accent)]" />
+            Expertise
+          </p>
+          <p className="mt-1 line-clamp-2">
+            {expertise.join(", ") || "Founder context"}
+          </p>
+        </div>
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3">
+          <p className="flex items-center gap-2 font-semibold text-[var(--ink)]">
+            <MapPin className="size-4 text-[var(--accent)]" />
+            Location
+          </p>
+          <p className="mt-1 line-clamp-2">{profile.location || "Remote / flexible"}</p>
         </div>
       </div>
 

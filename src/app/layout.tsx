@@ -1,12 +1,6 @@
 import type { Metadata } from "next";
 import { Host_Grotesk, Urbanist } from "next/font/google";
-import {
-  ClerkProvider,
-  OrganizationSwitcher,
-  Show,
-  SignInButton,
-  UserButton,
-} from "@clerk/nextjs";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 import { env, isClerkConfigured } from "@/lib/env";
@@ -64,29 +58,6 @@ function ClerkBoundary({ children }: { children: React.ReactNode }) {
       signUpUrl={env.clerkSignUpUrl}
       taskUrls={{ "choose-organization": "/session-tasks/choose-organization" }}
     >
-      <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--surface)]/95 backdrop-blur">
-        <div className="mx-auto flex min-h-12 w-full max-w-7xl items-center justify-end gap-2 px-4 sm:px-6 lg:px-8">
-          <Show when="signed-out">
-            <SignInButton withSignUp={false}>
-              <button
-                className="inline-flex h-9 items-center rounded-lg px-3 text-sm font-semibold text-[var(--ink-soft)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--ink)]"
-                type="button"
-              >
-                Sign in
-              </button>
-            </SignInButton>
-          </Show>
-          <Show when="signed-in">
-            <OrganizationSwitcher
-              afterCreateOrganizationUrl="/org/:slug/feed"
-              afterLeaveOrganizationUrl="/org/wavespark/feed"
-              afterSelectOrganizationUrl="/org/:slug/feed"
-              hidePersonal
-            />
-            <UserButton />
-          </Show>
-        </div>
-      </header>
       {children}
     </ClerkProvider>
   );

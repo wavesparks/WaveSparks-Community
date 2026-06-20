@@ -34,8 +34,8 @@ export function SectionHeading({
         <Heading
           className={cn(
             level === 1
-              ? "text-4xl font-semibold leading-tight sm:text-5xl"
-              : "text-2xl font-semibold leading-tight sm:text-3xl",
+              ? "text-3xl font-semibold leading-tight sm:text-4xl"
+              : "text-xl font-semibold leading-tight sm:text-2xl",
             inverse ? "text-[var(--surface)]" : "text-[var(--ink)]",
           )}
         >

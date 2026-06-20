@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Bookmark } from "lucide-react";
+import { ArrowUpRight, Bookmark, MessageCircle } from "lucide-react";
 
 import {
   followMembershipAction,
@@ -39,13 +39,17 @@ export function PostCard({
   const saveAction = post.isSaved
     ? unsavePostAction.bind(null, slug, viewerMembershipId ?? "", post.id)
     : savePostAction.bind(null, slug, viewerMembershipId ?? "", post.id);
+  const typeLabel = post.type.replaceAll("_", " ");
+  const authorSignals = [
+    post.author.affiliationLabel,
+    post.author.currentStatus,
+    post.author.location,
+  ].filter(Boolean);
 
   return (
-    <Card className="group overflow-hidden space-y-4 transition before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-[linear-gradient(180deg,var(--cyan),var(--accent),var(--gold))] before:opacity-70 hover:-translate-y-0.5 hover:border-[var(--accent)]/30 hover:shadow-[0_26px_70px_rgba(34,27,68,0.14)]">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant={post.featured ? "accent" : "default"}>
-          {post.type.replaceAll("_", " ")}
-        </Badge>
+    <Card className="group space-y-3 overflow-hidden p-4 transition before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-[linear-gradient(180deg,var(--cyan),var(--accent),var(--gold))] before:opacity-60 hover:border-[var(--accent)]/30 hover:shadow-[0_16px_42px_rgba(34,27,68,0.1)]">
+      <div className="flex flex-wrap items-start gap-2 pl-1">
+        <Badge variant={post.featured ? "accent" : "default"}>{typeLabel}</Badge>
         {post.opportunitySource ? (
           <Badge variant="muted">{opportunitySourceLabels[post.opportunitySource]}</Badge>
         ) : null}
@@ -58,13 +62,31 @@ export function PostCard({
           {formatDate(post.createdAt)}
         </span>
       </div>
-      <div className="space-y-2">
-        <h3 className="text-2xl font-semibold leading-tight text-[var(--ink)]">
-          {post.title}
-        </h3>
-        <p className="text-sm leading-6 text-[var(--ink-soft)]">{post.body}</p>
+
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
+        <div className="min-w-0 space-y-2 pl-1">
+          <h3 className="text-lg font-semibold leading-snug text-[var(--ink)] sm:text-xl">
+            <Link
+              className="transition hover:text-[var(--accent)]"
+              href={`/org/${slug}/posts/${post.id}`}
+            >
+              {post.title}
+            </Link>
+          </h3>
+          <p className="line-clamp-2 text-sm leading-6 text-[var(--ink-soft)]">
+            {post.body}
+          </p>
+        </div>
+        <Link
+          className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-xs font-semibold text-[var(--ink-soft)] transition hover:border-[var(--accent)]/40 hover:bg-[var(--surface)] hover:text-[var(--ink)]"
+          href={`/org/${slug}/posts/${post.id}`}
+        >
+          Open
+          <ArrowUpRight className="size-3.5" />
+        </Link>
       </div>
-      <div className="flex flex-wrap gap-2">
+
+      <div className="flex flex-wrap gap-2 pl-1">
         {post.tags.map((tag, index) => (
           <Badge key={`tag-${tag}-${index}`} variant="muted">
             {tag}
@@ -76,16 +98,27 @@ export function PostCard({
           </Badge>
         ))}
       </div>
-      <div className="flex flex-col gap-3 border-t border-[var(--line)] pt-4 sm:flex-row sm:items-center sm:justify-between">
+
+      <div className="flex flex-col gap-3 border-t border-[var(--line)] pt-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <Avatar name={post.author.displayName} src={post.author.photo} />
+          <Avatar className="size-9" name={post.author.displayName} src={post.author.photo} />
           <div className="min-w-0 space-y-0.5">
             <p className="text-sm font-semibold text-[var(--ink)]">{post.author.displayName}</p>
-            <p className="line-clamp-1 text-sm text-[var(--ink-soft)]">{post.author.headline}</p>
+            <p className="line-clamp-1 text-xs font-medium text-[var(--ink-soft)]">
+              {post.author.headline}
+            </p>
+            {authorSignals.length ? (
+              <p className="line-clamp-1 text-xs text-[var(--ink-soft)]/80">
+                {authorSignals.slice(0, 3).join(" / ")}
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <span className="text-sm font-medium text-[var(--ink-soft)]">{post.commentCount} comments</span>
+          <span className="inline-flex items-center gap-1 text-sm font-medium text-[var(--ink-soft)]">
+            <MessageCircle className="size-4" />
+            {post.commentCount}
+          </span>
           {canFollow ? (
             <form action={followAction}>
               {returnPath ? <input name="return_to" type="hidden" value={returnPath} /> : null}
@@ -112,7 +145,9 @@ export function PostCard({
             </form>
           ) : null}
           <Button asChild size="sm" variant="secondary">
-            <Link href={`/org/${slug}/posts/${post.id}`}>Open thread</Link>
+            <Link href={`/org/${slug}/posts/${post.id}`}>
+              Open thread
+            </Link>
           </Button>
         </div>
       </div>

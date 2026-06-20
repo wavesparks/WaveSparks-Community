@@ -1,24 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { setupClerkTestingToken } from "@clerk/testing/playwright";
 import { test, expect } from "@playwright/test";
 
-function hasConfiguredClerkKey() {
-  if (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
-    return true;
+test.beforeEach(async ({ page }) => {
+  if (process.env.CLERK_TESTING_TOKEN) {
+    await setupClerkTestingToken({ page });
   }
-
-  if (!existsSync(".env.local")) {
-    return false;
-  }
-
-  return /^NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=.+/m.test(
-    readFileSync(".env.local", "utf8"),
-  );
-}
-
-test.skip(
-  hasConfiguredClerkKey() && !process.env.CLERK_TESTING_TOKEN,
-  "Clerk browser E2E requires CLERK_TESTING_TOKEN from the Clerk dashboard.",
-);
+});
 
 test("public forum loads without sign-in", async ({ page }) => {
   await page.goto("/");
@@ -56,7 +43,7 @@ test("sign-up route explains invitation-only access", async ({ page }) => {
   await page.goto("/org/wavespark/sign-up");
   await expect(page.getByRole("heading", { name: "Join Wavespark by invitation" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: /Create your Clerk account|Clerk is not configured/ }),
+    page.getByRole("heading", { name: "Ask an admin for an invitation" }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Back to forum" })).toBeVisible();
   await expect(page.getByText("Use the credentials your admin sent")).toHaveCount(0);

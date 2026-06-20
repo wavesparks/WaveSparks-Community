@@ -6,8 +6,9 @@ import {
 } from "@/actions/member";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Bookmark } from "lucide-react";
+import { ArrowLeft, Bookmark, MessageCircle, UserPlus } from "lucide-react";
 import { ForumShell } from "@/components/layout/forum-shell";
+import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -118,59 +119,98 @@ export default async function PostDetailPage({
 
   return (
     <ForumShell currentPath={`/org/${slug}/feed`} org={org} viewer={viewer}>
-      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+      <div className="space-y-4">
+        <Button asChild className="w-fit" size="sm" variant="ghost">
+          <Link href={`/org/${slug}/feed`}>
+            <ArrowLeft className="size-4" />
+            Back to forum
+          </Link>
+        </Button>
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
           <StatusBanner status={singleQueryValue(query.status)} />
-          <Card className="space-y-5">
-            <div className="flex flex-wrap items-center gap-3">
+          <Card className="space-y-5 p-5">
+            <div className="flex flex-wrap items-center gap-2">
               <Badge>{post.type.replaceAll("_", " ")}</Badge>
               {post.status !== "active" ? <Badge variant="muted">{post.status}</Badge> : null}
               {post.commentsLocked ? <Badge variant="muted">comments locked</Badge> : null}
-              <span className="text-xs font-medium text-[var(--ink-soft)]">
+              <span className="ml-auto text-xs font-semibold uppercase text-[var(--ink-soft)]">
                 {formatDate(post.createdAt)}
               </span>
             </div>
             <SectionHeading level={1} title={post.title} description={post.body} />
-            {viewerCanInteract && viewer ? (
-              <form
-                action={
-                  isPostSaved
-                    ? unsavePostAction.bind(null, slug, viewer.membership.id, post.id)
-                    : savePostAction.bind(null, slug, viewer.membership.id, post.id)
-                }
-              >
-                <input name="return_to" type="hidden" value={`/org/${slug}/posts/${post.id}`} />
-                <SubmitButton
-                  pendingLabel={isPostSaved ? "Removing" : "Saving"}
-                  size="sm"
-                  variant={isPostSaved ? "primary" : "secondary"}
-                >
-                  <Bookmark className="size-4" />
-                  {isPostSaved ? "Saved" : "Save"}
-                </SubmitButton>
-              </form>
-            ) : null}
             <div className="flex flex-wrap gap-2">
               {post.tags.map((tag, index) => (
                 <Badge key={`post-tag-${tag}-${index}`} variant="muted">
                   {tag}
                 </Badge>
               ))}
+              {post.relatedRolesNeeded.map((role, index) => (
+                <Badge key={`post-role-${role}-${index}`} variant="accent">
+                  {role}
+                </Badge>
+              ))}
             </div>
-            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
-              <p className="font-semibold text-[var(--ink)]">{author.displayName}</p>
-              <p className="mt-1 text-sm text-[var(--ink-soft)]">{author.headline}</p>
+            <div className="flex flex-col gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
+                <Avatar className="size-10" name={author.displayName} src={author.photo} />
+                <div className="min-w-0">
+                  <p className="font-semibold text-[var(--ink)]">{author.displayName}</p>
+                  <p className="line-clamp-1 text-sm text-[var(--ink-soft)]">
+                    {author.headline}
+                  </p>
+                  <p className="line-clamp-1 text-xs text-[var(--ink-soft)]/80">
+                    {[author.affiliationLabel, author.currentStatus, author.location]
+                      .filter(Boolean)
+                      .join(" / ")}
+                  </p>
+                </div>
+              </div>
+              {viewerCanInteract && viewer ? (
+                <form
+                  action={
+                    isPostSaved
+                      ? unsavePostAction.bind(null, slug, viewer.membership.id, post.id)
+                      : savePostAction.bind(null, slug, viewer.membership.id, post.id)
+                  }
+                >
+                  <input name="return_to" type="hidden" value={`/org/${slug}/posts/${post.id}`} />
+                  <SubmitButton
+                    pendingLabel={isPostSaved ? "Removing" : "Saving"}
+                    size="sm"
+                    variant={isPostSaved ? "primary" : "secondary"}
+                  >
+                    <Bookmark className="size-4" />
+                    {isPostSaved ? "Saved" : "Save"}
+                  </SubmitButton>
+                </form>
+              ) : null}
             </div>
           </Card>
 
-          <Card className="space-y-4">
-            <SectionHeading title="Comments" />
-            <div className="space-y-4">
+          <Card className="space-y-4 p-5">
+            <div className="flex items-center justify-between gap-3">
+              <SectionHeading title="Comments" />
+              <span className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--ink-soft)]">
+                <MessageCircle className="size-4" />
+                {commentCards.length}
+              </span>
+            </div>
+            <div className="space-y-3">
               {commentCards.length ? commentCards.map(({ card, comment }) => {
                 return (
-                  <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4" key={comment.id}>
-                    <p className="font-semibold text-[var(--ink)]">{card?.displayName}</p>
-                    <p className="mt-2 text-sm text-[var(--ink-soft)]">{comment.body}</p>
+                  <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3" key={comment.id}>
+                    <div className="flex items-start gap-3">
+                      {card ? (
+                        <Avatar className="size-8" name={card.displayName} src={card.photo} />
+                      ) : null}
+                      <div className="min-w-0">
+                        <p className="font-semibold text-[var(--ink)]">{card?.displayName}</p>
+                        <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+                          {comment.body}
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 );
               }) : (
@@ -198,9 +238,14 @@ export default async function PostDetailPage({
           </Card>
         </div>
 
-        <div className="space-y-6">
-          <Card className="space-y-4">
-            <SectionHeading title="Request intro from this thread" />
+        <div className="space-y-4 xl:sticky xl:top-24 xl:self-start">
+          <Card className="space-y-4 p-5">
+            <div className="flex items-start gap-3">
+              <div className="grid size-9 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+                <UserPlus className="size-4" />
+              </div>
+              <SectionHeading title="Request intro" />
+            </div>
             {!viewerCanInteract || !viewer ? (
               <InteractionGate action="request intro" slug={slug} viewer={viewer} />
             ) : author.membershipId === viewer.membership.id ? (
@@ -243,6 +288,24 @@ export default async function PostDetailPage({
               </form>
             )}
           </Card>
+          <Card className="space-y-3 p-5">
+            <p className="text-xs font-semibold uppercase text-[var(--accent)]">Thread context</p>
+            <div className="grid gap-2 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[var(--ink-soft)]">Comments</span>
+                <span className="font-semibold text-[var(--ink)]">{commentCards.length}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[var(--ink-soft)]">Status</span>
+                <span className="font-semibold capitalize text-[var(--ink)]">{post.status}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[var(--ink-soft)]">Author</span>
+                <span className="truncate font-semibold text-[var(--ink)]">{author.displayName}</span>
+              </div>
+            </div>
+          </Card>
+        </div>
         </div>
       </div>
     </ForumShell>
