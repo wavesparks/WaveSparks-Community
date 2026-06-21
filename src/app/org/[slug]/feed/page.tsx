@@ -1,8 +1,6 @@
 import Link from "next/link";
 import {
-  ArrowRight,
   BookOpen,
-  LockKeyhole,
   MessageSquarePlus,
   SearchX,
   Sparkles,
@@ -86,29 +84,6 @@ export default async function FeedPage({
   const activeFilterCount = hasFeedFilters(filters);
   const channels = getCommunityChannels(slug);
   const totalDisplayedPosts = recommendedPosts.length + posts.length;
-  const memberSetupHref = viewer
-    ? viewer.membership.status === "approved"
-      ? `/org/${slug}/onboarding`
-      : `/org/${slug}/pending`
-    : `/org/${slug}/signin`;
-  const primaryAction = viewerCanInteract
-    ? {
-        href: `/org/${slug}/compose?kind=feed`,
-        label: "Create post",
-        icon: MessageSquarePlus,
-      }
-    : viewer
-      ? {
-          href: memberSetupHref,
-          label: viewer.membership.status === "approved" ? "Complete profile" : "View application",
-          icon: ArrowRight,
-        }
-      : {
-          href: `/org/${slug}/signin`,
-          label: "Unlock interaction",
-          icon: LockKeyhole,
-        };
-  const PrimaryActionIcon = primaryAction.icon;
 
   return (
     <ForumShell currentPath={`/org/${slug}/feed`} org={org} viewer={viewer}>
@@ -121,22 +96,22 @@ export default async function FeedPage({
               title="Wavespark Forum"
               description="Founder asks, updates, resources, opportunities, and warm-intro signals from the approved network."
             />
-            <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
-              <Button asChild>
-                <Link href={primaryAction.href}>
-                  <PrimaryActionIcon className="size-4" />
-                  {primaryAction.label}
-                </Link>
-              </Button>
-              {viewerCanInteract ? (
+            {viewerCanInteract ? (
+              <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
+                <Button asChild>
+                  <Link href={`/org/${slug}/compose?kind=feed`}>
+                    <MessageSquarePlus className="size-4" />
+                    Create post
+                  </Link>
+                </Button>
                 <Button asChild variant="secondary">
                   <Link href={`/org/${slug}/matches`}>
                     <Sparkles className="size-4" />
                     Matches
                   </Link>
                 </Button>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </div>
           <div className="mt-4 grid gap-2 text-sm sm:grid-cols-3">
             <div className="rounded-lg bg-[var(--surface-muted)] px-3 py-2">
@@ -229,19 +204,13 @@ export default async function FeedPage({
                     </p>
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-                  {activeFilterCount ? (
+                {activeFilterCount ? (
+                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
                     <Button asChild variant="secondary">
                       <Link href={`/org/${slug}/feed`}>Clear filters</Link>
                     </Button>
-                  ) : null}
-                  <Button asChild>
-                    <Link href={primaryAction.href}>
-                      <PrimaryActionIcon className="size-4" />
-                      {primaryAction.label}
-                    </Link>
-                  </Button>
-                </div>
+                  </div>
+                ) : null}
               </Card>
             ) : null}
           </div>
