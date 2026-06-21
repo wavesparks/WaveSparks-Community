@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 
+import { hasPotentialClerkSessionCookie } from "@/lib/clerk-cookies";
 import { isClerkConfigured } from "@/lib/env";
 
 type ClerkServer = typeof import("@clerk/nextjs/server");
@@ -100,18 +101,9 @@ function identityFromClerkClaims(
   };
 }
 
-function looksLikeClerkSessionCookie(name: string) {
-  return (
-    name === "__session" ||
-    name.startsWith("__client") ||
-    name.startsWith("__clerk") ||
-    name.startsWith("clerk_")
-  );
-}
-
-async function hasPotentialClerkSessionCookie() {
+async function hasRequestClerkSessionCookie() {
   const cookieStore = await cookies();
-  return cookieStore.getAll().some((cookie) => looksLikeClerkSessionCookie(cookie.name));
+  return hasPotentialClerkSessionCookie(cookieStore.getAll());
 }
 
 export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
@@ -119,7 +111,7 @@ export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
     return null;
   }
 
-  if (!(await hasPotentialClerkSessionCookie())) {
+  if (!(await hasRequestClerkSessionCookie())) {
     return null;
   }
 
