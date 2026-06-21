@@ -125,6 +125,13 @@ export interface PostThreadRecord {
   comments: PostThreadCommentRecord[];
 }
 
+export interface PublicFeedPostRecord {
+  post: Post;
+  membership: Membership;
+  profile: Profile;
+  commentCount: number;
+}
+
 export interface MemberActivationSignals {
   hasPost: boolean;
   hasFollow: boolean;
@@ -1974,6 +1981,95 @@ export async function listPostsForOrg(
   const rows = await (limit ? query.limit(limit) : query);
 
   return rows.map(postFromRow);
+}
+
+export async function listPublicFeedPostRecordsForOrg(
+  orgId: string,
+  options: PostListOptions = {},
+): Promise<PublicFeedPostRecord[]> {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const posts = await listPostsForOrg(orgId, options);
+    const store = getStore();
+    const membershipsById = new Map(
+      store.memberships
+        .filter((membership) => membership.orgId === orgId)
+        .map((membership) => [membership.id, membership]),
+    );
+    const profilesByMembershipId = new Map(
+      store.profiles.map((profile) => [profile.membershipId, profile]),
+    );
+    const commentCountByPostId = await listVisibleCommentCountsForOrg(orgId, {
+      postIds: posts.map((post) => post.id),
+    });
+
+    return posts
+      .map((post) => {
+        const membership = membershipsById.get(post.authorMembershipId);
+        const profile = profilesByMembershipId.get(post.authorMembershipId);
+
+        if (!membership || !profile) {
+          return null;
+        }
+
+        return {
+          post,
+          membership,
+          profile,
+          commentCount: commentCountByPostId.get(post.id) ?? 0,
+        };
+      })
+      .filter((record): record is PublicFeedPostRecord => Boolean(record));
+  }
+
+  const where = and(
+    eq(dbSchema.posts.orgId, orgId),
+    options.hidden === undefined ? undefined : eq(dbSchema.posts.hidden, options.hidden),
+    options.types?.length ? inArray(dbSchema.posts.type, options.types) : undefined,
+    options.opportunitySources?.length
+      ? inArray(dbSchema.posts.opportunitySource, options.opportunitySources)
+      : undefined,
+  );
+
+  const query = getDb()
+    .select({
+      post: dbSchema.posts,
+      membership: dbSchema.memberships,
+      profile: dbSchema.profiles,
+      commentCount: sql<number>`count(${dbSchema.comments.id})::int`,
+    })
+    .from(dbSchema.posts)
+    .innerJoin(
+      dbSchema.memberships,
+      eq(dbSchema.memberships.id, dbSchema.posts.authorMembershipId),
+    )
+    .innerJoin(
+      dbSchema.profiles,
+      eq(dbSchema.profiles.membershipId, dbSchema.memberships.id),
+    )
+    .leftJoin(
+      dbSchema.comments,
+      and(
+        eq(dbSchema.comments.postId, dbSchema.posts.id),
+        eq(dbSchema.comments.status, "visible"),
+      ),
+    )
+    .where(where)
+    .groupBy(dbSchema.posts.id, dbSchema.memberships.id, dbSchema.profiles.id);
+
+  const ordered =
+    options.orderBy === "none"
+      ? query
+      : query.orderBy(desc(dbSchema.posts.createdAt));
+  const rows = await (limit ? ordered.limit(limit) : ordered);
+
+  return rows.map((row) => ({
+    post: postFromRow(row.post),
+    membership: membershipFromRow(row.membership),
+    profile: profileFromRow(row.profile),
+    commentCount: Number(row.commentCount),
+  }));
 }
 
 export async function hasPostForMembership(orgId: string, membershipId: string) {

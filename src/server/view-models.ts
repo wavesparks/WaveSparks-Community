@@ -19,6 +19,7 @@ import {
   listMatchTargetRecordsForProfile,
   listNotificationsForMembership,
   listPostsForOrg,
+  listPublicFeedPostRecordsForOrg,
   listProfileMembershipRecordsByIds,
   listProfileLinks,
   listSavedPostIdsForMembership,
@@ -258,6 +259,70 @@ export function toFullAdminProfile(profile: Profile, membership: Membership): Fu
     featured: profile.featured,
     stale: profile.stale,
   };
+}
+
+function feedEntryMatchesFilters(
+  { view, membership, profile, post }: FeedEntry,
+  filters: FeedFilters,
+  normalizedQuery: string,
+) {
+  if (filters.recommendedOnly && !view.isRecommended) {
+    return false;
+  }
+
+  if (filters.postType && filters.postType !== "all" && post.type !== filters.postType) {
+    return false;
+  }
+
+  if (
+    filters.opportunitySource &&
+    filters.opportunitySource !== "all" &&
+    post.opportunitySource !== filters.opportunitySource
+  ) {
+    return false;
+  }
+
+  if (
+    filters.authorAffiliation &&
+    membership.affiliationType !== filters.authorAffiliation
+  ) {
+    return false;
+  }
+
+  if (filters.authorStage && profile.stage !== filters.authorStage) {
+    return false;
+  }
+
+  if (!includesNormalized(profile.industryTags, filters.authorIndustry)) {
+    return false;
+  }
+
+  if (!includesNormalized(post.relatedRolesNeeded, filters.roleNeeded)) {
+    return false;
+  }
+
+  if (!includesNormalized(post.tags, filters.tag)) {
+    return false;
+  }
+
+  if (normalizedQuery) {
+    const haystack = [
+      post.title,
+      post.body,
+      post.tags.join(" "),
+      post.relatedRolesNeeded.join(" "),
+      profile.preferredName,
+      profile.headline,
+      profile.industryTags.join(" "),
+      membership.affiliationType,
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(normalizedQuery);
+  }
+
+  return true;
 }
 
 function toMemberDirectoryProfileView(input: {
@@ -543,6 +608,45 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
     return [];
   }
 
+  if (
+    !options.viewerMembershipId &&
+    !options.viewerProfileId &&
+    !includeMatchedRecommendationSignals
+  ) {
+    const records = await listPublicFeedPostRecordsForOrg(org.id, {
+      hidden: false,
+      types: postTypes,
+      opportunitySources: opportunitySourcesForPostList(filters),
+      limit: canLimitPostList ? options.limit : undefined,
+    });
+
+    return records
+      .map(({ commentCount, membership, post, profile }) => {
+        const view: FeedPostView = {
+          id: post.id,
+          type: post.type,
+          opportunitySource: post.opportunitySource,
+          title: post.title,
+          body: post.body,
+          tags: post.tags,
+          relatedRolesNeeded: post.relatedRolesNeeded,
+          status: post.status,
+          featured: post.featured,
+          createdAt: post.createdAt,
+          author: toLimitedProfileCard(profile, membership),
+          commentCount,
+          isFollowingAuthor: false,
+          isSaved: false,
+          isRecommended: false,
+          recommendationReasons: [],
+        };
+
+        return { view, membership, profile, post };
+      })
+      .filter((entry) => feedEntryMatchesFilters(entry, filters, normalizedQuery))
+      .map((entry) => entry.view);
+  }
+
   const [
     postsForOrg,
     matchedMembershipIds,
@@ -633,65 +737,7 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
 
   return entries
     .filter((entry): entry is FeedEntry => Boolean(entry))
-    .filter(({ view, membership, profile, post }) => {
-      if (filters.recommendedOnly && !view.isRecommended) {
-        return false;
-      }
-
-      if (filters.postType && filters.postType !== "all" && post.type !== filters.postType) {
-        return false;
-      }
-
-      if (
-        filters.opportunitySource &&
-        filters.opportunitySource !== "all" &&
-        post.opportunitySource !== filters.opportunitySource
-      ) {
-        return false;
-      }
-
-      if (
-        filters.authorAffiliation &&
-        membership.affiliationType !== filters.authorAffiliation
-      ) {
-        return false;
-      }
-
-      if (filters.authorStage && profile.stage !== filters.authorStage) {
-        return false;
-      }
-
-      if (!includesNormalized(profile.industryTags, filters.authorIndustry)) {
-        return false;
-      }
-
-      if (!includesNormalized(post.relatedRolesNeeded, filters.roleNeeded)) {
-        return false;
-      }
-
-      if (!includesNormalized(post.tags, filters.tag)) {
-        return false;
-      }
-
-      if (normalizedQuery) {
-        const haystack = [
-          post.title,
-          post.body,
-          post.tags.join(" "),
-          post.relatedRolesNeeded.join(" "),
-          profile.preferredName,
-          profile.headline,
-          profile.industryTags.join(" "),
-          membership.affiliationType,
-        ]
-          .join(" ")
-          .toLowerCase();
-
-        return haystack.includes(normalizedQuery);
-      }
-
-      return true;
-    })
+    .filter((entry) => feedEntryMatchesFilters(entry, filters, normalizedQuery))
     .map((entry) => entry.view);
 }
 

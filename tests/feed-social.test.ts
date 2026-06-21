@@ -282,6 +282,45 @@ describe("feed filters and social recommendations", () => {
     expect(matchedView.recommendationReasons).not.toContain("Matched");
   });
 
+  it("builds public feed views without personalized state", async () => {
+    const org = (await getOrganizationBySlug("wavespark"))!;
+    const publicPost = await addPost({
+      authorMembershipId: "mem_marcus",
+      title: "Public feed fast path marker",
+    });
+    await createComment(
+      {
+        postId: publicPost.id,
+        authorMembershipId: "mem_kai",
+        body: "Visible public comment.",
+      },
+      { orgId: org.id },
+    );
+    await createComment(
+      {
+        postId: publicPost.id,
+        authorMembershipId: "mem_leila",
+        body: "Removed public comment.",
+      },
+      { orgId: org.id },
+    ).then((comment) => updateCommentStatus(comment.id, "removed"));
+
+    const [publicView] = await getFeedViewsForOrg(org, {
+      filters: { q: publicPost.title },
+      includeMatchedRecommendationSignals: false,
+    });
+
+    expect(publicView).toMatchObject({
+      id: publicPost.id,
+      commentCount: 1,
+      isFollowingAuthor: false,
+      isSaved: false,
+      isRecommended: false,
+      recommendationReasons: [],
+    });
+    expect(publicView.author.membershipId).toBe("mem_marcus");
+  });
+
   it("lists visible matches directly by profile id without changing results", async () => {
     const profile = (await getProfileByMembershipId("mem_jules"))!;
     const byMembership = await listMatchesForMembership("mem_jules");
