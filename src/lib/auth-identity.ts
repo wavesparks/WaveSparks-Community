@@ -1,3 +1,5 @@
+import { cookies } from "next/headers";
+
 import { isClerkConfigured } from "@/lib/env";
 
 type ClerkServer = typeof import("@clerk/nextjs/server");
@@ -98,8 +100,26 @@ function identityFromClerkClaims(
   };
 }
 
+function looksLikeClerkSessionCookie(name: string) {
+  return (
+    name === "__session" ||
+    name.startsWith("__client") ||
+    name.startsWith("__clerk") ||
+    name.startsWith("clerk_")
+  );
+}
+
+async function hasPotentialClerkSessionCookie() {
+  const cookieStore = await cookies();
+  return cookieStore.getAll().some((cookie) => looksLikeClerkSessionCookie(cookie.name));
+}
+
 export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
   if (!isClerkConfigured()) {
+    return null;
+  }
+
+  if (!(await hasPotentialClerkSessionCookie())) {
     return null;
   }
 
