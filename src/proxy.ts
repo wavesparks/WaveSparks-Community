@@ -11,6 +11,7 @@ const clerkFrontendApiProxyConfigured = Boolean(
   process.env.NEXT_PUBLIC_CLERK_PROXY_URL,
 );
 
+const publicFeedPathPattern = /^\/org\/[^/]+\/feed\/?$/;
 const publicReadPathPattern = /^\/org\/[^/]+\/(?:feed|posts\/[^/]+)\/?$/;
 
 function isAnonymousPublicReadRequest(request: NextRequest) {
@@ -18,6 +19,16 @@ function isAnonymousPublicReadRequest(request: NextRequest) {
     publicReadPathPattern.test(request.nextUrl.pathname) &&
     !hasPotentialClerkSessionCookie(request.cookies.getAll())
   );
+}
+
+function anonymousFeedRewrite(request: NextRequest) {
+  if (!publicFeedPathPattern.test(request.nextUrl.pathname)) {
+    return null;
+  }
+
+  const rewriteUrl = request.nextUrl.clone();
+  rewriteUrl.pathname = `/anon${request.nextUrl.pathname}`;
+  return NextResponse.rewrite(rewriteUrl);
 }
 
 const clerkProxy = clerkMiddleware(
@@ -29,7 +40,7 @@ const clerkProxy = clerkMiddleware(
 export default clerkKeysConfigured
   ? function proxy(request: NextRequest, event: Parameters<typeof clerkProxy>[1]) {
       if (isAnonymousPublicReadRequest(request)) {
-        return NextResponse.next();
+        return anonymousFeedRewrite(request) ?? NextResponse.next();
       }
 
       return clerkProxy(request, event);
