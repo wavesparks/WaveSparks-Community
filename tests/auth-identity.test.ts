@@ -64,6 +64,19 @@ describe("current auth identity", () => {
     expect(clerkAuthMock).not.toHaveBeenCalled();
   });
 
+  it("can ask Clerk directly when protected routes need auth during OAuth handoff", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
+    process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
+    getAllCookiesMock.mockReturnValue([{ name: "theme", value: "light" }]);
+
+    const { getCurrentAuthIdentity } = await loadAuthIdentity();
+
+    await expect(
+      getCurrentAuthIdentity({ allowClerkLookupWithoutCookie: true }),
+    ).resolves.toBeNull();
+    expect(clerkAuthMock).toHaveBeenCalled();
+  });
+
   it("uses Clerk claims when a Clerk user is signed in", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
     process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";

@@ -93,8 +93,13 @@ async function buildViewerContextForOrg(
   } satisfies ViewerContext;
 }
 
-async function resolveViewerContext(slug: string) {
-  const identity = await getCurrentAuthIdentity();
+async function resolveViewerContext(
+  slug: string,
+  options: { allowClerkLookupWithoutCookie?: boolean } = {},
+) {
+  const identity = await getCurrentAuthIdentity({
+    allowClerkLookupWithoutCookie: options.allowClerkLookupWithoutCookie,
+  });
   const viewerRecord = identity?.email
     ? await getViewerRecordByEmailAndSlug(slug, identity.email)
     : {
@@ -155,7 +160,9 @@ export async function getViewerContext(
   slug: string,
   options: ViewerOptions = {},
 ): Promise<ViewerContext | null> {
-  const { org, viewer, authenticated } = await resolveViewerContext(slug);
+  const { org, viewer, authenticated } = await resolveViewerContext(slug, {
+    allowClerkLookupWithoutCookie: options.requireAuth,
+  });
 
   if (!org) {
     notFound();

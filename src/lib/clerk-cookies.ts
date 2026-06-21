@@ -1,6 +1,7 @@
 export function looksLikeClerkSessionCookie(name: string) {
   return (
     name === "__session" ||
+    name.startsWith("__session_") ||
     name.startsWith("__client") ||
     name.startsWith("__clerk") ||
     name.startsWith("clerk_")

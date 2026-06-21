@@ -20,7 +20,7 @@ export default async function SignInPage({
   const clerkConfigured = isClerkConfigured();
 
   if (viewer) {
-    redirect(`/org/${slug}`);
+    redirect(`/org/${slug}/auth/complete`);
   }
 
   return (
@@ -66,7 +66,7 @@ export default async function SignInPage({
                 />
                 <div className="flex min-h-[360px] justify-center">
                   <SignIn
-                    fallbackRedirectUrl={`/org/${slug}/onboarding`}
+                    fallbackRedirectUrl={`/org/${slug}/auth/complete`}
                     path={`/org/${slug}/signin`}
                     routing="path"
                     withSignUp={false}

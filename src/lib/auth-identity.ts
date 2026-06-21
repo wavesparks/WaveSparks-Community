@@ -106,12 +106,17 @@ async function hasRequestClerkSessionCookie() {
   return hasPotentialClerkSessionCookie(cookieStore.getAll());
 }
 
-export async function getCurrentAuthIdentity(): Promise<AuthIdentity | null> {
+export async function getCurrentAuthIdentity(
+  options: { allowClerkLookupWithoutCookie?: boolean } = {},
+): Promise<AuthIdentity | null> {
   if (!isClerkConfigured()) {
     return null;
   }
 
-  if (!(await hasRequestClerkSessionCookie())) {
+  if (
+    !options.allowClerkLookupWithoutCookie &&
+    !(await hasRequestClerkSessionCookie())
+  ) {
     return null;
   }
 
