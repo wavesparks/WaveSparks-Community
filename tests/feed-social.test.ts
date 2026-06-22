@@ -23,6 +23,7 @@ import {
   listMatchesForMembership,
   listPostsForOrg,
   listProfileMembershipRecordsByIds,
+  listProfileLinksByProfileIds,
   listProfileRecordsByIds,
   listSavedPostIdsForMembership,
   listVisibleCommentCountsForOrg,
@@ -196,6 +197,20 @@ describe("feed filters and social recommendations", () => {
     expect(climateProfiles.every((profile) => !("emailForIntro" in profile))).toBe(true);
     expect(climateProfiles.every((profile) => !("whatsappNumber" in profile))).toBe(true);
     expect(mentorProfiles.every((profile) => profile.affiliationLabel === "mentor")).toBe(true);
+
+    const profileLinksById = await listProfileLinksByProfileIds([
+      "pro_jules",
+      "pro_jules",
+      "pro_rhea",
+    ]);
+    expect(profileLinksById.get("pro_jules")?.map((link) => link.id)).toEqual([
+      "lnk_jules_linkedin",
+      "lnk_jules_website",
+    ]);
+    expect(profileLinksById.get("pro_rhea")?.map((link) => link.id)).toEqual([
+      "lnk_rhea_github",
+    ]);
+    await expect(listProfileLinksByProfileIds([])).resolves.toEqual(new Map());
   });
 
   it("loads safe member profile detail with follow and profile-intro state", async () => {

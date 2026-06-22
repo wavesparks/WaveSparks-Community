@@ -22,6 +22,7 @@ import {
   listPublicFeedPostRecordsForOrg,
   listProfileMembershipRecordsByIds,
   listProfileLinks,
+  listProfileLinksByProfileIds,
   listSavedPostIdsForMembership,
   listVisibleCommentCountsForOrg,
   listVisibleMatchTargetMembershipIdsForMembership,
@@ -464,14 +465,7 @@ export async function getMemberDirectoryViewsForOrg(
       followedMembershipIds: membershipIds,
     }),
     listActiveIntroRequestStatusesForRequester(options.viewerMembershipId, membershipIds),
-    Promise.all(
-      limitedRecords.map(async (record): Promise<[string, ProfileLink[]]> => [
-        record.profile.id,
-        await listProfileLinks(record.profile.id),
-      ]),
-    ).then((entries) =>
-      new Map<string, ProfileLink[]>(entries),
-    ),
+    listProfileLinksByProfileIds(limitedRecords.map((record) => record.profile.id)),
   ]);
   const followedIds = new Set(followedMembershipIds);
 

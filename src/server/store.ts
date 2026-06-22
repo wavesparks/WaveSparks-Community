@@ -1568,6 +1568,32 @@ export async function listProfileLinks(profileId: string) {
   return rows.map(profileLinkFromRow);
 }
 
+export async function listProfileLinksByProfileIds(profileIds: string[]) {
+  const uniqueIds = [...new Set(profileIds.filter(Boolean))];
+  const linksByProfileId = new Map<string, ProfileLink[]>();
+
+  if (!uniqueIds.length) {
+    return linksByProfileId;
+  }
+
+  for (const profileId of uniqueIds) {
+    linksByProfileId.set(profileId, []);
+  }
+
+  const links = !usesDatabase
+    ? getStore().profileLinks.filter((link) => linksByProfileId.has(link.profileId))
+    : (await getDb()
+        .select()
+        .from(dbSchema.profileLinks)
+        .where(inArray(dbSchema.profileLinks.profileId, uniqueIds))).map(profileLinkFromRow);
+
+  for (const link of links) {
+    linksByProfileId.get(link.profileId)?.push(link);
+  }
+
+  return linksByProfileId;
+}
+
 export async function listMembershipsForOrg(orgId: string) {
   if (!usesDatabase) {
     return getStore().memberships.filter((membership) => membership.orgId === orgId);

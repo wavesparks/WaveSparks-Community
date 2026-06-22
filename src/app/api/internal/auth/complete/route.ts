@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { getAuthCompletionViewerContext } from "@/lib/auth";
+import { hasPotentialClerkSessionCookie } from "@/lib/clerk-cookies";
 import { canAccessFeed } from "@/server/permissions";
 
 function completionTarget(slug: string, context: Awaited<ReturnType<typeof getAuthCompletionViewerContext>>) {
@@ -23,6 +24,13 @@ function completionTarget(slug: string, context: Awaited<ReturnType<typeof getAu
 
 export async function GET(request: NextRequest) {
   const slug = request.nextUrl.searchParams.get("orgSlug")?.trim() || "wavespark";
+  const hasClerkCookie = hasPotentialClerkSessionCookie(request.cookies.getAll());
+  const hasAuthorization = Boolean(request.headers.get("authorization")?.trim());
+
+  if (!hasClerkCookie && !hasAuthorization) {
+    return Response.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
   const context = await getAuthCompletionViewerContext(slug);
 
   if (context.status === "not_found") {
