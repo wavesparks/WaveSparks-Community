@@ -207,6 +207,22 @@ export async function getViewerContextForAction(slug: string) {
   return viewer;
 }
 
+export async function getAuthCompletionViewerContext(slug: string) {
+  const { org, viewer, authenticated } = await resolveViewerContext(slug, {
+    allowClerkLookupWithoutCookie: true,
+  });
+
+  if (!org) {
+    return { status: "not_found" as const, viewer: null };
+  }
+
+  if (!authenticated || !viewer) {
+    return { status: "unauthenticated" as const, viewer: null };
+  }
+
+  return { status: "authenticated" as const, viewer };
+}
+
 export async function getOrganizationViewerContext(slug: string) {
   const { org, viewer } = await resolveOrganizationViewerContext(slug);
 

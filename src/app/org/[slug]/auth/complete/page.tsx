@@ -1,7 +1,4 @@
-import { redirect } from "next/navigation";
-
-import { getViewerContext } from "@/lib/auth";
-import { canAccessFeed } from "@/server/permissions";
+import { AuthCompleteClient } from "@/components/auth/auth-complete-client";
 
 export default async function AuthCompletePage({
   params,
@@ -9,19 +6,6 @@ export default async function AuthCompletePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const viewer = await getViewerContext(slug, { requireAuth: true });
 
-  if (!viewer) {
-    return null;
-  }
-
-  if (canAccessFeed(viewer.membership, viewer.profile)) {
-    redirect(`/org/${slug}/feed`);
-  }
-
-  if (viewer.membership.status === "approved") {
-    redirect(`/org/${slug}/onboarding`);
-  }
-
-  redirect(`/org/${slug}/pending`);
+  return <AuthCompleteClient slug={slug} />;
 }
