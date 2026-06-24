@@ -1,9 +1,8 @@
 import { ArrowRight, CheckCircle2, Circle } from "lucide-react";
-import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import type { MemberActivationState } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 
@@ -59,17 +58,15 @@ export function ActivationChecklistCard({
                   <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
                     {item.description}
                   </p>
-                  <Button
-                    asChild
+                  <LinkButton
                     className="mt-3"
+                    href={item.href}
                     size="sm"
                     variant={item.complete ? "secondary" : "primary"}
                   >
-                    <Link href={item.href}>
-                      {item.cta}
-                      <ArrowRight className="size-4" />
-                    </Link>
-                  </Button>
+                    {item.cta}
+                    <ArrowRight className="size-4" />
+                  </LinkButton>
                 </div>
               </div>
             </div>

@@ -15,6 +15,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
     if (!isLoaded) {
@@ -85,6 +86,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
         {error ? (
           <div className="flex flex-col justify-center gap-2 sm:flex-row">
             <Button
+              disabled={leaving}
               onClick={() => {
                 setError(null);
                 setAttempt((value) => value + 1);
@@ -94,11 +96,17 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
               Try again
             </Button>
             <Button
-              onClick={() => router.replace(`/org/${slug}/signin`)}
+              aria-busy={leaving}
+              disabled={leaving}
+              onClick={() => {
+                setLeaving(true);
+                router.replace(`/org/${slug}/signin`);
+              }}
               type="button"
               variant="secondary"
             >
-              Back to sign in
+              {leaving ? <LoaderCircle aria-hidden className="size-4 animate-spin" /> : null}
+              {leaving ? "Opening sign in" : "Back to sign in"}
             </Button>
           </div>
         ) : (

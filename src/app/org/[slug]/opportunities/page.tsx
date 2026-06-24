@@ -3,8 +3,9 @@ import { PlusCircle } from "lucide-react";
 
 import { AppShell } from "@/components/layout/app-shell";
 import { FilterBar } from "@/components/community/filter-bar";
+import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
 import { PostCard } from "@/components/community/post-card";
-import { Button } from "@/components/ui/button";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
@@ -89,19 +90,17 @@ export default async function OpportunitiesPage({
             title="Official events, open asks, and mentor needs"
             description="Official recommendations are the default surface. Members can still switch layers or filter into specific asks."
           />
-          <Button asChild size="sm">
-            <Link href={`/org/${slug}/compose?kind=opportunity`} title="Post opportunity">
-              <PlusCircle className="size-4" />
-              Opportunity
-            </Link>
-          </Button>
+          <LinkButton href={`/org/${slug}/compose?kind=opportunity`} size="sm">
+            <PlusCircle className="size-4" />
+            Opportunity
+          </LinkButton>
         </div>
         <StatusBanner status={singleQueryValue(query.status)} />
         <div className="flex flex-wrap gap-2">
           {layerLinks.map((layer) => (
             <Link
               className={cn(
-                "rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-[var(--line)] transition",
+                "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-[var(--line)] transition duration-150 ease-out active:translate-y-px active:scale-[0.99]",
                 source === layer.source || (!source && layer.source === "official")
                   ? "bg-[var(--accent)] text-[var(--surface)] ring-transparent"
                   : "bg-[var(--surface)] text-[var(--ink-soft)] hover:bg-[var(--surface-muted)]",
@@ -110,6 +109,7 @@ export default async function OpportunitiesPage({
               key={layer.source}
             >
               {layer.label}
+              <NavPendingIndicator className="size-1.5" />
             </Link>
           ))}
         </div>

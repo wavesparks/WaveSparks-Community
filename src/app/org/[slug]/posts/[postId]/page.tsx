@@ -4,15 +4,14 @@ import {
   savePostAction,
   unsavePostAction,
 } from "@/actions/member";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Bookmark, MessageCircle, UserPlus } from "lucide-react";
 import { ForumShell } from "@/components/layout/forum-shell";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -59,11 +58,9 @@ function InteractionGate({
           ? `Finish member setup to ${action}.`
           : `Sign in to ${action}.`}
       </p>
-      <Button asChild className="mt-3" size="sm">
-        <Link href={interactionHref(slug, viewer)}>
-          {signedIn ? "Continue" : "Sign in"}
-        </Link>
-      </Button>
+      <LinkButton className="mt-3" href={interactionHref(slug, viewer)} size="sm">
+        {signedIn ? "Continue" : "Sign in"}
+      </LinkButton>
     </div>
   );
 }
@@ -120,12 +117,10 @@ export default async function PostDetailPage({
   return (
     <ForumShell currentPath={`/org/${slug}/feed`} org={org} viewer={viewer}>
       <div className="space-y-4">
-        <Button asChild className="w-fit" size="sm" variant="ghost">
-          <Link href={`/org/${slug}/feed`}>
-            <ArrowLeft className="size-4" />
-            Back to forum
-          </Link>
-        </Button>
+        <LinkButton className="w-fit" href={`/org/${slug}/feed`} size="sm" variant="ghost">
+          <ArrowLeft className="size-4" />
+          Back to forum
+        </LinkButton>
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
           <StatusBanner status={singleQueryValue(query.status)} />
@@ -261,9 +256,13 @@ export default async function PostDetailPage({
                   <p className="text-sm font-semibold text-[var(--ink)]">{introCopy.title}</p>
                   <p className="mt-1 text-sm text-[var(--ink-soft)]">{introCopy.body}</p>
                 </div>
-                <Button asChild className="w-full" variant="secondary">
-                  <Link href={`/org/${slug}/requests`}>Open requests</Link>
-                </Button>
+                <LinkButton
+                  className="w-full"
+                  href={`/org/${slug}/requests`}
+                  variant="secondary"
+                >
+                  Open requests
+                </LinkButton>
               </div>
             ) : (
               <form

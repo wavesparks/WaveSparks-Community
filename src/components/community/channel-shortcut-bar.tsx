@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Hash } from "lucide-react";
 
+import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
 import { Card } from "@/components/ui/card";
 import type { CommunityChannel } from "@/lib/channels";
 
@@ -20,7 +21,7 @@ export function ChannelShortcutBar({
       <div className="flex gap-2 overflow-x-auto pb-1">
         {channels.map((channel) => (
           <Link
-            className="min-w-40 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 transition hover:border-[var(--accent)]/40 hover:bg-[var(--surface)]"
+            className="min-w-40 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 transition duration-150 ease-out hover:border-[var(--accent)]/40 hover:bg-[var(--surface)] active:translate-y-px active:scale-[0.99]"
             href={channel.href}
             key={channel.id}
           >
@@ -30,6 +31,7 @@ export function ChannelShortcutBar({
             <span className="mt-1 line-clamp-2 block text-xs leading-5 text-[var(--ink-soft)]">
               {channel.description}
             </span>
+            <NavPendingIndicator className="mt-2 size-1.5" />
           </Link>
         ))}
       </div>

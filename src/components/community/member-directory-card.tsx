@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { BriefcaseBusiness, ExternalLink, Handshake, MapPin, UserPlus } from "lucide-react";
 
 import {
@@ -10,6 +9,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { getActiveIntroStatusCopy } from "@/lib/intro-status";
 import type { MemberDirectoryProfileView } from "@/lib/domain";
@@ -102,9 +102,13 @@ export function MemberDirectoryCard({
       ) : null}
 
       <div className="flex flex-col gap-2 border-t border-[var(--line)] pt-4 sm:flex-row sm:items-center sm:justify-end">
-        <Button asChild size="sm" variant="secondary">
-          <Link href={`/org/${slug}/people/${profile.membershipId}`}>View profile</Link>
-        </Button>
+        <LinkButton
+          href={`/org/${slug}/people/${profile.membershipId}`}
+          size="sm"
+          variant="secondary"
+        >
+          View profile
+        </LinkButton>
         {!isSelf ? (
           <form action={followAction}>
             <input name="return_to" type="hidden" value={returnPath} />
@@ -118,9 +122,9 @@ export function MemberDirectoryCard({
           </form>
         ) : null}
         {!isSelf && introCopy ? (
-          <Button asChild size="sm" variant="secondary">
-            <Link href={`/org/${slug}/requests`}>{introCopy.title}</Link>
-          </Button>
+          <LinkButton href={`/org/${slug}/requests`} size="sm" variant="secondary">
+            {introCopy.title}
+          </LinkButton>
         ) : null}
         {!isSelf && !introCopy ? (
           <form action={requestIntroAction.bind(null, slug, viewerMembershipId)}>

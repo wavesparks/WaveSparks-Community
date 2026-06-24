@@ -1,9 +1,8 @@
 import { ArrowLeft } from "lucide-react";
-import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BrandLogo } from "@/components/ui/brand-logo";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 
 export default async function SignUpPage({
@@ -16,12 +15,10 @@ export default async function SignUpPage({
   return (
     <main className="ws-page-shell px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-5xl flex-col justify-center gap-6">
-        <Button asChild className="w-fit" variant="ghost">
-          <Link href={`/org/${slug}/feed`}>
-            <ArrowLeft className="size-4" />
-            Back to forum
-          </Link>
-        </Button>
+        <LinkButton className="w-fit" href={`/org/${slug}/feed`} variant="ghost">
+          <ArrowLeft className="size-4" />
+          Back to forum
+        </LinkButton>
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr]">
           <Card
@@ -49,9 +46,9 @@ export default async function SignUpPage({
               Direct public registration is closed so membership stays limited to
               approved community invitees.
             </div>
-            <Button asChild>
-              <Link href={`/org/${slug}/signin`}>Sign in with an invited account</Link>
-            </Button>
+            <LinkButton href={`/org/${slug}/signin`}>
+              Sign in with an invited account
+            </LinkButton>
           </Card>
         </div>
       </div>

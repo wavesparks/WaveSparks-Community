@@ -138,8 +138,8 @@ export function OnboardingForm({
             aria-current={index === step ? "step" : undefined}
             className={
               index === step
-                ? "rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-left shadow-sm"
-                : "rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3 text-left transition hover:border-[var(--line)] hover:bg-[var(--surface-muted)]"
+                ? "rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-left shadow-sm transition duration-150 ease-out active:translate-y-px active:scale-[0.99]"
+                : "rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3 text-left transition duration-150 ease-out hover:border-[var(--line)] hover:bg-[var(--surface-muted)] active:translate-y-px active:scale-[0.99]"
             }
             key={item.key}
             onClick={() => setStep(index)}

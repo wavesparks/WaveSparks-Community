@@ -9,8 +9,9 @@ import {
 } from "@/actions/member";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
+import { LinkButton } from "@/components/ui/link-button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import type { FeedPostView } from "@/lib/domain";
 import { formatDate } from "@/lib/utils";
@@ -78,11 +79,12 @@ export function PostCard({
           </p>
         </div>
         <Link
-          className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-xs font-semibold text-[var(--ink-soft)] transition hover:border-[var(--accent)]/40 hover:bg-[var(--surface)] hover:text-[var(--ink)]"
+          className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-xs font-semibold text-[var(--ink-soft)] transition duration-150 ease-out hover:border-[var(--accent)]/40 hover:bg-[var(--surface)] hover:text-[var(--ink)] active:translate-y-px active:scale-[0.99]"
           href={`/org/${slug}/posts/${post.id}`}
         >
           Open
           <ArrowUpRight className="size-3.5" />
+          <NavPendingIndicator className="size-1.5" />
         </Link>
       </div>
 
@@ -144,11 +146,9 @@ export function PostCard({
               </SubmitButton>
             </form>
           ) : null}
-          <Button asChild size="sm" variant="secondary">
-            <Link href={`/org/${slug}/posts/${post.id}`}>
-              Open thread
-            </Link>
-          </Button>
+          <LinkButton href={`/org/${slug}/posts/${post.id}`} size="sm" variant="secondary">
+            Open thread
+          </LinkButton>
         </div>
       </div>
     </Card>

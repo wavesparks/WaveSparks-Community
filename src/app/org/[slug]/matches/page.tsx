@@ -3,12 +3,11 @@ import {
   requestIntroAction,
   unfollowMembershipAction,
 } from "@/actions/member";
-import Link from "next/link";
 import { MatchCard } from "@/components/community/match-card";
 import { AppShell } from "@/components/layout/app-shell";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -91,9 +90,13 @@ export default async function MatchesPage({
                         </p>
                         <p className="mt-1 text-sm text-[var(--ink-soft)]">{introCopy.body}</p>
                       </div>
-                      <Button asChild className="w-full" variant="secondary">
-                        <Link href={`/org/${slug}/requests`}>Open requests</Link>
-                      </Button>
+                      <LinkButton
+                        className="w-full"
+                        href={`/org/${slug}/requests`}
+                        variant="secondary"
+                      >
+                        Open requests
+                      </LinkButton>
                     </div>
                   ) : (
                     <form

@@ -1,10 +1,9 @@
-import Link from "next/link";
-
 import { ActivationChecklistCard } from "@/components/community/activation-checklist-card";
 import { AppShell } from "@/components/layout/app-shell";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
@@ -59,12 +58,9 @@ export default async function ProfilePage({
               description={viewer.profile.headline}
             />
           </div>
-          <Link
-            className="inline-flex h-10 items-center rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-[var(--surface)] shadow-sm transition hover:brightness-95"
-            href={`/org/${slug}/onboarding`}
-          >
+          <LinkButton href={`/org/${slug}/onboarding`}>
             Edit profile
-          </Link>
+          </LinkButton>
         </div>
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">

@@ -1,6 +1,7 @@
 "use client";
 
-import { LogOut } from "lucide-react";
+import { useState } from "react";
+import { LoaderCircle, LogOut } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
 
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ export function SignOutButton({
   tone?: "dark" | "light";
 }) {
   const { signOut } = useClerk();
+  const [pending, setPending] = useState(false);
   const className = cn(
     tone === "dark"
       ? "text-[var(--cyan-soft)] hover:bg-[var(--blue)] hover:text-[var(--surface)]"
@@ -21,19 +23,36 @@ export function SignOutButton({
   );
 
   async function handleSignOut() {
-    await signOut({ redirectUrl: callbackUrl });
+    if (pending) {
+      return;
+    }
+
+    setPending(true);
+
+    try {
+      await signOut({ redirectUrl: callbackUrl });
+    } catch (error) {
+      setPending(false);
+      throw error;
+    }
   }
 
   return (
     <Button
+      aria-busy={pending}
       className={className}
+      disabled={pending}
       type="button"
       variant="ghost"
       size="sm"
       onClick={() => void handleSignOut()}
     >
-      <LogOut className="size-4" />
-      Sign out
+      {pending ? (
+        <LoaderCircle aria-hidden className="size-4 animate-spin" />
+      ) : (
+        <LogOut className="size-4" />
+      )}
+      {pending ? "Signing out" : "Sign out"}
     </Button>
   );
 }

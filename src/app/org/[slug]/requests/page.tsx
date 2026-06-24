@@ -2,8 +2,8 @@ import { markNotificationsReadAction, respondIntroAction } from "@/actions/membe
 import { IntroRequestCard } from "@/components/community/intro-request-card";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -12,7 +12,6 @@ import { singleQueryValue } from "@/lib/feed-filters";
 import type { IntroStatus } from "@/lib/domain";
 import { hasUnreadNotificationsForMembership } from "@/server/store";
 import { getIntroRequestViews, getNotificationViews } from "@/server/view-models";
-import Link from "next/link";
 
 type RequestDirection = "incoming" | "outgoing";
 
@@ -109,14 +108,14 @@ export default async function RequestsPage({
                   queue.status === selectedRequestStatus;
 
                 return (
-                  <Button
-                    asChild
+                  <LinkButton
+                    href={requestQueueHref(slug, queue)}
                     key={queue.label}
                     size="sm"
                     variant={active ? "primary" : "secondary"}
                   >
-                    <Link href={requestQueueHref(slug, queue)}>{queue.label}</Link>
-                  </Button>
+                    {queue.label}
+                  </LinkButton>
                 );
               })}
             </div>

@@ -1,8 +1,7 @@
 import { TaskChooseOrganization } from "@clerk/nextjs";
-import Link from "next/link";
 
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { isClerkConfigured } from "@/lib/env";
 
@@ -17,9 +16,7 @@ export default function ChooseOrganizationTaskPage() {
             title="Clerk is not configured"
             description="Organization selection is available after Clerk keys are configured."
           />
-          <Button asChild>
-            <Link href="/org/wavespark/feed">Back to forum</Link>
-          </Button>
+          <LinkButton href="/org/wavespark/feed">Back to forum</LinkButton>
         </Card>
       </main>
     );

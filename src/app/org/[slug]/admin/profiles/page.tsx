@@ -1,10 +1,8 @@
-import Link from "next/link";
-
 import { updateProfileFlagsAction } from "@/actions/admin";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -92,9 +90,7 @@ export default async function AdminProfilesPage({
             title="Browse full profiles and admin-only fields"
             description="This is the only surface where full profiles, contact fields, and moderation flags are visible in one place."
           />
-          <Button asChild>
-            <Link href={`/org/${slug}/admin/profiles/export`}>Export CSV</Link>
-          </Button>
+          <LinkButton href={`/org/${slug}/admin/profiles/export`}>Export CSV</LinkButton>
         </div>
         <StatusBanner status={singleQueryValue(query.status)} />
 
@@ -108,14 +104,14 @@ export default async function AdminProfilesPage({
                   queue.flag === selectedProfileFlag;
 
                 return (
-                  <Button
-                    asChild
+                  <LinkButton
+                    href={profileQueueHref(slug, queue)}
                     key={queue.label}
                     size="sm"
                     variant={active ? "primary" : "secondary"}
                   >
-                    <Link href={profileQueueHref(slug, queue)}>{queue.label}</Link>
-                  </Button>
+                    {queue.label}
+                  </LinkButton>
                 );
               })}
             </div>

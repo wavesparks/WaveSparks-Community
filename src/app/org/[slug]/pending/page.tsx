@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { AlertCircle, CheckCircle2, Circle } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
@@ -29,9 +29,9 @@ export default async function PendingPage({
       <main className="mx-auto flex min-h-screen max-w-4xl items-center px-4 py-8 sm:px-6 lg:px-8">
         <Card className="w-full space-y-4">
           <SectionHeading level={1} title="You’re approved and ready to go" />
-          <Link className="text-sm font-semibold text-[var(--accent)]" href={`/org/${slug}/feed`}>
+          <LinkButton className="w-fit" href={`/org/${slug}/feed`} variant="secondary">
             Enter the community feed
-          </Link>
+          </LinkButton>
         </Card>
       </main>
     );
@@ -84,12 +84,9 @@ export default async function PendingPage({
           </div>
         </div>
         {experience.primaryHref && experience.primaryLabel ? (
-          <Link
-            className="inline-flex h-10 items-center rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-[var(--surface)] shadow-sm transition hover:brightness-95"
-            href={`/org/${slug}/${experience.primaryHref}`}
-          >
+          <LinkButton className="w-fit" href={`/org/${slug}/${experience.primaryHref}`}>
             {experience.primaryLabel}
-          </Link>
+          </LinkButton>
         ) : null}
       </Card>
     </main>

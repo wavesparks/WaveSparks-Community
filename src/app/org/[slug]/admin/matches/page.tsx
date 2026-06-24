@@ -1,8 +1,8 @@
 import { recomputeMatchesAction } from "@/actions/admin";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -10,7 +10,6 @@ import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
 import type { MatchRecord, MatchType } from "@/lib/domain";
 import { listMatchProfileRecordsForOrg } from "@/server/store";
-import Link from "next/link";
 
 const matchQueues = [
   { label: "All", matchType: undefined, scoreBand: undefined },
@@ -96,14 +95,14 @@ export default async function AdminMatchesPage({
                 queue.scoreBand === selectedScoreBand;
 
               return (
-                <Button
-                  asChild
+                <LinkButton
+                  href={matchQueueHref(slug, queue)}
                   key={queue.label}
                   size="sm"
                   variant={active ? "primary" : "secondary"}
                 >
-                  <Link href={matchQueueHref(slug, queue)}>{queue.label}</Link>
-                </Button>
+                  {queue.label}
+                </LinkButton>
               );
             })}
           </div>

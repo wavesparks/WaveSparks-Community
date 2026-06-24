@@ -1,4 +1,3 @@
-import Link from "next/link";
 import {
   BookOpen,
   MessageSquarePlus,
@@ -12,8 +11,8 @@ import { ChannelShortcutBar } from "@/components/community/channel-shortcut-bar"
 import { FilterBar } from "@/components/community/filter-bar";
 import { ForumShell } from "@/components/layout/forum-shell";
 import { PostCard } from "@/components/community/post-card";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getOrganizationViewerContext } from "@/lib/auth";
@@ -98,18 +97,14 @@ export default async function FeedPage({
             />
             {viewerCanInteract ? (
               <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
-                <Button asChild>
-                  <Link href={`/org/${slug}/compose?kind=feed`}>
-                    <MessageSquarePlus className="size-4" />
-                    Create post
-                  </Link>
-                </Button>
-                <Button asChild variant="secondary">
-                  <Link href={`/org/${slug}/matches`}>
-                    <Sparkles className="size-4" />
-                    Matches
-                  </Link>
-                </Button>
+                <LinkButton href={`/org/${slug}/compose?kind=feed`}>
+                  <MessageSquarePlus className="size-4" />
+                  Create post
+                </LinkButton>
+                <LinkButton href={`/org/${slug}/matches`} variant="secondary">
+                  <Sparkles className="size-4" />
+                  Matches
+                </LinkButton>
               </div>
             ) : null}
           </div>
@@ -206,9 +201,9 @@ export default async function FeedPage({
                 </div>
                 {activeFilterCount ? (
                   <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-                    <Button asChild variant="secondary">
-                      <Link href={`/org/${slug}/feed`}>Clear filters</Link>
-                    </Button>
+                    <LinkButton href={`/org/${slug}/feed`} variant="secondary">
+                      Clear filters
+                    </LinkButton>
                   </div>
                 ) : null}
               </Card>
@@ -222,18 +217,14 @@ export default async function FeedPage({
               body="Search approved founders, mentors, operators, skills, needs, and locations."
             />
             <div className="grid gap-2">
-              <Button asChild variant="secondary">
-                <Link href={`/org/${slug}/people`}>
-                  <UsersRound className="size-4" />
-                  Founder directory
-                </Link>
-              </Button>
-              <Button asChild variant="secondary">
-                <Link href={`/org/${slug}/knowledge`}>
-                  <BookOpen className="size-4" />
-                  Knowledge library
-                </Link>
-              </Button>
+              <LinkButton href={`/org/${slug}/people`} variant="secondary">
+                <UsersRound className="size-4" />
+                Founder directory
+              </LinkButton>
+              <LinkButton href={`/org/${slug}/knowledge`} variant="secondary">
+                <BookOpen className="size-4" />
+                Knowledge library
+              </LinkButton>
             </div>
             <RailPanel
               title="Intro layer"

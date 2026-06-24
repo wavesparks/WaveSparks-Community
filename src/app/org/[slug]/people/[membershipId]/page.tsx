@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink, UserPlus } from "lucide-react";
 
@@ -12,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -60,12 +60,10 @@ export default async function PersonDetailPage({
     <AppShell currentPath={`/org/${slug}/people`} viewer={viewer}>
       <div className="space-y-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <Button asChild size="sm" variant="secondary">
-            <Link href={`/org/${slug}/people`}>
-              <ArrowLeft className="size-4" />
-              People
-            </Link>
-          </Button>
+          <LinkButton href={`/org/${slug}/people`} size="sm" variant="secondary">
+            <ArrowLeft className="size-4" />
+            People
+          </LinkButton>
           {!isSelf ? (
             <form action={followAction}>
               <input
@@ -175,9 +173,13 @@ export default async function PersonDetailPage({
                     <p className="text-sm font-semibold text-[var(--ink)]">{introCopy.title}</p>
                     <p className="mt-1 text-sm text-[var(--ink-soft)]">{introCopy.body}</p>
                   </div>
-                  <Button asChild className="w-full" variant="secondary">
-                    <Link href={`/org/${slug}/requests`}>Open requests</Link>
-                  </Button>
+                  <LinkButton
+                    className="w-full"
+                    href={`/org/${slug}/requests`}
+                    variant="secondary"
+                  >
+                    Open requests
+                  </LinkButton>
                 </div>
               ) : (
                 <form

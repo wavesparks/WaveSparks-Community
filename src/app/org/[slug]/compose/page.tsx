@@ -1,12 +1,11 @@
-import Link from "next/link";
 import { ArrowLeft, Send } from "lucide-react";
 
 import { createPostAction } from "@/actions/member";
 import { AppShell } from "@/components/layout/app-shell";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -87,12 +86,14 @@ export default async function ComposePage({
                 : "Use enough context that the right members can recognize where they can help."
             }
           />
-          <Button asChild size="sm" variant="secondary">
-            <Link href={opportunityMode ? `/org/${slug}/opportunities` : `/org/${slug}/feed`}>
-              <ArrowLeft className="size-4" />
-              Back
-            </Link>
-          </Button>
+          <LinkButton
+            href={opportunityMode ? `/org/${slug}/opportunities` : `/org/${slug}/feed`}
+            size="sm"
+            variant="secondary"
+          >
+            <ArrowLeft className="size-4" />
+            Back
+          </LinkButton>
         </div>
 
         <Card>

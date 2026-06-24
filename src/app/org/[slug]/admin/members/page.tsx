@@ -1,13 +1,12 @@
-import Link from "next/link";
 import { OrganizationProfile } from "@clerk/nextjs";
 
 import { createManagedAccountAction, updateMembershipAction } from "@/actions/admin";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LinkButton } from "@/components/ui/link-button";
 import { Select } from "@/components/ui/select";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
@@ -150,14 +149,14 @@ export default async function AdminMembersPage({
                   : `/org/${slug}/admin/members`;
 
                 return (
-                  <Button
-                    asChild
+                  <LinkButton
+                    href={href}
                     key={filter.label}
                     size="sm"
                     variant={active ? "primary" : "secondary"}
                   >
-                    <Link href={href}>{filter.label}</Link>
-                  </Button>
+                    {filter.label}
+                  </LinkButton>
                 );
               })}
             </div>

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   ArrowUpRight,
   BookOpen,
@@ -17,7 +18,9 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
 import { Input } from "@/components/ui/input";
+import { LinkButton } from "@/components/ui/link-button";
 import { Select } from "@/components/ui/select";
 import { SectionHeading } from "@/components/ui/section-heading";
 import type { FeedPostView } from "@/lib/domain";
@@ -66,6 +69,41 @@ function filtersFromSearch(search: string): PublicFeedFilters {
     industry: params.get("industry") ?? "",
     role: params.get("role") ?? "",
   };
+}
+
+function searchFromFilters(filters: PublicFeedFilters) {
+  const params = new URLSearchParams();
+  const query = filters.q.trim();
+
+  if (query) {
+    params.set("q", query);
+  }
+
+  if (filters.type && filters.type !== "all") {
+    params.set("type", filters.type);
+  }
+
+  if (filters.tag.trim()) {
+    params.set("tag", filters.tag.trim());
+  }
+
+  if (filters.affiliation) {
+    params.set("affiliation", filters.affiliation);
+  }
+
+  if (filters.stage) {
+    params.set("stage", filters.stage);
+  }
+
+  if (filters.industry.trim()) {
+    params.set("industry", filters.industry.trim());
+  }
+
+  if (filters.role.trim()) {
+    params.set("role", filters.role.trim());
+  }
+
+  return params.toString();
 }
 
 function includesNormalized(values: string[], query: string) {
@@ -170,11 +208,12 @@ function PublicPostCard({ post, slug }: { post: PublicFeedPostView; slug: string
           </p>
         </div>
         <Link
-          className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-xs font-semibold text-[var(--ink-soft)] transition hover:border-[var(--accent)]/40 hover:bg-[var(--surface)] hover:text-[var(--ink)]"
+          className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-xs font-semibold text-[var(--ink-soft)] transition duration-150 ease-out hover:border-[var(--accent)]/40 hover:bg-[var(--surface)] hover:text-[var(--ink)] active:translate-y-px active:scale-[0.99]"
           href={`/org/${slug}/posts/${post.id}`}
         >
           Open
           <ArrowUpRight className="size-3.5" />
+          <NavPendingIndicator className="size-1.5" />
         </Link>
       </div>
 
@@ -211,9 +250,9 @@ function PublicPostCard({ post, slug }: { post: PublicFeedPostView; slug: string
             <MessageCircle className="size-4" />
             {post.commentCount}
           </span>
-          <Button asChild size="sm" variant="secondary">
-            <Link href={`/org/${slug}/posts/${post.id}`}>Open thread</Link>
-          </Button>
+          <LinkButton href={`/org/${slug}/posts/${post.id}`} size="sm" variant="secondary">
+            Open thread
+          </LinkButton>
         </div>
       </div>
     </Card>
@@ -267,6 +306,29 @@ export function PublicFeedExplorer({
   const filterCount = activeFilterCount(filters);
   const hasFilters = Boolean(filters.q) || filterCount > 0;
 
+  function updateUrlForFilters(nextFilters: PublicFeedFilters) {
+    const nextSearch = searchFromFilters(nextFilters);
+    const nextUrl = nextSearch ? `${window.location.pathname}?${nextSearch}` : window.location.pathname;
+
+    window.history.pushState(null, "", nextUrl);
+  }
+
+  function applyDraftFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    flushSync(() => {
+      setFilters(draftFilters);
+    });
+    updateUrlForFilters(draftFilters);
+  }
+
+  function clearFilters() {
+    flushSync(() => {
+      setFilters(emptyFilters);
+      setDraftFilters(emptyFilters);
+    });
+    updateUrlForFilters(emptyFilters);
+  }
+
   return (
     <div className="space-y-5">
       <section className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 shadow-[0_10px_32px_rgba(34,27,68,0.06)] sm:p-5">
@@ -299,7 +361,7 @@ export function PublicFeedExplorer({
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]" id="latest-posts">
         <div className="space-y-5">
           <Card className="border-[rgba(137,88,240,0.14)] bg-[var(--surface)] p-3">
-            <form action={`/org/${slug}/feed`} className="space-y-3">
+            <form className="space-y-3" onSubmit={applyDraftFilters}>
               <div className="flex flex-wrap items-center gap-3">
                 <label className="relative min-w-[220px] flex-1">
                   <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--ink-soft)]" />
@@ -314,7 +376,7 @@ export function PublicFeedExplorer({
                   />
                 </label>
                 <details className="group w-full sm:w-auto">
-                  <summary className="inline-flex h-10 w-full cursor-pointer list-none items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--ink)] ring-1 ring-[var(--line)] transition hover:bg-[var(--cyan-soft)] sm:w-auto">
+                  <summary className="inline-flex h-10 w-full cursor-pointer list-none items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--ink)] ring-1 ring-[var(--line)] transition duration-150 ease-out hover:bg-[var(--cyan-soft)] active:translate-y-px active:scale-[0.99] sm:w-auto">
                     <SlidersHorizontal className="size-4" />
                     Filters
                     {filterCount ? (
@@ -398,18 +460,23 @@ export function PublicFeedExplorer({
                       placeholder="Role needed"
                       value={draftFilters.role}
                     />
-                    <Button>Apply filters</Button>
+                    <Button type="submit">Apply filters</Button>
                   </div>
                 </details>
                 {hasFilters ? (
-                  <Button asChild className="w-full sm:w-auto" type="button" variant="ghost">
-                    <Link href={`/org/${slug}/feed`}>
-                      <X className="size-4" />
-                      Clear
-                    </Link>
+                  <Button
+                    className="w-full sm:w-auto"
+                    onClick={clearFilters}
+                    type="button"
+                    variant="ghost"
+                  >
+                    <X className="size-4" />
+                    Clear
                   </Button>
                 ) : null}
-                <Button className="w-full sm:w-auto">Search</Button>
+                <Button className="w-full sm:w-auto" type="submit">
+                  Search
+                </Button>
               </div>
             </form>
           </Card>
@@ -436,8 +503,8 @@ export function PublicFeedExplorer({
               </div>
               {hasFilters ? (
                 <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-                  <Button asChild variant="secondary">
-                    <Link href={`/org/${slug}/feed`}>Clear filters</Link>
+                  <Button onClick={clearFilters} type="button" variant="secondary">
+                    Clear filters
                   </Button>
                 </div>
               ) : null}
@@ -452,18 +519,14 @@ export function PublicFeedExplorer({
             body="Search approved founders, mentors, operators, skills, needs, and locations."
           />
           <div className="grid gap-2">
-            <Button asChild variant="secondary">
-              <Link href={`/org/${slug}/people`}>
-                <UsersRound className="size-4" />
-                Founder directory
-              </Link>
-            </Button>
-            <Button asChild variant="secondary">
-              <Link href={`/org/${slug}/knowledge`}>
-                <BookOpen className="size-4" />
-                Knowledge library
-              </Link>
-            </Button>
+            <LinkButton href={`/org/${slug}/people`} variant="secondary">
+              <UsersRound className="size-4" />
+              Founder directory
+            </LinkButton>
+            <LinkButton href={`/org/${slug}/knowledge`} variant="secondary">
+              <BookOpen className="size-4" />
+              Knowledge library
+            </LinkButton>
           </div>
           <RailPanel
             title="Intro layer"

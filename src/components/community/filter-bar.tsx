@@ -1,10 +1,9 @@
-import Link from "next/link";
 import Form from "next/form";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LinkButton } from "@/components/ui/link-button";
 import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { activeFeedFilterCount, hasFeedFilters } from "@/lib/feed-filters";
@@ -49,7 +48,7 @@ export function FilterBar({
             />
           </label>
           <details className="group w-full sm:w-auto">
-            <summary className="inline-flex h-10 w-full cursor-pointer list-none items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--ink)] ring-1 ring-[var(--line)] transition hover:bg-[var(--cyan-soft)] sm:w-auto">
+            <summary className="inline-flex h-10 w-full cursor-pointer list-none items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--ink)] ring-1 ring-[var(--line)] transition duration-150 ease-out hover:bg-[var(--cyan-soft)] active:translate-y-px active:scale-[0.99] sm:w-auto">
               <SlidersHorizontal className="size-4" />
               Filters
               {activeCount ? (
@@ -124,12 +123,10 @@ export function FilterBar({
             </div>
           </details>
           {hasFilters ? (
-            <Button asChild className="w-full sm:w-auto" type="button" variant="ghost">
-              <Link href={clearHref}>
-                <X className="size-4" />
-                Clear
-              </Link>
-            </Button>
+            <LinkButton className="w-full sm:w-auto" href={clearHref} variant="ghost">
+              <X className="size-4" />
+              Clear
+            </LinkButton>
           ) : null}
           <SubmitButton className="w-full sm:w-auto" pendingLabel="Searching">
             Search

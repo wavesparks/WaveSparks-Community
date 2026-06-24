@@ -1,11 +1,10 @@
 import { redirect } from "next/navigation";
 import { SignIn } from "@clerk/nextjs";
 import { ArrowLeft } from "lucide-react";
-import Link from "next/link";
 
 import { BrandLogo } from "@/components/ui/brand-logo";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getViewerContext } from "@/lib/auth";
 import { isClerkConfigured } from "@/lib/env";
@@ -27,12 +26,10 @@ export default async function SignInPage({
     <main className="ws-page-shell px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-5xl flex-col justify-center gap-5">
         <div className="flex items-center justify-between gap-3">
-          <Button asChild size="sm" variant="ghost">
-            <Link href={`/org/${slug}/feed`}>
-              <ArrowLeft className="size-4" />
-              Back to forum
-            </Link>
-          </Button>
+          <LinkButton href={`/org/${slug}/feed`} size="sm" variant="ghost">
+            <ArrowLeft className="size-4" />
+            Back to forum
+          </LinkButton>
         </div>
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">

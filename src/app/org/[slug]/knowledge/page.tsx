@@ -4,10 +4,11 @@ import { BookOpen, Search } from "lucide-react";
 import { ChannelShortcutBar } from "@/components/community/channel-shortcut-bar";
 import { PostCard } from "@/components/community/post-card";
 import { AppShell } from "@/components/layout/app-shell";
+import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -82,12 +83,14 @@ export default async function KnowledgePage({
             title="Reusable advice from the community"
             description="Resources, featured threads, active discussions, and your saved posts are gathered here for reuse."
           />
-          <Button asChild size="sm" variant="secondary">
-            <Link href={`/org/${slug}/compose?kind=feed&type=resource`}>
-              <BookOpen className="size-4" />
-              Share resource
-            </Link>
-          </Button>
+          <LinkButton
+            href={`/org/${slug}/compose?kind=feed&type=resource`}
+            size="sm"
+            variant="secondary"
+          >
+            <BookOpen className="size-4" />
+            Share resource
+          </LinkButton>
         </div>
         <StatusBanner status={singleQueryValue(query.status)} />
         <ChannelShortcutBar channels={channels} title="Topic shortcuts" />
@@ -99,7 +102,7 @@ export default async function KnowledgePage({
           ].map((item) => (
             <Link
               className={cn(
-                "rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-[var(--line)] transition",
+                "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold ring-1 ring-[var(--line)] transition duration-150 ease-out active:translate-y-px active:scale-[0.99]",
                 mode === item.mode
                   ? "bg-[var(--accent)] text-[var(--surface)] ring-transparent"
                   : "bg-[var(--surface)] text-[var(--ink-soft)] hover:bg-[var(--surface-muted)]",
@@ -108,6 +111,7 @@ export default async function KnowledgePage({
               key={item.mode}
             >
               {item.label}
+              <NavPendingIndicator className="size-1.5" />
             </Link>
           ))}
         </div>
@@ -125,9 +129,13 @@ export default async function KnowledgePage({
               />
             </label>
             {q ? (
-              <Button asChild className="w-full sm:w-auto" type="button" variant="ghost">
-                <Link href={modeHref(slug, mode)}>Clear</Link>
-              </Button>
+              <LinkButton
+                className="w-full sm:w-auto"
+                href={modeHref(slug, mode)}
+                variant="ghost"
+              >
+                Clear
+              </LinkButton>
             ) : null}
             <SubmitButton className="w-full sm:w-auto" pendingLabel="Searching">
               Search
