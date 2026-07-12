@@ -3,7 +3,6 @@ import type { FullAdminProfile, Membership, Profile, User } from "@/lib/domain";
 export function canAdminOrganization(user: User, membership: Membership) {
   return (
     user.platformRole === "platform_owner" ||
-    membership.clerkRole === "org:admin" ||
     membership.role === "org_admin"
   );
 }

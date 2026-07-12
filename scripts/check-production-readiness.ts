@@ -10,9 +10,7 @@ const requiredEnv = [
 const optionalButExpectedEnv = [
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
-  "SUPABASE_URL",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "SUPABASE_BUCKET",
+  "BLOB_READ_WRITE_TOKEN",
 ] as const;
 
 export interface ProductionReadinessResult {
@@ -41,18 +39,17 @@ function isLocalHostname(hostname: string) {
   );
 }
 
-function checkUrl(
-  env: NodeJS.ProcessEnv,
-  key: string,
-  errors: string[],
-  options: { requireHttps?: boolean; disallowLocal?: boolean } = {},
-) {
-  const value = readEnv(env, key);
-  if (!value) {
-    return;
-  }
+function isWavesparksMarketingHostname(hostname: string) {
+  return hostname === "wavesparks.co" || hostname === "www.wavesparks.co";
+}
 
-  checkUrlValue(key, value, errors, options);
+function hostnameFromUrlValue(value: string) {
+  try {
+    return new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`)
+      .hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
 
 function checkUrlValue(
@@ -87,7 +84,15 @@ function checkAppUrl(env: NodeJS.ProcessEnv, errors: string[]) {
     return;
   }
 
-  checkUrlValue(key, readEnv(env, key), errors);
+  const value = readEnv(env, key);
+  checkUrlValue(key, value, errors);
+
+  const hostname = hostnameFromUrlValue(value);
+  if (hostname && isWavesparksMarketingHostname(hostname)) {
+    errors.push(
+      `${key} must point to the community app domain (for example, https://app.wavesparks.co) so Clerk invitations return to the app, not the marketing site.`,
+    );
+  }
 }
 
 function checkPathOrHttpsUrl(env: NodeJS.ProcessEnv, key: string, errors: string[]) {
@@ -198,6 +203,15 @@ function checkPairedConfig(
   }
 }
 
+function checkE2ELocalAuthDisabled(env: NodeJS.ProcessEnv, errors: string[]) {
+  if (readEnv(env, "E2E_LOCAL_AUTH_ENABLED")) {
+    errors.push("E2E_LOCAL_AUTH_ENABLED must not be set in production.");
+  }
+  if (readEnv(env, "E2E_LOCAL_AUTH_SECRET")) {
+    errors.push("E2E_LOCAL_AUTH_SECRET must not be set in production.");
+  }
+}
+
 export function checkProductionReadiness(
   env: NodeJS.ProcessEnv = process.env,
 ): ProductionReadinessResult {
@@ -223,7 +237,6 @@ export function checkProductionReadiness(
   }
 
   checkAppUrl(env, errors);
-  checkUrl(env, "SUPABASE_URL", errors);
   checkPathOrHttpsUrl(env, "NEXT_PUBLIC_CLERK_SIGN_IN_URL", errors);
   checkPathOrHttpsUrl(env, "NEXT_PUBLIC_CLERK_SIGN_UP_URL", errors);
   checkPathOrHttpsUrl(env, "NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL", errors);
@@ -232,13 +245,8 @@ export function checkProductionReadiness(
   checkClerkKeys(env, errors, warnings);
   checkDatabaseUrl(env, errors);
   checkEmailList(env, "WAVESPARK_ADMIN_EMAILS", errors);
+  checkE2ELocalAuthDisabled(env, errors);
   checkPairedConfig(env, ["RESEND_API_KEY", "RESEND_FROM_EMAIL"], errors, "Resend email");
-  checkPairedConfig(
-    env,
-    ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_BUCKET"],
-    errors,
-    "Supabase upload",
-  );
 
   return { errors, warnings };
 }

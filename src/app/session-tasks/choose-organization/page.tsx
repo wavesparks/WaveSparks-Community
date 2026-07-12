@@ -22,5 +22,5 @@ export default function ChooseOrganizationTaskPage() {
     );
   }
 
-  return <TaskChooseOrganization redirectUrlComplete="/org/wavespark/onboarding" />;
+  return <TaskChooseOrganization redirectUrlComplete="/org/wavespark/auth/complete" />;
 }

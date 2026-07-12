@@ -120,6 +120,21 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
         title: "Profile saved",
         body: "Your matching context is updated. Matches and recommendations can now use the latest details.",
       };
+    case "profile_draft_saved":
+      return {
+        title: "Draft saved",
+        body: "Your current profile details are saved. Complete the listed fields before member interaction unlocks.",
+      };
+    case "profile_incomplete":
+      return {
+        title: "Profile still needs context",
+        body: "Your draft is saved. Complete the listed fields before finishing onboarding.",
+      };
+    case "profile_invalid":
+      return {
+        title: "Check the profile fields",
+        body: "Use a valid email, HTTP(S) links, and values inside the displayed numeric ranges.",
+      };
     case "post_created":
       return {
         title: "Post published",
@@ -185,6 +200,71 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
         title: "Invitation sent",
         body: "Clerk has the account invitation, and the local membership state is ready for review.",
       };
+    case "member_invite_failed":
+      return {
+        title: "Invitation failed",
+        body: "Clerk did not confirm the invitation. The member record keeps the error and can be retried.",
+      };
+    case "member_invite_revoked":
+      return {
+        title: "Invitation revoked",
+        body: "The pending Clerk invitation can no longer be used. You can send a new invitation later.",
+      };
+    case "cohort_created":
+      return {
+        title: "Cohort created",
+        body: "The event cohort is ready for student imports.",
+      };
+    case "cohort_students_imported":
+      return {
+        title: "Students imported",
+        body: "Cohort records were created or refreshed, and Clerk confirmed each successful invitation.",
+      };
+    case "cohort_students_partially_imported":
+      return {
+        title: "Cohort imported with invitation errors",
+        body: "Local records were saved. Review each Clerk status below and retry only the failed invitations.",
+      };
+    case "cohort_import_too_large":
+      return {
+        title: "Cohort is too large",
+        body: "Import no more than 100 unique email addresses at a time.",
+      };
+    case "cohort_import_empty":
+      return {
+        title: "No students to import",
+        body: "Paste at least one student email before importing the cohort roster.",
+      };
+    case "cohort_import_invalid":
+      return {
+        title: "Check the roster format",
+        body: "Each line needs an email address, optionally followed by a comma and name.",
+      };
+    case "cohort_clerk_unconfigured":
+      return {
+        title: "Clerk is not configured",
+        body: "Configure Clerk keys before sending cohort invitations.",
+      };
+    case "cohort_clerk_session_required":
+      return {
+        title: "Clerk organization required",
+        body: "Switch into the Clerk organization before importing students.",
+      };
+    case "cohort_clerk_admin_required":
+      return {
+        title: "Clerk admin permission required",
+        body: "Use a Clerk org admin session to send organization invitations.",
+      };
+    case "cohort_members_promoted":
+      return {
+        title: "Students promoted",
+        body: "Selected students are approved for the main community.",
+      };
+    case "cohort_no_selection":
+      return {
+        title: "No students selected",
+        body: "Select at least one waiting student before promoting.",
+      };
     case "member_saved":
       return {
         title: "Member saved",
@@ -194,6 +274,11 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       return {
         title: "Membership updated",
         body: "The member status and admin note are saved.",
+      };
+    case "membership_clerk_failed":
+      return {
+        title: "Community status saved, Clerk sync failed",
+        body: "The local decision is saved. Review the member's Clerk error and retry the relevant action.",
       };
     case "org_settings_saved":
       return {

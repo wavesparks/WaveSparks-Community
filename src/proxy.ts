@@ -21,6 +21,16 @@ function isAnonymousPublicReadRequest(request: NextRequest) {
   );
 }
 
+function isAnonymousPageRequest(request: NextRequest) {
+  return (
+    request.method === "GET" &&
+    !request.nextUrl.pathname.startsWith("/api") &&
+    !request.nextUrl.pathname.startsWith("/trpc") &&
+    !request.nextUrl.pathname.startsWith("/__clerk") &&
+    !hasPotentialClerkSessionCookie(request.cookies.getAll())
+  );
+}
+
 function anonymousFeedRewrite(request: NextRequest) {
   if (!publicFeedPathPattern.test(request.nextUrl.pathname)) {
     return null;
@@ -41,6 +51,10 @@ export default clerkKeysConfigured
   ? function proxy(request: NextRequest, event: Parameters<typeof clerkProxy>[1]) {
       if (isAnonymousPublicReadRequest(request)) {
         return anonymousFeedRewrite(request) ?? NextResponse.next();
+      }
+
+      if (isAnonymousPageRequest(request)) {
+        return NextResponse.next();
       }
 
       return clerkProxy(request, event);

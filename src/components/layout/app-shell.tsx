@@ -8,7 +8,7 @@ import {
   UserCircle2,
   UsersRound,
 } from "lucide-react";
-import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
+import { UserButton } from "@clerk/nextjs";
 import type { CSSProperties } from "react";
 
 import { Avatar } from "@/components/ui/avatar";
@@ -33,6 +33,7 @@ const memberLinks = [
 
 const adminLinks = [
   { href: "admin", label: "Overview" },
+  { href: "admin/cohorts", label: "Cohorts" },
   { href: "admin/members", label: "Members" },
   { href: "admin/profiles", label: "Profiles" },
   { href: "admin/posts", label: "Posts" },
@@ -92,17 +93,6 @@ export function AppShell({
                 {viewer.membership.affiliationType}
               </Badge>
             </div>
-            {clerkConfigured ? (
-              <div className="rounded-lg border border-[var(--cyan)]/70 bg-[var(--blue)] p-2">
-                <OrganizationSwitcher
-                  afterCreateOrganizationUrl="/org/:slug/feed"
-                  afterLeaveOrganizationUrl="/org/wavespark/feed"
-                  afterSelectOrganizationUrl="/org/:slug/feed"
-                  hidePersonal
-                />
-              </div>
-            ) : null}
-
             <nav
               className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1"
               aria-label="Member navigation"
@@ -179,7 +169,7 @@ export function AppShell({
               {clerkConfigured ? (
                 <UserButton />
               ) : (
-                <SignOutButton callbackUrl={`/org/${viewer.org.slug}`} />
+                <SignOutButton callbackUrl={`/org/${viewer.org.slug}`} mode="local" />
               )}
             </div>
           </div>

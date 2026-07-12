@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 import { loadScriptEnv } from "./load-script-env";
+import { assertWriteAllowed, databaseTarget, readScriptTarget } from "./script-safety";
 
 function displayNameForEmail(email: string) {
   return email
@@ -13,18 +14,25 @@ function displayNameForEmail(email: string) {
 }
 
 async function main() {
-  loadScriptEnv("production");
+  const target = readScriptTarget();
+  loadScriptEnv(target.environment);
   const { seedOrganization } = await import("@/data/seed-data");
   const { getDb, getSqlClient } = await import("@/db/client");
   const { memberships, organizations, users } = await import("@/db/schema");
   const { env, getBootstrapAdminEmails } = await import("@/lib/env");
 
   if (!env.databaseUrl) {
-    console.info("DATABASE_URL not configured. Skipping production bootstrap.");
-    return;
+    throw new Error("DATABASE_URL is not configured.");
   }
 
   const emails = getBootstrapAdminEmails();
+  console.info(
+    `Bootstrap target: ${target.environment} (${databaseTarget(env.databaseUrl)}), admins=${emails.length}.`,
+  );
+  if (!assertWriteAllowed(target)) {
+    console.info("Dry run only. Re-run with --apply to bootstrap the selected environment.");
+    return;
+  }
   if (!emails.length) {
     console.info("WAVESPARK_ADMIN_EMAILS is empty. Created org only.");
   }
@@ -118,7 +126,7 @@ async function main() {
     });
   }
 
-  console.info(`Production bootstrap complete. Admins configured: ${emails.length}.`);
+  console.info(`${target.environment} bootstrap complete. Admins configured: ${emails.length}.`);
   await getSqlClient().end();
 }
 

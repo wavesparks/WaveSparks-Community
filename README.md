@@ -5,11 +5,11 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 ## What’s in this MVP
 
 - Multi-tenant org routing under `/org/[slug]`
-- Clerk-backed sign-in/sign-up and user invitations
+- Clerk-backed invitation-only account creation and sign-in
 - Structured onboarding and profile completion flow
 - Community feed, limited member directory, knowledge library, opportunities, post detail, comments, saved posts, and intro requests
 - AI-assisted cofounder and mentor matches with explainable scoring
-- Admin console for approvals, moderation, manual intros, analytics, and org settings
+- Admin console for cohort pools, approvals, moderation, manual intros, analytics, and org settings
 - Drizzle schema, generated SQL migration, seed script, and match recompute cron stub
 
 ## Stack
@@ -21,6 +21,11 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 - Drizzle ORM + drizzle-kit
 - PostgreSQL-ready schema with `pgvector`
 - Vitest + Playwright
+
+## Lifecycle guides
+
+- [User lifecycle guide](docs/user-lifecycle-guide.md)
+- [Admin lifecycle guide](docs/admin-lifecycle-guide.md)
 
 ## Local setup
 
@@ -46,10 +51,14 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 
 ## Auth behavior
 
-- Authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`; the app's org-scoped sign-in/sign-up pages pass their Clerk routes directly.
+- Authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`.
+- `CLERK_JWT_KEY` is optional but recommended so the OAuth handoff API can verify client session tokens directly during preview-domain sign-in flows.
 - If Clerk keys are missing, authenticated app areas are unavailable until `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are configured.
-- Admins can invite or update members from `/org/wavespark/admin/members`. With Clerk configured, the action sends a Clerk organization invitation and stores the Wavespark membership state locally.
-- Clerk manages identity, organizations, roles, and organization membership. Wavespark stores community profile data, approval status, content, and matching.
+- Admins can create event cohorts from `/org/wavespark/admin/cohorts`, import students into a waitlist pool, and promote selected students into the main community.
+- Admins invite or update members from `/org/wavespark/admin/members`. Wavespark confirms the Clerk membership or targeted invitation before reporting success and stores the Clerk state locally.
+- Public registration and shared invitation codes are disabled. New accounts start at `/org/wavespark/accept-invitation` from a personal Clerk ticket.
+- Do not use Clerk Dashboard as the daily invitation surface. Dashboard invitations cannot establish the complete Wavespark review workflow.
+- Clerk owns identity, primary email, credentials, and sessions. Wavespark Admin actions own organization roles and membership; Wavespark stores approval, profiles, content, and matching.
 - `letsbuild@wavesparks.co` is a default bootstrap admin. Add more comma-separated admin emails with `WAVESPARK_ADMIN_EMAILS`.
 
 ## Database workflow
@@ -63,13 +72,14 @@ pnpm db:generate
 Run migrations against Postgres:
 
 ```bash
-pnpm db:migrate
+pnpm db:migrate -- --environment=development
+pnpm db:migrate -- --environment=development --apply
 ```
 
 Seed the database when `DATABASE_URL` is configured:
 
 ```bash
-pnpm db:seed
+pnpm db:seed -- --environment=development --apply
 ```
 
 If `DATABASE_URL` is absent, the app still runs with the in-memory seeded community dataset used by the UI and tests.
@@ -77,23 +87,23 @@ If `DATABASE_URL` is absent, the app still runs with the in-memory seeded commun
 Provision production-style preview accounts for role testing:
 
 ```bash
-pnpm db:preview-accounts
+pnpm db:preview-accounts -- --environment=development --apply
 ```
 
 This creates or updates one approved admin, mentor, and founder account. Set
 up matching Clerk users or invitations for the printed emails to sign in. The
 script writes a summary to `/tmp/wavesparks-preview-accounts.txt`.
 
-Sync existing local members to Clerk Organizations:
+Preview or reconcile Clerk Organizations:
 
 ```bash
-pnpm clerk:sync-orgs
-pnpm clerk:sync-orgs -- --send-invites
+pnpm clerk:reconcile -- --environment=development
+pnpm clerk:reconcile -- --environment=development --apply
+pnpm clerk:reconcile -- --environment=production
 ```
 
-The first command links local users to existing Clerk users by email and adds them to the
-`wavespark` Clerk organization. The second command also sends Clerk organization invitations
-for local members who do not yet have a Clerk user.
+Reconciliation is dry-run by default. Production is preview-only and writes
+`/tmp/wavespark-clerk-reconcile-production.json`; production apply is blocked.
 
 ## Useful scripts
 
@@ -103,10 +113,12 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm test:e2e
+pnpm test:e2e:clerk
 pnpm build
 pnpm cron:matches
 pnpm readiness:prod
-pnpm clerk:sync-orgs
+pnpm clerk:reconcile -- --environment=development
+pnpm env:audit
 ```
 
 ## Production rollout checklist
@@ -120,16 +132,19 @@ NEXT_PUBLIC_APP_URL=https://app.wavesparks.co
 DATABASE_URL=<postgres-url-with-pgvector>
 CRON_SECRET=<long-random-secret>
 WAVESPARK_ADMIN_EMAILS=letsbuild@wavesparks.co
+BLOB_READ_WRITE_TOKEN=<vercel-blob-read-write-token>
+# Optional custom notification email delivery:
 RESEND_API_KEY=<resend-key>
 RESEND_FROM_EMAIL=<verified-sender>
-SUPABASE_URL=<supabase-url>
-SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
-SUPABASE_BUCKET=wavesparks
 ```
 
 The Vercel Clerk integration should supply `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
 `CLERK_SECRET_KEY`. Clerk production domains also need the DNS records shown in the
 Clerk Dashboard, including the Frontend API CNAME:
+
+For preview-domain OAuth handoff, also add Clerk's JWT verification key as
+`CLERK_JWT_KEY` when available from the Clerk Dashboard. Keep `CLERK_SECRET_KEY`
+configured too; the app still uses it for Clerk backend operations.
 
 ```bash
 clerk.wavesparks.co CNAME frontend-api.clerk.services
@@ -155,24 +170,32 @@ NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/org/wavespark
 NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/org/wavespark
 ```
 
+Keep the Clerk application home URL and custom sign-in routes pointed at the community app
+domain, not the marketing site. Create invitations from Wavespark Admin so they use the
+dedicated `/org/wavespark/accept-invitation` redirect.
+
 2. Run the production checks and database setup:
 
 ```bash
 pnpm readiness:prod
-pnpm db:migrate
-pnpm db:bootstrap
-pnpm clerk:sync-orgs
+pnpm db:migrate -- --environment=production
+pnpm clerk:reconcile -- --environment=production
 ```
+
+Production database writes require both `--apply` and `--confirm-production`. This release
+does not apply Clerk reconciliation changes to production.
 
 `pnpm readiness:prod` expects the real production environment to be present, as it is in
 Vercel/CI. It blocks localhost URLs, placeholder secrets, Clerk test keys, and partial
-Resend/Supabase configuration before the deployment is promoted.
+Resend configuration before the deployment is promoted. Missing Resend configuration is
+a warning because Clerk organization invitations still send through Clerk, but custom
+product notification emails will be skipped.
 
 3. Confirm DNS points the app domain to Vercel. `app.wavesparks.co` should resolve to Vercel before it becomes the member-facing URL.
 
 4. Keep Vercel Authentication on preview deployments only. Production access should be controlled by the app sign-in, onboarding, and approval flow.
 
-5. After the first admin signs in through Clerk, invite managed members from the admin members page.
+5. After the first admin signs in through Clerk, create event cohorts from the admin cohorts page or invite managed members from the admin members page.
 
 For future Clerk work in this project, install Clerk skills and restart the agent after installation:
 
@@ -188,6 +211,8 @@ The current implementation was verified with:
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:e2e
+pnpm test:e2e:clerk
 pnpm build
 pnpm readiness:prod
 ```
@@ -196,5 +221,5 @@ pnpm readiness:prod
 
 - Member discovery uses a limited approved-member directory. Regular members can search safe profile summaries, but contact details remain hidden.
 - Contact details remain hidden until an intro request is accepted.
-- Upload routes for avatars and org logos are included and expect Supabase Storage credentials.
-- Email notifications use Resend when configured and otherwise log the attempted delivery in development.
+- Upload routes for avatars and org logos use Vercel Blob and expect `BLOB_READ_WRITE_TOKEN`.
+- Email notifications use Resend when configured and otherwise log the attempted delivery.

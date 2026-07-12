@@ -98,10 +98,21 @@ export default async function AdminRequestsPage({
           <Card className="space-y-4">
             <SectionHeading title="Create manual intro" />
             <form
-              action={createManualIntroAction.bind(null, slug, viewer.membership.id)}
+              action={createManualIntroAction.bind(null, slug)}
               className="space-y-4"
             >
-              <select className="h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]" name="receiver_membership_id">
+              <select className="h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]" name="requester_membership_id" required>
+                <option value="">Choose the member requesting the intro</option>
+                {manualIntroCandidates.map((candidate) => {
+                  return (
+                    <option key={candidate.membershipId} value={candidate.membershipId}>
+                      {candidate.name}
+                    </option>
+                  );
+                })}
+              </select>
+              <select className="h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]" name="receiver_membership_id" required>
+                <option value="">Choose the receiving member</option>
                 {manualIntroCandidates.map((candidate) => {
                   return (
                     <option key={candidate.membershipId} value={candidate.membershipId}>

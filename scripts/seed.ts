@@ -13,35 +13,21 @@ import {
   seedProfiles,
   seedUsers,
 } from "@/data/seed-data";
-import { getDb, getSqlClient } from "@/db/client";
-import {
-  accounts,
-  adminActions,
-  analyticsEvents,
-  comments,
-  follows,
-  introRequests,
-  matchRuns,
-  matches,
-  memberships,
-  notifications,
-  organizations,
-  posts,
-  profileLinks,
-  profiles,
-  reports,
-  users,
-} from "@/db/schema";
-import { env } from "@/lib/env";
+import { loadScriptEnv } from "./load-script-env";
+import { assertWriteAllowed, databaseTarget, readScriptTarget } from "./script-safety";
 
 const seededUsers = seedUsers.map((user) => ({
   ...user,
+  anonymizedAt: user.anonymizedAt ? new Date(user.anonymizedAt) : undefined,
   createdAt: new Date(user.createdAt),
   updatedAt: new Date(user.updatedAt),
 }));
 
 const seededMemberships = seedMemberships.map((membership) => ({
   ...membership,
+  clerkInvitationUpdatedAt: membership.clerkInvitationUpdatedAt
+    ? new Date(membership.clerkInvitationUpdatedAt)
+    : undefined,
   createdAt: new Date(membership.createdAt),
   updatedAt: new Date(membership.updatedAt),
   approvedAt: membership.approvedAt ? new Date(membership.approvedAt) : undefined,
@@ -88,8 +74,35 @@ const seededNotifications = seedNotifications.map((notification) => ({
 }));
 
 async function main() {
+  const target = readScriptTarget();
+  loadScriptEnv(target.environment);
+  const { getDb, getSqlClient } = await import("@/db/client");
+  const {
+    accounts,
+    adminActions,
+    analyticsEvents,
+    comments,
+    follows,
+    introRequests,
+    matchRuns,
+    matches,
+    memberships,
+    notifications,
+    organizations,
+    posts,
+    profileLinks,
+    profiles,
+    reports,
+    users,
+  } = await import("@/db/schema");
+  const { env } = await import("@/lib/env");
+
   if (!env.databaseUrl) {
-    console.info("DATABASE_URL not configured. The app will continue using seeded in-memory data.");
+    throw new Error("DATABASE_URL is not configured.");
+  }
+  console.info(`Seed target: ${target.environment} (${databaseTarget(env.databaseUrl)}).`);
+  if (!assertWriteAllowed(target)) {
+    console.info("Dry run only. Re-run with --apply to replace data in the selected environment.");
     return;
   }
 

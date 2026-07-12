@@ -49,6 +49,7 @@ import {
   resetStore,
 } from "@/server/store";
 import { getNotificationViews } from "@/server/view-models";
+import { canAccessFeed } from "@/server/permissions";
 
 async function setViewer(membershipId: string) {
   const membership = (await getMembershipById(membershipId))!;
@@ -167,6 +168,44 @@ describe("member server actions", () => {
     expect(backgroundTask).toBeTypeOf("function");
     await backgroundTask?.();
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/matches");
+  });
+
+  it("saves an incomplete onboarding draft without unlocking member interaction", async () => {
+    await setViewer("mem_jules");
+    const formData = formDataFromEntries({
+      full_name: "Jules Rivera",
+      preferred_name: "Jules",
+      email_for_intro: "jules@example.com",
+      intent: "draft",
+    });
+
+    await expect(saveOnboardingAction("wavespark", "mem_jules", formData)).rejects.toThrow(
+      /NEXT_REDIRECT:\/org\/wavespark\/onboarding\?status=profile_draft_saved&step=0&missing=/,
+    );
+
+    const membership = (await getMembershipById("mem_jules"))!;
+    const profile = (await getProfileByMembershipId("mem_jules"))!;
+    expect(profile.onboardingComplete).toBe(false);
+    expect(profile.headline).toBe("");
+    expect(canAccessFeed(membership, profile)).toBe(false);
+  });
+
+  it("rejects invalid profile email, links, and numeric ranges before saving", async () => {
+    await setViewer("mem_jules");
+    const before = (await getProfileByMembershipId("mem_jules"))!;
+    const formData = formDataFromEntries({
+      email_for_intro: "not-an-email",
+      linkedin_url: "javascript:alert(1)",
+      ambition_level: "9",
+      years_of_experience: "2.5",
+    });
+
+    await expect(saveOnboardingAction("wavespark", "mem_jules", formData)).rejects.toThrow(
+      /NEXT_REDIRECT:\/org\/wavespark\/onboarding\?status=profile_invalid&fields=/,
+    );
+
+    expect((await getProfileByMembershipId("mem_jules"))?.updatedAt).toBe(before.updatedAt);
+    expect(afterMock).not.toHaveBeenCalled();
   });
 
   it("creates a post before recording analytics after the response", async () => {

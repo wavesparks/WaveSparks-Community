@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import { parseBoolean, parseTags } from "@/lib/utils";
 import type { Membership, Profile, ProfileLink, User } from "@/lib/domain";
+import { getProfileReadiness } from "@/lib/activation";
 import { buildEmbedding, buildEmbeddingText } from "@/server/matching";
 
 function field(formData: FormData, key: string) {
@@ -9,8 +10,55 @@ function field(formData: FormData, key: string) {
 }
 
 function fieldNumber(formData: FormData, key: string, fallback = 0) {
-  const value = Number(formData.get(key));
+  const raw = field(formData, key);
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
+}
+
+export function validateProfileFormData(formData: FormData) {
+  const errors: Array<{ field: string; message: string }> = [];
+  const email = field(formData, "email_for_intro");
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    errors.push({ field: "email_for_intro", message: "Enter a valid intro email." });
+  }
+
+  for (const key of ["linkedin_url", "github_url", "website_url", "x_url"] as const) {
+    const value = field(formData, key);
+    if (!value) {
+      continue;
+    }
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error("Unsupported protocol.");
+      }
+    } catch {
+      errors.push({ field: key, message: "Links must use http:// or https://." });
+    }
+  }
+
+  const ranges = [
+    ["years_of_experience", 0, 80],
+    ["ambition_level", 1, 5],
+    ["risk_tolerance", 1, 5],
+    ["structure_vs_chaos", 1, 5],
+    ["max_mentees", 0, 100],
+  ] as const;
+  for (const [key, min, max] of ranges) {
+    const raw = field(formData, key);
+    if (!raw) {
+      continue;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || !Number.isInteger(value) || value < min || value > max) {
+      errors.push({ field: key, message: `Enter a whole number from ${min} to ${max}.` });
+    }
+  }
+
+  return { errors, isValid: errors.length === 0 };
 }
 
 function completionScore(profile: Profile) {
@@ -204,10 +252,11 @@ export function profileFromFormData({
   );
   profile.lastActiveAt = now;
   profile.updatedAt = now;
-  profile.onboardingComplete = true;
   profile.embeddingText = buildEmbeddingText(profile);
   profile.profileEmbedding = buildEmbedding(profile.embeddingText);
-  profile.profileCompletionPercent = completionScore(profile);
+  const readiness = getProfileReadiness(profile);
+  profile.onboardingComplete = readiness.isReady;
+  profile.profileCompletionPercent = readiness.completionPercent;
 
   const links: ProfileLink[] = [
     { id: `lnk_${nanoid(8)}`, profileId: profile.id, type: "linkedin" as const, url: field(formData, "linkedin_url") },

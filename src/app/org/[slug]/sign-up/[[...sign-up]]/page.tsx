@@ -30,26 +30,34 @@ export default async function SignUpPage({
                 eyebrow="Create account"
                 level={1}
                 title="Join Wavespark by invitation"
-                description="The public forum is open to read. Member accounts are created by an admin so posting, replies, follows, and intro requests stay inside the approved community."
+                description="The public forum is open to read. New accounts are created only from a personal invitation sent by a Wavespark admin."
                 tone="inverse"
               />
             </div>
           </Card>
 
-          <Card className="space-y-5">
-            <SectionHeading
-              eyebrow="Invitation only"
-              title="Ask an admin for an invitation"
-              description="Wavespark accounts are created from Clerk organization invitations. Use the invite link sent by your community admin to create or access your account."
-            />
-            <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-sm leading-6 text-[var(--ink-soft)]">
-              Direct public registration is closed so membership stays limited to
-              approved community invitees.
-            </div>
-            <LinkButton href={`/org/${slug}/signin`}>
-              Sign in with an invited account
-            </LinkButton>
-          </Card>
+          <div className="space-y-4">
+            <Card className="space-y-5">
+              <SectionHeading
+                eyebrow="Invitation required"
+                title="Check your invitation email"
+                description="Each invitation contains a private Clerk ticket for one email address. Open that link to create an account or connect an existing Clerk account."
+              />
+              <LinkButton href={`/org/${slug}/signin`}>
+                Sign in with an invited account
+              </LinkButton>
+            </Card>
+            <Card className="space-y-3 text-sm leading-6 text-[var(--ink-soft)]">
+              <p className="font-semibold text-[var(--ink)]">Ask an admin for an invitation</p>
+              <p>
+                Direct public registration and shared invite codes are closed. Ask a Wavespark
+                admin to send a personal invitation to your email address.
+              </p>
+              <LinkButton className="w-fit" href={`/org/${slug}/signin`} variant="secondary">
+                Sign in with an invited account
+              </LinkButton>
+            </Card>
+          </div>
         </div>
       </div>
     </main>

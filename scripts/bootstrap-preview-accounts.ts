@@ -1,15 +1,30 @@
 import { chmod, writeFile } from "node:fs/promises";
 
-import { getSqlClient } from "@/db/client";
-import { env } from "@/lib/env";
-import {
-  previewAccountSpecs,
-  provisionPreviewAccounts,
-} from "@/server/preview-accounts";
+import { loadScriptEnv } from "./load-script-env";
+import { assertWriteAllowed, databaseTarget, readScriptTarget } from "./script-safety";
 
 const credentialsPath = "/tmp/wavesparks-preview-accounts.txt";
 
 async function main() {
+  const target = readScriptTarget();
+  loadScriptEnv(target.environment);
+  const { getSqlClient } = await import("@/db/client");
+  const { env } = await import("@/lib/env");
+  const { previewAccountSpecs, provisionPreviewAccounts } = await import(
+    "@/server/preview-accounts"
+  );
+
+  if (!env.databaseUrl) {
+    throw new Error("DATABASE_URL is not configured.");
+  }
+  console.info(
+    `Preview-account target: ${target.environment} (${databaseTarget(env.databaseUrl)}).`,
+  );
+  if (!assertWriteAllowed(target)) {
+    console.info("Dry run only. Re-run with --apply to provision the selected environment.");
+    return;
+  }
+
   const provisioned = await provisionPreviewAccounts({});
   const accountLines = provisioned.map(({ spec, membership }) =>
     [
@@ -37,15 +52,10 @@ async function main() {
   console.info(`Preview accounts provisioned: ${previewAccountSpecs.length}`);
   console.info(`Credentials file: ${credentialsPath}`);
 
-  if (env.databaseUrl) {
-    await getSqlClient().end();
-  }
+  await getSqlClient().end();
 }
 
-main().catch(async (error) => {
+main().catch((error) => {
   console.error(error);
-  if (env.databaseUrl) {
-    await getSqlClient().end();
-  }
   process.exit(1);
 });

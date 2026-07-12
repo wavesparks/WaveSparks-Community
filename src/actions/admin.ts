@@ -7,34 +7,44 @@ import { auth } from "@clerk/nextjs/server";
 import { nanoid } from "nanoid";
 
 import { getViewerContextForAction } from "@/lib/auth";
-import { clerkRoleFromLocalRole } from "@/lib/clerk-roles";
+import { getE2ELocalClerkOrganizationContext } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
+import type { MembershipRole, MembershipStatus } from "@/lib/domain";
 import { getPostCommentRevalidationPaths } from "@/lib/post-action-routing";
 import { absoluteAppUrl } from "@/lib/urls";
 import {
   enqueueAnalyticsEvent,
-  enqueueClerkOrganizationInvitation,
   enqueueMembershipEmail,
   enqueueNotificationWrite,
 } from "@/server/action-side-effects";
 import { canViewAdminRoute } from "@/server/permissions";
+import {
+  revokeMembershipInvitation,
+  sendMembershipInvitation,
+  syncMembershipClerkLifecycle,
+} from "@/server/clerk-membership-lifecycle";
 import { buildNotification, enqueueNotificationEmail } from "@/server/notifications";
 import {
+  createCohort,
   createManagedAccount,
   createIntroRequest,
   getCommentRecordById,
-  getMembershipById,
   getMembershipRecordById,
   getPostById,
   getProfileRecordById,
+  getUserById,
+  importCohortMembers,
+  promoteCohortMembers,
   recomputeMatchesForProfile,
   recomputeMatchesForOrg,
   updateCommentStatus,
   updateMembershipStatus,
+  updateMembershipRole,
   updateOrganizationSettings,
   updatePostModeration,
   updateProfileFlags,
 } from "@/server/store";
+import { ensureClerkAdminOrganizationContext } from "@/server/clerk-sync";
 
 async function requireAdminForAction(slug: string) {
   const viewer = await getViewerContextForAction(slug);
@@ -54,6 +64,47 @@ async function requireAdminForAction(slug: string) {
   };
 }
 
+async function requireClerkAdminContextForAction(
+  admin: Awaited<ReturnType<typeof requireAdminForAction>>,
+) {
+  const e2eContext = getE2ELocalClerkOrganizationContext();
+  if (e2eContext && !isClerkConfigured()) {
+    return { organizationId: e2eContext.orgId, userId: e2eContext.userId };
+  }
+  const clerkAuth = await auth();
+
+  if (!clerkAuth.userId) {
+    throw new Error("A Clerk user session is required.");
+  }
+
+  return ensureClerkAdminOrganizationContext({
+    clerkUserId: clerkAuth.userId,
+    membership: admin.membership,
+    org: admin.org,
+    user: admin.user,
+  });
+}
+
+function membershipRole(value: FormDataEntryValue | null): MembershipRole {
+  if (value === "org_admin" || value === "member") {
+    return value;
+  }
+  throw new Error("Invalid membership role.");
+}
+
+function membershipStatus(value: FormDataEntryValue | null): MembershipStatus {
+  if (
+    value === "pending" ||
+    value === "waitlist" ||
+    value === "approved" ||
+    value === "rejected" ||
+    value === "suspended"
+  ) {
+    return value;
+  }
+  throw new Error("Invalid membership status.");
+}
+
 function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: string) {
   after(async () => {
     try {
@@ -66,64 +117,252 @@ function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: st
   });
 }
 
-export async function createManagedAccountAction(slug: string, formData: FormData) {
-  const { org } = await requireAdminForAction(slug);
-  const clerkAuth = await auth();
-  const email = String(formData.get("email") ?? "");
-  const name = String(formData.get("name") ?? "");
-  const role = String(formData.get("role") ?? "member") as "org_admin" | "member";
-  const status = String(formData.get("status") ?? "approved") as never;
-  if (!isClerkConfigured()) {
-    throw new Error("Clerk is not configured.");
+function cohortDetailStatusPath(slug: string, cohortId: string, status: string) {
+  return `/org/${slug}/admin/cohorts/${cohortId}?status=${status}`;
+}
+
+function parseCohortStudentLines(raw: string) {
+  const students = new Map<string, { email: string; name?: string }>();
+  const invalidLines: number[] = [];
+  let firstDataLine = true;
+  raw
+    .split(/\r?\n/)
+    .forEach((rawLine, index) => {
+      const line = rawLine.trim();
+      if (!line) {
+        return;
+      }
+
+      const [emailValue, ...nameValues] = line.split(",").map((value) => value.trim());
+      if (firstDataLine && emailValue.toLowerCase() === "email") {
+        firstDataLine = false;
+        return;
+      }
+      firstDataLine = false;
+      const normalizedEmail = emailValue.toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) {
+        invalidLines.push(index + 1);
+        return;
+      }
+
+      students.set(normalizedEmail, {
+        email: normalizedEmail,
+        name: nameValues.join(", ").trim() || undefined,
+      });
+    });
+
+  return { invalidLines, students: [...students.values()] };
+}
+
+export async function createCohortAction(slug: string, formData: FormData) {
+  const { org, membership } = await requireAdminForAction(slug);
+  const cohort = await createCohort({
+    orgId: org.id,
+    name: String(formData.get("name") ?? ""),
+    description: String(formData.get("description") ?? ""),
+    eventLabel: String(formData.get("event_label") ?? ""),
+    createdByMembershipId: membership.id,
+  });
+
+  revalidatePath(`/org/${slug}/admin/cohorts`);
+  redirect(`/org/${slug}/admin/cohorts/${cohort.id}?status=cohort_created`);
+}
+
+export async function importCohortStudentsAction(
+  slug: string,
+  cohortId: string,
+  formData: FormData,
+) {
+  const admin = await requireAdminForAction(slug);
+  const { org } = admin;
+  const { invalidLines, students } = parseCohortStudentLines(
+    String(formData.get("students") ?? ""),
+  );
+
+  if (invalidLines.length) {
+    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_import_invalid"));
   }
-  if (!clerkAuth.userId || !clerkAuth.orgId) {
-    throw new Error("A Clerk organization session is required.");
+  if (!students.length) {
+    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_import_empty"));
   }
-  if (!clerkAuth.has?.({ role: "org:admin" })) {
-    throw new Error("Missing Clerk organization membership permissions.");
+  if (students.length > 100) {
+    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_import_too_large"));
+  }
+  const e2eClerkContext = getE2ELocalClerkOrganizationContext();
+  if (!isClerkConfigured() && !e2eClerkContext) {
+    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_clerk_unconfigured"));
+  }
+  let clerkContext = e2eClerkContext
+    ? { organizationId: e2eClerkContext.orgId, userId: e2eClerkContext.userId }
+    : undefined;
+  if (!clerkContext) {
+    try {
+      clerkContext = await requireClerkAdminContextForAction(admin);
+    } catch {
+      redirect(cohortDetailStatusPath(slug, cohortId, "cohort_clerk_session_required"));
+    }
   }
 
-  const { membership } = await createManagedAccount({
+  const results = await importCohortMembers(org.id, cohortId, students);
+  const pendingInvitations = results.filter((result) => result.shouldInvite && result.user);
+  let invitationFailures = 0;
+  let invitationSuccesses = 0;
+  for (let index = 0; index < pendingInvitations.length; index += 10) {
+    const batch = pendingInvitations.slice(index, index + 10);
+    const settled = await Promise.allSettled(
+      batch.map((result) =>
+        sendMembershipInvitation({
+          forceNew: result.membership.clerkInvitationStatus === "failed",
+          inviterUserId: clerkContext.userId,
+          membership: result.membership,
+          org,
+          user: result.user!,
+        }),
+      ),
+    );
+    invitationSuccesses += settled.filter((result) => result.status === "fulfilled").length;
+    invitationFailures += settled.filter((result) => result.status === "rejected").length;
+  }
+
+  revalidatePath(`/org/${slug}/admin/cohorts`);
+  revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
+  revalidatePath(`/org/${slug}/admin/members`);
+  const status = invitationFailures
+    ? "cohort_students_partially_imported"
+    : "cohort_students_imported";
+  redirect(
+    `${cohortDetailStatusPath(slug, cohortId, status)}&sent=${invitationSuccesses}&failed=${invitationFailures}`,
+  );
+}
+
+export async function promoteCohortMembersAction(
+  slug: string,
+  cohortId: string,
+  formData: FormData,
+) {
+  const { org } = await requireAdminForAction(slug);
+  const membershipIds = formData
+    .getAll("membership_id")
+    .map((value) => String(value))
+    .filter(Boolean);
+
+  if (!membershipIds.length) {
+    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_no_selection"));
+  }
+
+  const results = await promoteCohortMembers(
+    org.id,
+    cohortId,
+    membershipIds,
+    String(formData.get("approval_note") ?? ""),
+  );
+
+  for (const result of results) {
+    if (result.statusChanged) {
+      enqueueNotificationWrite(
+        buildNotification(
+          `ntf_${nanoid(8)}`,
+          org.id,
+          result.membership.id,
+          "membership_approved",
+          "You’re approved for Wavespark",
+          "Your membership request was approved. You can now access the feed and matches.",
+          `/org/${slug}/feed`,
+        ),
+      );
+
+      const emailRecipient =
+        result.profile?.emailForIntro.trim() ||
+        (await getUserById(result.membership.userId))?.email;
+      if (emailRecipient) {
+        const feedUrl = absoluteAppUrl(`/org/${slug}/feed`);
+        enqueueNotificationEmail({
+          to: emailRecipient,
+          subject: "Your Wavespark membership is approved",
+          html: `<p>You’re approved for Wavespark.</p><p>Visit <a href="${feedUrl}">the community feed</a> to get started.</p>`,
+        });
+      }
+    }
+
+    if (result.profile) {
+      enqueueProfileMatchRecompute(slug, org.id, result.profile.id);
+    }
+  }
+
+  revalidatePath(`/org/${slug}/admin/cohorts`);
+  revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
+  revalidatePath(`/org/${slug}/admin/members`);
+  revalidatePath(`/org/${slug}/pending`);
+  redirect(cohortDetailStatusPath(slug, cohortId, "cohort_members_promoted"));
+}
+
+export async function createManagedAccountAction(slug: string, formData: FormData) {
+  const admin = await requireAdminForAction(slug);
+  const { org } = admin;
+  const email = String(formData.get("email") ?? "");
+  const name = String(formData.get("name") ?? "");
+  const role = membershipRole(formData.get("role") ?? "member");
+  const requestedStatus = membershipStatus(formData.get("status") ?? "pending");
+  const status = role === "org_admin" ? "approved" : requestedStatus;
+  const clerkContext = await requireClerkAdminContextForAction(admin);
+
+  const { membership, user } = await createManagedAccount({
     orgId: org.id,
     email,
     name,
     createPasswordCredential: false,
-    clerkRole: clerkRoleFromLocalRole(role),
     role,
     status,
   });
 
-  enqueueClerkOrganizationInvitation({
-    emailAddress: email,
-    inviterUserId: clerkAuth.userId,
-    organizationId: clerkAuth.orgId,
-    redirectUrl: absoluteAppUrl(`/org/${slug}/signin`),
-    role: clerkRoleFromLocalRole(role),
-    publicMetadata: {
-      orgSlug: slug,
-      membershipId: membership.id,
-      membershipRole: membership.role,
-    },
-  });
+  let failed = false;
+  try {
+    await sendMembershipInvitation({
+      forceNew: membership.clerkInvitationStatus === "failed",
+      inviterUserId: clerkContext.userId,
+      membership,
+      org,
+      user,
+    });
+  } catch {
+    failed = true;
+  }
 
   revalidatePath(`/org/${slug}/admin/members`);
-  redirect(`/org/${slug}/admin/members?status=member_invited`);
+  redirect(
+    `/org/${slug}/admin/members?status=${failed ? "member_invite_failed" : "member_invited"}`,
+  );
 }
 
 export async function updateMembershipAction(slug: string, membershipId: string, formData: FormData) {
-  const { org } = await requireAdminForAction(slug);
+  const admin = await requireAdminForAction(slug);
+  const { org } = admin;
+  const clerkContext = await requireClerkAdminContextForAction(admin);
   const targetRecord = await getMembershipRecordById(membershipId);
   const targetMembership = targetRecord?.membership;
   const targetProfile = targetRecord?.profile;
-  if (!targetMembership || targetMembership.orgId !== org.id) {
+  const targetUser = targetRecord?.user;
+  if (!targetMembership || !targetUser || targetMembership.orgId !== org.id) {
     throw new Error("Unauthorized.");
   }
+  const nextRole = membershipRole(formData.get("role") ?? targetMembership.role);
+  const nextStatus = membershipStatus(formData.get("status") ?? targetMembership.status);
+  const previousStatus = targetMembership.status;
+  if (
+    targetMembership.id === admin.membership.id &&
+    (nextRole !== "org_admin" || nextStatus !== "approved")
+  ) {
+    throw new Error("You cannot remove your own active admin access.");
+  }
 
+  const roleUpdated = await updateMembershipRole(membershipId, nextRole, {
+    existingMembership: targetMembership,
+  });
   const membership = await updateMembershipStatus(
     membershipId,
-    String(formData.get("status") ?? "pending") as never,
+    nextStatus,
     String(formData.get("approval_note") ?? ""),
-    { existingMembership: targetMembership, recomputeMatches: false },
+    { existingMembership: roleUpdated ?? targetMembership, recomputeMatches: false },
   );
 
   if (!org || !membership) {
@@ -134,7 +373,19 @@ export async function updateMembershipAction(slug: string, membershipId: string,
     enqueueProfileMatchRecompute(slug, org.id, targetProfile.id);
   }
 
-  if (membership.status === "approved") {
+  let clerkFailed = false;
+  try {
+    await syncMembershipClerkLifecycle({
+      actorUserId: clerkContext.userId,
+      membership,
+      org,
+      user: targetUser,
+    });
+  } catch {
+    clerkFailed = true;
+  }
+
+  if (previousStatus !== "approved" && membership.status === "approved") {
     enqueueNotificationWrite(
       buildNotification(
         `ntf_${nanoid(8)}`,
@@ -159,7 +410,59 @@ export async function updateMembershipAction(slug: string, membershipId: string,
 
   revalidatePath(`/org/${slug}/admin/members`);
   revalidatePath(`/org/${slug}/pending`);
-  redirect(`/org/${slug}/admin/members?status=membership_updated`);
+  redirect(
+    `/org/${slug}/admin/members?status=${clerkFailed ? "membership_clerk_failed" : "membership_updated"}`,
+  );
+}
+
+export async function resendMembershipInvitationAction(slug: string, membershipId: string) {
+  const admin = await requireAdminForAction(slug);
+  const clerkContext = await requireClerkAdminContextForAction(admin);
+  const record = await getMembershipRecordById(membershipId);
+  if (!record?.user || record.membership.orgId !== admin.org.id) {
+    throw new Error("Unauthorized.");
+  }
+  let failed = false;
+  try {
+    await sendMembershipInvitation({
+      forceNew: true,
+      inviterUserId: clerkContext.userId,
+      membership: record.membership,
+      org: admin.org,
+      user: record.user,
+    });
+  } catch {
+    failed = true;
+  }
+  revalidatePath(`/org/${slug}/admin/members`);
+  revalidatePath(`/org/${slug}/admin/cohorts`);
+  redirect(
+    `/org/${slug}/admin/members?status=${failed ? "member_invite_failed" : "member_invited"}`,
+  );
+}
+
+export async function revokeMembershipInvitationAction(slug: string, membershipId: string) {
+  const admin = await requireAdminForAction(slug);
+  const clerkContext = await requireClerkAdminContextForAction(admin);
+  const record = await getMembershipRecordById(membershipId);
+  if (!record?.user || record.membership.orgId !== admin.org.id) {
+    throw new Error("Unauthorized.");
+  }
+  let failed = false;
+  try {
+    await revokeMembershipInvitation({
+      actorUserId: clerkContext.userId,
+      membership: record.membership,
+      org: admin.org,
+      user: record.user,
+    });
+  } catch {
+    failed = true;
+  }
+  revalidatePath(`/org/${slug}/admin/members`);
+  redirect(
+    `/org/${slug}/admin/members?status=${failed ? "member_invite_failed" : "member_invite_revoked"}`,
+  );
 }
 
 export async function updatePostModerationAction(slug: string, postId: string, formData: FormData) {
@@ -212,21 +515,35 @@ export async function updateProfileFlagsAction(slug: string, profileId: string, 
   redirect(`/org/${slug}/admin/profiles?status=profile_flags_updated`);
 }
 
-export async function createManualIntroAction(slug: string, requesterMembershipId: string, formData: FormData) {
+export async function createManualIntroAction(slug: string, formData: FormData) {
   const { org, membership: adminMembership } = await requireAdminForAction(slug);
-  if (requesterMembershipId !== adminMembership.id) {
+  const requesterMembershipId = String(formData.get("requester_membership_id") ?? "");
+  const receiverMembershipId = String(formData.get("receiver_membership_id") ?? "");
+  if (!requesterMembershipId || requesterMembershipId === receiverMembershipId) {
     throw new Error("Unauthorized.");
   }
-
-  const receiverMembershipId = String(formData.get("receiver_membership_id") ?? "");
-  const receiverMembership = await getMembershipById(receiverMembershipId);
-  if (!receiverMembership || receiverMembership.orgId !== org.id) {
-    throw new Error("Unauthorized.");
+  const [requesterRecord, receiverRecord] = await Promise.all([
+    getMembershipRecordById(requesterMembershipId),
+    getMembershipRecordById(receiverMembershipId),
+  ]);
+  const requesterMembership = requesterRecord?.membership;
+  const receiverMembership = receiverRecord?.membership;
+  if (
+    !requesterMembership ||
+    !receiverMembership ||
+    requesterMembership.orgId !== org.id ||
+    receiverMembership.orgId !== org.id ||
+    requesterMembership.status !== "approved" ||
+    receiverMembership.status !== "approved" ||
+    !requesterRecord.profile?.introOptIn ||
+    !receiverRecord.profile?.introOptIn
+  ) {
+    throw new Error("Both members must be approved and available for introductions.");
   }
 
   const intro = await createIntroRequest({
     orgId: org.id,
-    requesterMembershipId: adminMembership.id,
+    requesterMembershipId: requesterMembership.id,
     receiverMembershipId: receiverMembership.id,
     sourceType: "admin_manual",
     sourceId: `manual_${nanoid(8)}`,
@@ -241,7 +558,7 @@ export async function createManualIntroAction(slug: string, requesterMembershipI
   enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
-      org.id,
+    org.id,
       receiverMembership.id,
       "manual_intro",
       "An admin created an introduction for you",
@@ -255,6 +572,7 @@ export async function createManualIntroAction(slug: string, requesterMembershipI
     membershipId: adminMembership.id,
     eventName: "intro_requested",
     payload: {
+      requesterMembershipId: intro.requesterMembershipId,
       receiverMembershipId: intro.receiverMembershipId,
       sourceType: intro.sourceType,
     },

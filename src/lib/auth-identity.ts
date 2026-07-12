@@ -1,11 +1,15 @@
 import { cookies } from "next/headers";
 
 import { hasPotentialClerkSessionCookie } from "@/lib/clerk-cookies";
-import { isClerkConfigured } from "@/lib/env";
+import { getE2ELocalAuthPayloadFromCookies } from "@/lib/e2e-local-auth";
+import { env, isClerkConfigured } from "@/lib/env";
 
 type ClerkServer = typeof import("@clerk/nextjs/server");
 type ClerkAuth = Awaited<ReturnType<ClerkServer["auth"]>>;
 type ClerkSessionClaims = NonNullable<ClerkAuth["sessionClaims"]>;
+type ClerkJwtClaims = Awaited<ReturnType<ClerkServer["verifyToken"]>>;
+type ClerkVerifyTokenOptions = NonNullable<Parameters<ClerkServer["verifyToken"]>[1]>;
+type ClerkClaims = ClerkSessionClaims | ClerkJwtClaims;
 type ClerkClient = Awaited<ReturnType<ClerkServer["clerkClient"]>>;
 type ClerkUser = Awaited<ReturnType<ClerkClient["users"]["getUser"]>>;
 
@@ -18,7 +22,7 @@ export interface AuthIdentity {
   email: string;
   name: string;
   imageUrl?: string;
-  provider: "clerk";
+  provider: "clerk" | "e2e";
 }
 
 type ClerkOrgIdentity = Pick<
@@ -52,12 +56,13 @@ function identityFromClerkUser(
   };
 }
 
-function stringClaim(
-  claims: ClerkSessionClaims,
-  keys: string[],
-): string | undefined {
+function claimValue(claims: ClerkClaims | Record<string, unknown>, key: string) {
+  return (claims as Record<string, unknown>)[key];
+}
+
+function stringClaim(claims: ClerkClaims | Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
-    const value = claims[key];
+    const value = claimValue(claims, key);
 
     if (typeof value === "string" && value.trim()) {
       return value.trim();
@@ -68,7 +73,7 @@ function stringClaim(
 }
 
 function identityFromClerkClaims(
-  claims: ClerkSessionClaims | null | undefined,
+  claims: ClerkClaims | null | undefined,
   orgIdentity: ClerkOrgIdentity,
 ): AuthIdentity | null {
   if (!claims) {
@@ -101,27 +106,188 @@ function identityFromClerkClaims(
   };
 }
 
-async function hasRequestClerkSessionCookie() {
-  const cookieStore = await cookies();
-  return hasPotentialClerkSessionCookie(cookieStore.getAll());
+function recordClaim(claims: ClerkClaims, key: string) {
+  const value = claimValue(claims, key);
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function orgRoleFromCompactClaim(role?: string) {
+  if (!role) {
+    return undefined;
+  }
+
+  return role.startsWith("org:") ? role : `org:${role}`;
+}
+
+function orgIdentityFromClerkClaims(
+  claims: ClerkClaims,
+  clerkUserId: string,
+): ClerkOrgIdentity {
+  const compactOrg = recordClaim(claims, "o");
+  const compactOrgRole = orgRoleFromCompactClaim(
+    compactOrg ? stringClaim(compactOrg, ["rol"]) : undefined,
+  );
+  const orgRole = compactOrgRole ?? stringClaim(claims, ["org_role"]);
+
+  return {
+    clerkUserId,
+    clerkOrgId:
+      (compactOrg ? stringClaim(compactOrg, ["id"]) : undefined) ??
+      stringClaim(claims, ["org_id"]),
+    clerkOrgSlug:
+      (compactOrg ? stringClaim(compactOrg, ["slg"]) : undefined) ??
+      stringClaim(claims, ["org_slug"]),
+    clerkOrgRole: orgRole,
+    canManageOrgMemberships: orgRole === "org:admin",
+  };
+}
+
+function clerkSessionTokenVerificationOptions(): ClerkVerifyTokenOptions | null {
+  if (env.clerkJwtKey) {
+    return { jwtKey: env.clerkJwtKey };
+  }
+
+  if (env.clerkSecretKey) {
+    return { secretKey: env.clerkSecretKey };
+  }
+
+  return null;
+}
+
+function verificationMode() {
+  return env.clerkJwtKey ? "jwtKey" : "secretKey";
+}
+
+function authErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      message: error.message.slice(0, 240),
+      name: error.name,
+    };
+  }
+
+  return {
+    message: String(error).slice(0, 240),
+    name: typeof error,
+  };
+}
+
+async function identityFromClerkSessionToken(
+  clerkSessionToken: string,
+  server: Pick<ClerkServer, "clerkClient" | "verifyToken">,
+) {
+  const verifyOptions = clerkSessionTokenVerificationOptions();
+
+  if (!verifyOptions) {
+    console.warn("auth_clerk_session_token_verification_unconfigured", {
+      hasJwtKey: Boolean(env.clerkJwtKey),
+      hasSecretKey: Boolean(env.clerkSecretKey),
+    });
+    return null;
+  }
+
+  let claims: ClerkJwtClaims;
+  try {
+    claims = await server.verifyToken(clerkSessionToken, verifyOptions);
+  } catch (error) {
+    console.warn("auth_clerk_session_token_verification_failed", {
+      ...authErrorMessage(error),
+      hasJwtKey: Boolean(env.clerkJwtKey),
+      hasSecretKey: Boolean(env.clerkSecretKey),
+      verificationMode: verificationMode(),
+    });
+    return null;
+  }
+
+  const clerkUserId = stringClaim(claims, ["sub"]);
+
+  if (!clerkUserId) {
+    console.warn("auth_clerk_session_token_missing_subject", {
+      verificationMode: verificationMode(),
+    });
+    return null;
+  }
+
+  const orgIdentity = orgIdentityFromClerkClaims(claims, clerkUserId);
+  const claimsIdentity = identityFromClerkClaims(claims, orgIdentity);
+
+  if (claimsIdentity) {
+    return claimsIdentity;
+  }
+
+  const client = await server.clerkClient();
+  return identityFromClerkUser(
+    await client.users.getUser(clerkUserId),
+    orgIdentity,
+  );
 }
 
 export async function getCurrentAuthIdentity(
-  options: { allowClerkLookupWithoutCookie?: boolean } = {},
+  options: {
+    allowClerkLookupWithoutCookie?: boolean;
+    clerkSessionToken?: string;
+  } = {},
 ): Promise<AuthIdentity | null> {
+  const cookieStore = await cookies();
+  const requestCookies = cookieStore.getAll();
+  const e2ePayload = getE2ELocalAuthPayloadFromCookies(requestCookies);
+  if (e2ePayload) {
+    return {
+      canManageOrgMemberships: e2ePayload.orgRole === "org:admin",
+      clerkOrgId: e2ePayload.orgId,
+      clerkOrgRole: e2ePayload.orgRole,
+      clerkOrgSlug: e2ePayload.orgSlug,
+      clerkUserId: `e2e:${e2ePayload.email}`,
+      email: e2ePayload.email,
+      imageUrl: e2ePayload.imageUrl,
+      name: e2ePayload.name,
+      provider: "e2e",
+    };
+  }
+
   if (!isClerkConfigured()) {
     return null;
   }
 
   if (
     !options.allowClerkLookupWithoutCookie &&
-    !(await hasRequestClerkSessionCookie())
+    !hasPotentialClerkSessionCookie(requestCookies)
   ) {
     return null;
   }
 
-  const { auth, clerkClient } = await import("@clerk/nextjs/server");
-  const clerkAuth = await auth();
+  const { auth, clerkClient, verifyToken } = await import("@clerk/nextjs/server");
+  const clerkSessionToken = options.clerkSessionToken?.trim();
+
+  if (clerkSessionToken) {
+    const tokenIdentity = await identityFromClerkSessionToken(
+      clerkSessionToken,
+      { clerkClient, verifyToken },
+    );
+
+    if (tokenIdentity) {
+      return tokenIdentity;
+    }
+  }
+
+  let clerkAuth: ClerkAuth;
+  try {
+    clerkAuth = await auth();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("clerkMiddleware")
+    ) {
+      return null;
+    }
+
+    throw error;
+  }
 
   if (!clerkAuth.userId) {
     return null;

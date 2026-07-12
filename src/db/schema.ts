@@ -83,6 +83,7 @@ export const users = pgTable(
     name: text("name").notNull(),
     imageUrl: text("image_url").notNull(),
     platformRole: platformRoleEnum("platform_role").notNull().default("standard"),
+    anonymizedAt: timestamp("anonymized_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
@@ -136,6 +137,12 @@ export const memberships = pgTable("memberships", {
   id: text("id").primaryKey(),
   clerkMembershipId: text("clerk_membership_id"),
   clerkRole: text("clerk_role"),
+  clerkInvitationId: text("clerk_invitation_id"),
+  clerkInvitationStatus: text("clerk_invitation_status"),
+  clerkInvitationError: text("clerk_invitation_error"),
+  clerkInvitationUpdatedAt: timestamp("clerk_invitation_updated_at", {
+    withTimezone: true,
+  }),
   orgId: text("org_id").notNull(),
   userId: text("user_id").notNull(),
   role: membershipRoleEnum("role").notNull().default("member"),
@@ -153,7 +160,45 @@ export const memberships = pgTable("memberships", {
   clerkMembershipIdx: uniqueIndex("memberships_clerk_membership_id_idx").on(
     table.clerkMembershipId,
   ),
+  clerkInvitationIdx: uniqueIndex("memberships_clerk_invitation_id_idx").on(
+    table.clerkInvitationId,
+  ),
 }));
+
+export const cohorts = pgTable("cohorts", {
+  id: text("id").primaryKey(),
+  orgId: text("org_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  eventLabel: text("event_label").notNull(),
+  status: text("status").notNull().default("active"),
+  createdByMembershipId: text("created_by_membership_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
+
+export const cohortMembers = pgTable(
+  "cohort_members",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    cohortId: text("cohort_id").notNull(),
+    membershipId: text("membership_id").notNull(),
+    invitedEmail: text("invited_email").notNull(),
+    invitedName: text("invited_name").notNull(),
+    status: text("status").notNull().default("invited"),
+    invitedAt: timestamp("invited_at", { withTimezone: true }).notNull(),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    cohortMembershipIdx: uniqueIndex("cohort_members_cohort_membership_idx").on(
+      table.cohortId,
+      table.membershipId,
+    ),
+  }),
+);
 
 export const clerkWebhookEvents = pgTable("clerk_webhook_events", {
   id: text("id").primaryKey(),

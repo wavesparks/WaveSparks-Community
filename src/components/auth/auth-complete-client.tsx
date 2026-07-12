@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useClerk } from "@clerk/nextjs";
 import { LoaderCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -10,12 +10,34 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
 
+const authCompleteRetryCount = 8;
+const authCompleteRetryDelayMs = 750;
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export function AuthCompleteClient({ slug }: { slug: string }) {
   const { getToken, isLoaded, isSignedIn } = useAuth();
+  const { setActive, signOut } = useClerk();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [leaving, setLeaving] = useState(false);
+
+  async function handleBackToSignIn() {
+    if (leaving) {
+      return;
+    }
+
+    setLeaving(true);
+
+    try {
+      await signOut({ redirectUrl: `/org/${slug}/signin` });
+    } catch {
+      router.replace(`/org/${slug}/signin`);
+    }
+  }
 
   useEffect(() => {
     if (!isLoaded) {
@@ -31,31 +53,72 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
       }
 
       try {
-        const token = await getToken();
-        const response = await fetch(
-          `/api/internal/auth/complete?orgSlug=${encodeURIComponent(slug)}`,
-          {
-            cache: "no-store",
-            headers: token ? { authorization: `Bearer ${token}` } : undefined,
-          },
-        );
+        for (let index = 0; index < authCompleteRetryCount; index += 1) {
+          const token = await getToken({ skipCache: index > 0 });
 
-        if (!active) {
+          if (!active) {
+            return;
+          }
+
+          if (!token) {
+            await wait(authCompleteRetryDelayMs);
+            continue;
+          }
+
+          const response = await fetch(
+            `/api/internal/auth/complete?orgSlug=${encodeURIComponent(slug)}`,
+            {
+              cache: "no-store",
+              headers: { authorization: `Bearer ${token}` },
+            },
+          );
+
+          if (!active) {
+            return;
+          }
+
+          if (response.status === 401 && index < authCompleteRetryCount - 1) {
+            await wait(authCompleteRetryDelayMs);
+            continue;
+          }
+
+          if (response.status === 401) {
+            setError("We could not verify your Clerk session. Please try again.");
+            return;
+          }
+
+          if (response.status === 403) {
+            setError(
+              "This Clerk account does not have an active Wavespark invitation. Sign out and use the email address that was invited.",
+            );
+            return;
+          }
+
+          if (!response.ok) {
+            setError("We could not finish the workspace handoff. Please try again.");
+            return;
+          }
+
+          const payload = (await response.json()) as {
+            clerkOrgId?: string;
+            state?: "ready" | "pending" | "inactive";
+            target?: string;
+          };
+          const target = payload.target ?? `/org/${slug}/feed`;
+          if (payload.clerkOrgId && payload.state !== "inactive") {
+            await setActive({
+              organization: payload.clerkOrgId,
+              redirectUrl: target,
+            });
+            return;
+          }
+          router.replace(target);
           return;
         }
 
-        if (response.status === 401) {
-          router.replace(`/org/${slug}/signin`);
-          return;
+        if (active) {
+          setError("We could not verify your Clerk session. Please try again.");
         }
-
-        if (!response.ok) {
-          setError("We could not finish the workspace handoff. Please try again.");
-          return;
-        }
-
-        const payload = (await response.json()) as { target?: string };
-        router.replace(payload.target ?? `/org/${slug}/feed`);
       } catch {
         if (active) {
           setError("We could not finish the workspace handoff. Please try again.");
@@ -68,7 +131,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
     return () => {
       active = false;
     };
-  }, [attempt, getToken, isLoaded, isSignedIn, router, slug]);
+  }, [attempt, getToken, isLoaded, isSignedIn, router, setActive, slug]);
 
   return (
     <main className="ws-page-shell grid min-h-screen place-items-center px-4 py-8">
@@ -98,10 +161,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
             <Button
               aria-busy={leaving}
               disabled={leaving}
-              onClick={() => {
-                setLeaving(true);
-                router.replace(`/org/${slug}/signin`);
-              }}
+              onClick={() => void handleBackToSignIn()}
               type="button"
               variant="secondary"
             >

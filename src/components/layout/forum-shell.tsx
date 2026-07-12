@@ -10,7 +10,7 @@ import {
   UserCircle2,
   UsersRound,
 } from "lucide-react";
-import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
+import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 
@@ -182,15 +182,7 @@ export function ForumShell({
             {viewer ? (
               <div className="hidden items-center gap-2 border-l border-[var(--line)] pl-2 lg:flex">
                 {clerkConfigured ? (
-                  <>
-                    <OrganizationSwitcher
-                      afterCreateOrganizationUrl="/org/:slug/feed"
-                      afterLeaveOrganizationUrl="/org/wavespark/feed"
-                      afterSelectOrganizationUrl="/org/:slug/feed"
-                      hidePersonal
-                    />
-                    <UserButton />
-                  </>
+                  <UserButton />
                 ) : (
                   <>
                     <Avatar
@@ -198,7 +190,11 @@ export function ForumShell({
                       name={viewer.profile?.preferredName ?? viewer.user.name}
                       src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
                     />
-                    <SignOutButton callbackUrl={`/org/${org.slug}/feed`} tone="light" />
+                    <SignOutButton
+                      callbackUrl={`/org/${org.slug}/feed`}
+                      mode="local"
+                      tone="light"
+                    />
                   </>
                 )}
               </div>

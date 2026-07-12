@@ -43,28 +43,40 @@ function parseEnvFile(contents: string) {
   return values;
 }
 
-export function loadScriptEnv(mode: ScriptEnvMode = "production", cwd = process.cwd()) {
-  const candidates = [
+function scriptEnvCandidates(mode: ScriptEnvMode) {
+  return [
     `.env.${mode}.local`,
     mode === "test" ? undefined : ".env.local",
     `.env.${mode}`,
     ".env",
   ].filter(Boolean) as string[];
+}
+
+export function readScriptEnv(mode: ScriptEnvMode, cwd = process.cwd()) {
+  const values: Record<string, string> = {};
   const loadedFiles: string[] = [];
 
-  for (const file of candidates) {
+  for (const file of scriptEnvCandidates(mode)) {
     const filePath = path.join(cwd, file);
     if (!existsSync(filePath)) {
       continue;
     }
 
-    const values = parseEnvFile(readFileSync(filePath, "utf8"));
-    for (const [key, value] of Object.entries(values)) {
-      if (process.env[key] === undefined) {
-        process.env[key] = value;
-      }
+    for (const [key, value] of Object.entries(parseEnvFile(readFileSync(filePath, "utf8")))) {
+      values[key] ??= value;
     }
     loadedFiles.push(file);
+  }
+
+  return { loadedFiles, values };
+}
+
+export function loadScriptEnv(mode: ScriptEnvMode = "production", cwd = process.cwd()) {
+  const { loadedFiles, values } = readScriptEnv(mode, cwd);
+  for (const [key, value] of Object.entries(values)) {
+    if (process.env[key] === undefined) {
+      process.env[key] = value;
+    }
   }
 
   return loadedFiles;

@@ -11,7 +11,7 @@ export function IntroRequestCard({
   actions?: React.ReactNode;
 }) {
   return (
-    <Card className="space-y-5">
+    <Card className="space-y-5" data-testid="intro-request-card">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase text-[var(--accent)]">

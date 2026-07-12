@@ -271,10 +271,13 @@ describe("permission guards", () => {
 
   it("reveals contact details only after an accepted intro and only to the participants", async () => {
     const acceptedIntro = (await getIntroRequestById("intro_1"))!;
+    const pendingIntro = (await getIntroRequestById("intro_2"))!;
 
     expect(canViewContactDetails("mem_jules", acceptedIntro)).toBe(true);
     expect(canViewContactDetails("mem_marcus", acceptedIntro)).toBe(true);
     expect(canViewContactDetails("mem_rhea", acceptedIntro)).toBe(false);
+    expect(canViewContactDetails(pendingIntro.requesterMembershipId, pendingIntro)).toBe(false);
+    expect(canViewContactDetails(pendingIntro.receiverMembershipId, pendingIntro)).toBe(false);
     await expect(getIntroRequestById("intro_missing")).resolves.toBeUndefined();
   });
 });

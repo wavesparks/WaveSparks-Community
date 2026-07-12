@@ -29,6 +29,20 @@
       "when": 1781611243103,
       "tag": "0003_sturdy_butterfly",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783237346100,
+      "tag": "0004_even_roulette",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783658130712,
+      "tag": "0005_quick_warpath",
+      "breakpoints": true
     }
   ]
 }

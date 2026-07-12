@@ -28,6 +28,9 @@ import {
 import { recomputeMatchesForProfiles } from "@/server/matching";
 import type {
   AnalyticsEvent,
+  Cohort,
+  CohortMember,
+  CohortMemberStatus,
   Comment,
   Follow,
   IntroRequest,
@@ -36,6 +39,7 @@ import type {
   MatchType,
   AffiliationType,
   ClerkOrgRole,
+  ClerkInvitationStatus,
   Membership,
   MembershipRole,
   MembershipStatus,
@@ -72,6 +76,8 @@ export interface StoreState {
   users: User[];
   passwordCredentials: PasswordCredential[];
   clerkWebhookEvents: ClerkWebhookEventRecord[];
+  cohorts: Cohort[];
+  cohortMembers: CohortMember[];
   memberships: Membership[];
   profiles: Profile[];
   profileLinks: ProfileLink[];
@@ -94,6 +100,42 @@ export interface AdminOverviewData {
 export interface PublicOrgStats {
   approvedMembers: number;
   introRequestsAccepted: number;
+}
+
+export interface CohortRecord {
+  cohort: Cohort;
+  totalMembers: number;
+  invitedMembers: number;
+  promotedMembers: number;
+}
+
+export interface CohortMemberRecord {
+  cohortMember: CohortMember;
+  membership: Membership;
+  user?: User;
+  profile?: Profile;
+}
+
+export interface CohortImportInput {
+  email: string;
+  name?: string;
+}
+
+export interface CohortImportResult {
+  cohortMember: CohortMember;
+  membership: Membership;
+  user?: User;
+  profile?: Profile;
+  membershipCreated: boolean;
+  cohortMemberCreated: boolean;
+  shouldInvite: boolean;
+}
+
+export interface CohortPromotionResult {
+  cohortMember: CohortMember;
+  membership: Membership;
+  profile?: Profile;
+  statusChanged: boolean;
 }
 
 export interface MembershipRecord {
@@ -214,6 +256,8 @@ function initializeStore(): StoreState {
     users: structuredClone(seedUsers),
     passwordCredentials: [],
     clerkWebhookEvents: [],
+    cohorts: [],
+    cohortMembers: [],
     memberships: structuredClone(seedMemberships),
     profiles: structuredClone(seedProfiles),
     profileLinks: structuredClone(seedProfileLinks),
@@ -241,6 +285,8 @@ function ensureStoreShape(store: StoreState) {
   store.postSaves ??= structuredClone(seedPostSaves);
   store.passwordCredentials ??= [];
   store.clerkWebhookEvents ??= [];
+  store.cohorts ??= [];
+  store.cohortMembers ??= [];
   return store;
 }
 
@@ -295,6 +341,7 @@ function userFromRow(row: typeof dbSchema.users.$inferSelect): User {
     name: row.name,
     imageUrl: row.imageUrl,
     platformRole: row.platformRole,
+    anonymizedAt: maybeIso(row.anonymizedAt),
     createdAt: requiredIso(row.createdAt),
     updatedAt: requiredIso(row.updatedAt),
   };
@@ -305,6 +352,11 @@ function membershipFromRow(row: typeof dbSchema.memberships.$inferSelect): Membe
     id: row.id,
     clerkMembershipId: row.clerkMembershipId ?? undefined,
     clerkRole: row.clerkRole as ClerkOrgRole | undefined,
+    clerkInvitationId: row.clerkInvitationId ?? undefined,
+    clerkInvitationStatus:
+      (row.clerkInvitationStatus as ClerkInvitationStatus | null) ?? undefined,
+    clerkInvitationError: row.clerkInvitationError ?? undefined,
+    clerkInvitationUpdatedAt: maybeIso(row.clerkInvitationUpdatedAt),
     orgId: row.orgId,
     userId: row.userId,
     role: row.role,
@@ -316,6 +368,36 @@ function membershipFromRow(row: typeof dbSchema.memberships.$inferSelect): Membe
     invitedByUserId: row.invitedByUserId ?? undefined,
     approvalNote: row.approvalNote ?? undefined,
     approvedAt: maybeIso(row.approvedAt),
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function cohortFromRow(row: typeof dbSchema.cohorts.$inferSelect): Cohort {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    name: row.name,
+    description: row.description,
+    eventLabel: row.eventLabel,
+    status: row.status as Cohort["status"],
+    createdByMembershipId: row.createdByMembershipId ?? undefined,
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function cohortMemberFromRow(row: typeof dbSchema.cohortMembers.$inferSelect): CohortMember {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    cohortId: row.cohortId,
+    membershipId: row.membershipId,
+    invitedEmail: row.invitedEmail,
+    invitedName: row.invitedName,
+    status: row.status as CohortMemberStatus,
+    invitedAt: requiredIso(row.invitedAt),
+    promotedAt: maybeIso(row.promotedAt),
     createdAt: requiredIso(row.createdAt),
     updatedAt: requiredIso(row.updatedAt),
   };
@@ -516,6 +598,7 @@ function notificationFromRow(row: typeof dbSchema.notifications.$inferSelect): N
 function userInsert(user: User): typeof dbSchema.users.$inferInsert {
   return {
     ...user,
+    anonymizedAt: maybeDate(user.anonymizedAt),
     createdAt: new Date(user.createdAt),
     updatedAt: new Date(user.updatedAt),
   };
@@ -524,9 +607,30 @@ function userInsert(user: User): typeof dbSchema.users.$inferInsert {
 function membershipInsert(membership: Membership): typeof dbSchema.memberships.$inferInsert {
   return {
     ...membership,
+    clerkInvitationUpdatedAt: maybeDate(membership.clerkInvitationUpdatedAt),
     createdAt: new Date(membership.createdAt),
     updatedAt: new Date(membership.updatedAt),
     approvedAt: maybeDate(membership.approvedAt),
+  };
+}
+
+function cohortInsert(cohort: Cohort): typeof dbSchema.cohorts.$inferInsert {
+  return {
+    ...cohort,
+    createdAt: new Date(cohort.createdAt),
+    updatedAt: new Date(cohort.updatedAt),
+  };
+}
+
+function cohortMemberInsert(
+  cohortMember: CohortMember,
+): typeof dbSchema.cohortMembers.$inferInsert {
+  return {
+    ...cohortMember,
+    invitedAt: new Date(cohortMember.invitedAt),
+    promotedAt: maybeDate(cohortMember.promotedAt),
+    createdAt: new Date(cohortMember.createdAt),
+    updatedAt: new Date(cohortMember.updatedAt),
   };
 }
 
@@ -638,6 +742,19 @@ export async function recordClerkWebhookEvent(id: string, eventType: string) {
   return Boolean(row);
 }
 
+export async function hasClerkWebhookEvent(id: string) {
+  if (!usesDatabase) {
+    return getStore().clerkWebhookEvents.some((event) => event.id === id);
+  }
+
+  const [row] = await getDb()
+    .select({ id: dbSchema.clerkWebhookEvents.id })
+    .from(dbSchema.clerkWebhookEvents)
+    .where(eq(dbSchema.clerkWebhookEvents.id, id))
+    .limit(1);
+  return Boolean(row);
+}
+
 export async function getOrganizationBySlug(slug: string) {
   if (!usesDatabase) {
     return getStore().organizations.find((organization) => organization.slug === slug);
@@ -678,6 +795,23 @@ export async function linkOrganizationToClerkOrg(orgId: string, clerkOrgId: stri
   const [row] = await getDb()
     .update(dbSchema.organizations)
     .set({ clerkOrgId })
+    .where(eq(dbSchema.organizations.id, orgId))
+    .returning();
+  return row ? organizationFromRow(row) : undefined;
+}
+
+export async function unlinkOrganizationFromClerkOrg(orgId: string) {
+  if (!usesDatabase) {
+    const organization = getStore().organizations.find((candidate) => candidate.id === orgId);
+    if (organization) {
+      organization.clerkOrgId = undefined;
+    }
+    return organization;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.organizations)
+    .set({ clerkOrgId: null })
     .where(eq(dbSchema.organizations.id, orgId))
     .returning();
   return row ? organizationFromRow(row) : undefined;
@@ -767,6 +901,51 @@ export async function getViewerRecordByEmailAndOrgId(orgId: string, email: strin
     )
     .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
     .where(sql`lower(${dbSchema.users.email}) = ${normalizedEmail}`)
+    .limit(1);
+
+  return row
+    ? {
+        user: userFromRow(row.user),
+        membership: row.membership ? membershipFromRow(row.membership) : undefined,
+        profile: row.profile ? profileFromRow(row.profile) : undefined,
+      }
+    : { user: undefined, membership: undefined, profile: undefined };
+}
+
+export async function getViewerRecordByClerkUserIdAndOrgId(
+  orgId: string,
+  clerkUserId: string,
+) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const user = store.users.find((candidate) => candidate.clerkUserId === clerkUserId);
+    const membership = user
+      ? store.memberships.find(
+          (candidate) => candidate.orgId === orgId && candidate.userId === user.id,
+        )
+      : undefined;
+    const profile = membership
+      ? store.profiles.find((candidate) => candidate.membershipId === membership.id)
+      : undefined;
+    return { user, membership, profile };
+  }
+
+  const [row] = await getDb()
+    .select({
+      user: dbSchema.users,
+      membership: dbSchema.memberships,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.users)
+    .leftJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.orgId, orgId),
+        eq(dbSchema.memberships.userId, dbSchema.users.id),
+      ),
+    )
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(eq(dbSchema.users.clerkUserId, clerkUserId))
     .limit(1);
 
   return row
@@ -1012,10 +1191,12 @@ export async function upsertSessionUser(input: {
   if (!usesDatabase) {
     const store = getStore();
     if (existing) {
+      existing.email = email;
       existing.name = input.name;
       existing.imageUrl = input.imageUrl ?? existing.imageUrl;
       existing.clerkUserId = input.clerkUserId ?? existing.clerkUserId;
       existing.platformRole = platformRole;
+      existing.anonymizedAt = undefined;
       existing.updatedAt = now;
       return existing;
     }
@@ -1041,9 +1222,11 @@ export async function upsertSessionUser(input: {
       .update(dbSchema.users)
       .set({
         clerkUserId: input.clerkUserId ?? existing.clerkUserId,
+        email,
         name: input.name,
         imageUrl: input.imageUrl ?? existing.imageUrl,
         platformRole,
+        anonymizedAt: null,
         updatedAt: new Date(now),
       })
       .where(eq(dbSchema.users.id, existing.id))
@@ -1104,6 +1287,10 @@ export async function ensureMembership(
         ...existing,
         clerkMembershipId: options.clerkMembershipId ?? existing.clerkMembershipId,
         clerkRole: (clerkRole as ClerkOrgRole | undefined) ?? existing.clerkRole,
+        clerkInvitationId: existing.clerkInvitationId,
+        clerkInvitationStatus: existing.clerkInvitationStatus,
+        clerkInvitationError: existing.clerkInvitationError,
+        clerkInvitationUpdatedAt: existing.clerkInvitationUpdatedAt,
         role: "org_admin",
         status: "approved",
         approvedAt: existing.approvedAt ?? now,
@@ -1223,7 +1410,7 @@ export async function createManagedAccount(input: {
     throw new Error("Password must be at least 8 characters.");
   }
 
-  const clerkRole = input.clerkRole ?? (input.role === "org_admin" ? "org:admin" : "org:member");
+  const clerkRole = input.clerkRole;
   const user = await upsertSessionUser({ clerkUserId: input.clerkUserId, email, name });
   if (createPasswordCredential) {
     await setPasswordCredential(user.id, email, password);
@@ -1242,6 +1429,10 @@ export async function createManagedAccount(input: {
     id: existing?.id ?? `mem_${nanoid(8)}`,
     clerkMembershipId: input.clerkMembershipId ?? existing?.clerkMembershipId,
     clerkRole: (clerkRole as ClerkOrgRole | undefined) ?? existing?.clerkRole,
+    clerkInvitationId: existing?.clerkInvitationId,
+    clerkInvitationStatus: existing?.clerkInvitationStatus,
+    clerkInvitationError: existing?.clerkInvitationError,
+    clerkInvitationUpdatedAt: existing?.clerkInvitationUpdatedAt,
     orgId: input.orgId,
     userId: user.id,
     role,
@@ -1276,6 +1467,10 @@ export async function createManagedAccount(input: {
       .set({
         clerkMembershipId: managedMembership.clerkMembershipId,
         clerkRole: managedMembership.clerkRole,
+        clerkInvitationId: managedMembership.clerkInvitationId,
+        clerkInvitationStatus: managedMembership.clerkInvitationStatus,
+        clerkInvitationError: managedMembership.clerkInvitationError,
+        clerkInvitationUpdatedAt: maybeDate(managedMembership.clerkInvitationUpdatedAt),
         role: managedMembership.role,
         affiliationType: managedMembership.affiliationType,
         status: managedMembership.status,
@@ -1326,6 +1521,264 @@ export async function getMembershipByClerkMembershipId(clerkMembershipId: string
     .where(eq(dbSchema.memberships.clerkMembershipId, clerkMembershipId))
     .limit(1);
   return row ? membershipFromRow(row) : undefined;
+}
+
+export async function getMembershipByClerkInvitationId(clerkInvitationId: string) {
+  if (!usesDatabase) {
+    return getStore().memberships.find(
+      (membership) => membership.clerkInvitationId === clerkInvitationId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.memberships)
+    .where(eq(dbSchema.memberships.clerkInvitationId, clerkInvitationId))
+    .limit(1);
+  return row ? membershipFromRow(row) : undefined;
+}
+
+function anonymizedProfile(profile: Profile): Profile {
+  const now = new Date().toISOString();
+  return {
+    ...profile,
+    fullName: "Former member",
+    preferredName: "Former member",
+    displayNamePreference: "preferred_name",
+    profilePhoto: "",
+    headline: "",
+    shortBio: "",
+    longBio: "",
+    city: "",
+    country: "",
+    timezone: "",
+    schoolOrCompany: "",
+    currentStatus: "former_member",
+    startupName: "",
+    startupOneLiner: "",
+    startupDescription: "",
+    stage: "",
+    industryTags: [],
+    problemSpaceTags: [],
+    businessModelTags: [],
+    currentProgress: "",
+    tractionSummary: "",
+    regionFocus: "",
+    lookingForTypes: [],
+    desiredRoles: [],
+    helpNeededTags: [],
+    idealMatchDescription: "",
+    skillTags: [],
+    yearsOfExperience: 0,
+    topStrengths: [],
+    canContribute: [],
+    priorProjects: "",
+    notableWins: "",
+    timeCommitment: "",
+    availabilityStart: "",
+    remotePreference: "",
+    preferredGeographies: [],
+    meetingFrequencyPreference: "",
+    ambitionLevel: 1,
+    riskTolerance: 1,
+    speedPreference: "",
+    decisionStyle: "",
+    workStyle: "",
+    communicationStyle: "",
+    conflictStyle: "",
+    commitmentHorizon: "",
+    missionVsMarketOrientation: "",
+    structureVsChaos: 1,
+    mentorExpertiseTags: [],
+    mentorStageExperience: [],
+    mentorFunctionalStrengths: [],
+    mentorAvailability: "",
+    mentorOffers: [],
+    maxMentees: null,
+    mentorshipPreferences: "",
+    publicContactEnabled: false,
+    emailForIntro: "",
+    whatsappNumber: "",
+    whatsappVisibleAfterAccept: false,
+    introOptIn: false,
+    profileVisibleInMatching: false,
+    profileCompletionPercent: 0,
+    lastActiveAt: now,
+    featured: false,
+    stale: false,
+    onboardingComplete: false,
+    embeddingText: "",
+    profileEmbedding: Array.from({ length: 24 }, () => 0),
+    updatedAt: now,
+  };
+}
+
+export async function anonymizeUserByClerkUserId(clerkUserId: string) {
+  const user = await getUserByClerkUserId(clerkUserId);
+  if (!user) {
+    return null;
+  }
+  const memberships = !usesDatabase
+    ? getStore().memberships.filter((membership) => membership.userId === user.id)
+    : (
+        await getDb()
+          .select()
+          .from(dbSchema.memberships)
+          .where(eq(dbSchema.memberships.userId, user.id))
+      ).map(membershipFromRow);
+  const membershipIds = memberships.map((membership) => membership.id);
+  const profiles = await Promise.all(
+    memberships.map((membership) => getProfileByMembershipId(membership.id)),
+  );
+  const existingProfiles = profiles.filter((profile): profile is Profile => Boolean(profile));
+  const profileIds = existingProfiles.map((profile) => profile.id);
+  const now = new Date().toISOString();
+
+  for (const profile of existingProfiles) {
+    await upsertProfile(anonymizedProfile(profile), [], {
+      orgId: memberships.find((membership) => membership.id === profile.membershipId)?.orgId,
+      recomputeMatches: false,
+    });
+  }
+
+  if (!usesDatabase) {
+    const store = getStore();
+    Object.assign(user, {
+      anonymizedAt: now,
+      clerkUserId: undefined,
+      email: `former+${user.id}@deleted.invalid`,
+      imageUrl: "",
+      name: "Former member",
+      platformRole: "standard",
+      updatedAt: now,
+    } satisfies Partial<User>);
+    for (const membership of memberships) {
+      Object.assign(membership, {
+        affiliationType: "invited outsider",
+        approvalNote: undefined,
+        archetypes: [],
+        clerkInvitationError: undefined,
+        clerkInvitationId: undefined,
+        clerkInvitationStatus: undefined,
+        clerkInvitationUpdatedAt: now,
+        clerkMembershipId: undefined,
+        clerkRole: undefined,
+        cohortNameOrYear: "",
+        programName: "Former member",
+        role: "member",
+        status: "suspended",
+        updatedAt: now,
+      } satisfies Partial<Membership>);
+    }
+    const membershipIdSet = new Set(membershipIds);
+    const profileIdSet = new Set(profileIds);
+    store.passwordCredentials = store.passwordCredentials.filter(
+      (credential) => credential.userId !== user.id,
+    );
+    store.matches = store.matches.filter(
+      (match) =>
+        !profileIdSet.has(match.sourceProfileId) && !profileIdSet.has(match.targetProfileId),
+    );
+    store.follows = store.follows.filter(
+      (follow) =>
+        !membershipIdSet.has(follow.followerMembershipId) &&
+        !membershipIdSet.has(follow.followedMembershipId),
+    );
+    store.postSaves = store.postSaves.filter(
+      (save) => !membershipIdSet.has(save.membershipId),
+    );
+    store.notifications = store.notifications.filter(
+      (notification) => !membershipIdSet.has(notification.membershipId),
+    );
+    for (const intro of store.introRequests) {
+      if (
+        intro.status === "pending" &&
+        (membershipIdSet.has(intro.requesterMembershipId) ||
+          membershipIdSet.has(intro.receiverMembershipId))
+      ) {
+        intro.status = "expired";
+        intro.contactRevealedAt = undefined;
+        intro.updatedAt = now;
+      }
+    }
+    return user;
+  }
+
+  const db = getDb();
+  await db.delete(dbSchema.accounts).where(eq(dbSchema.accounts.userId, user.id));
+  if (profileIds.length) {
+    await db
+      .delete(dbSchema.matches)
+      .where(
+        or(
+          inArray(dbSchema.matches.sourceProfileId, profileIds),
+          inArray(dbSchema.matches.targetProfileId, profileIds),
+        ),
+      );
+  }
+  if (membershipIds.length) {
+    await Promise.all([
+      db
+        .delete(dbSchema.follows)
+        .where(
+          or(
+            inArray(dbSchema.follows.followerMembershipId, membershipIds),
+            inArray(dbSchema.follows.followedMembershipId, membershipIds),
+          ),
+        ),
+      db
+        .delete(dbSchema.postSaves)
+        .where(inArray(dbSchema.postSaves.membershipId, membershipIds)),
+      db
+        .delete(dbSchema.notifications)
+        .where(inArray(dbSchema.notifications.membershipId, membershipIds)),
+      db
+        .update(dbSchema.introRequests)
+        .set({ status: "expired", contactRevealedAt: null, updatedAt: new Date(now) })
+        .where(
+          and(
+            eq(dbSchema.introRequests.status, "pending"),
+            or(
+              inArray(dbSchema.introRequests.requesterMembershipId, membershipIds),
+              inArray(dbSchema.introRequests.receiverMembershipId, membershipIds),
+            ),
+          ),
+        ),
+      db
+        .update(dbSchema.memberships)
+        .set({
+          affiliationType: "invited outsider",
+          approvalNote: null,
+          archetypes: [],
+          clerkInvitationError: null,
+          clerkInvitationId: null,
+          clerkInvitationStatus: null,
+          clerkInvitationUpdatedAt: new Date(now),
+          clerkMembershipId: null,
+          clerkRole: null,
+          cohortNameOrYear: "",
+          programName: "Former member",
+          role: "member",
+          status: "suspended",
+          updatedAt: new Date(now),
+        })
+        .where(inArray(dbSchema.memberships.id, membershipIds)),
+    ]);
+  }
+  const [row] = await db
+    .update(dbSchema.users)
+    .set({
+      anonymizedAt: new Date(now),
+      clerkUserId: null,
+      email: `former+${user.id}@deleted.invalid`,
+      imageUrl: "",
+      name: "Former member",
+      platformRole: "standard",
+      updatedAt: new Date(now),
+    })
+    .where(eq(dbSchema.users.id, user.id))
+    .returning();
+  return row ? userFromRow(row) : null;
 }
 
 export async function getMembershipById(id: string) {
@@ -1604,6 +2057,444 @@ export async function listMembershipsForOrg(orgId: string) {
     .from(dbSchema.memberships)
     .where(eq(dbSchema.memberships.orgId, orgId));
   return rows.map(membershipFromRow);
+}
+
+function cohortRecordFromMembers(cohort: Cohort, members: CohortMember[]): CohortRecord {
+  const cohortMembers = members.filter((member) => member.cohortId === cohort.id);
+
+  return {
+    cohort,
+    totalMembers: cohortMembers.length,
+    invitedMembers: cohortMembers.filter((member) => member.status === "invited").length,
+    promotedMembers: cohortMembers.filter((member) => member.status === "promoted").length,
+  };
+}
+
+function cohortMemberStatusForMembership(membership: Membership): CohortMemberStatus {
+  return membership.status === "approved" ? "promoted" : "invited";
+}
+
+function promotedAtForMembership(
+  membership: Membership,
+  status: CohortMemberStatus,
+  fallback: string,
+) {
+  return status === "promoted" ? membership.approvedAt ?? fallback : undefined;
+}
+
+export async function createCohort(input: {
+  orgId: string;
+  name: string;
+  description?: string;
+  eventLabel?: string;
+  createdByMembershipId?: string;
+}) {
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Cohort name is required.");
+  }
+
+  const now = new Date().toISOString();
+  const cohort: Cohort = {
+    id: `coh_${nanoid(8)}`,
+    orgId: input.orgId,
+    name,
+    description: input.description?.trim() ?? "",
+    eventLabel: input.eventLabel?.trim() ?? "",
+    status: "active",
+    createdByMembershipId: input.createdByMembershipId,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  if (!usesDatabase) {
+    getStore().cohorts.unshift(cohort);
+    return cohort;
+  }
+
+  const [row] = await getDb()
+    .insert(dbSchema.cohorts)
+    .values(cohortInsert(cohort))
+    .returning();
+  return cohortFromRow(row);
+}
+
+export async function getCohortById(cohortId: string) {
+  if (!usesDatabase) {
+    return getStore().cohorts.find((cohort) => cohort.id === cohortId);
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.cohorts)
+    .where(eq(dbSchema.cohorts.id, cohortId))
+    .limit(1);
+  return row ? cohortFromRow(row) : undefined;
+}
+
+export async function getCohortRecordForOrg(
+  orgId: string,
+  cohortId: string,
+): Promise<CohortRecord | undefined> {
+  const cohort = await getCohortById(cohortId);
+  if (!cohort || cohort.orgId !== orgId) {
+    return undefined;
+  }
+
+  const cohortMembers = await listCohortMembersForOrg(orgId);
+  return cohortRecordFromMembers(cohort, cohortMembers);
+}
+
+export async function listCohortRecordsForOrg(orgId: string): Promise<CohortRecord[]> {
+  if (!usesDatabase) {
+    const store = getStore();
+    const cohorts = store.cohorts
+      .filter((cohort) => cohort.orgId === orgId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    const members = store.cohortMembers.filter((member) => member.orgId === orgId);
+    return cohorts.map((cohort) => cohortRecordFromMembers(cohort, members));
+  }
+
+  const [cohortRows, memberRows] = await Promise.all([
+    getDb()
+      .select()
+      .from(dbSchema.cohorts)
+      .where(eq(dbSchema.cohorts.orgId, orgId))
+      .orderBy(desc(dbSchema.cohorts.createdAt)),
+    getDb()
+      .select()
+      .from(dbSchema.cohortMembers)
+      .where(eq(dbSchema.cohortMembers.orgId, orgId)),
+  ]);
+  const members = memberRows.map(cohortMemberFromRow);
+  return cohortRows.map((row) => cohortRecordFromMembers(cohortFromRow(row), members));
+}
+
+export async function listCohortMembersForOrg(orgId: string) {
+  if (!usesDatabase) {
+    return getStore().cohortMembers.filter((member) => member.orgId === orgId);
+  }
+
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.cohortMembers)
+    .where(eq(dbSchema.cohortMembers.orgId, orgId));
+  return rows.map(cohortMemberFromRow);
+}
+
+export async function listCohortMemberRecordsForCohort(
+  orgId: string,
+  cohortId: string,
+): Promise<CohortMemberRecord[]> {
+  if (!usesDatabase) {
+    const store = getStore();
+    const records: CohortMemberRecord[] = [];
+    for (const cohortMember of store.cohortMembers.filter(
+      (candidate) => candidate.orgId === orgId && candidate.cohortId === cohortId,
+    )) {
+      const membership = store.memberships.find(
+        (candidate) => candidate.id === cohortMember.membershipId,
+      );
+      if (!membership) {
+        continue;
+      }
+
+      records.push({
+        cohortMember,
+        membership,
+        user: store.users.find((user) => user.id === membership.userId),
+        profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+      });
+    }
+
+    return records.sort((left, right) => {
+      const statusOrder = left.cohortMember.status.localeCompare(right.cohortMember.status);
+      return statusOrder || right.cohortMember.createdAt.localeCompare(left.cohortMember.createdAt);
+    });
+  }
+
+  const rows = await getDb()
+    .select({
+      cohortMember: dbSchema.cohortMembers,
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.cohortMembers)
+    .innerJoin(dbSchema.memberships, eq(dbSchema.memberships.id, dbSchema.cohortMembers.membershipId))
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(
+      and(
+        eq(dbSchema.cohortMembers.orgId, orgId),
+        eq(dbSchema.cohortMembers.cohortId, cohortId),
+      ),
+    )
+    .orderBy(asc(dbSchema.cohortMembers.status), desc(dbSchema.cohortMembers.createdAt));
+
+  return rows.map((row) => ({
+    cohortMember: cohortMemberFromRow(row.cohortMember),
+    membership: membershipFromRow(row.membership),
+    user: row.user ? userFromRow(row.user) : undefined,
+    profile: row.profile ? profileFromRow(row.profile) : undefined,
+  }));
+}
+
+async function upsertCohortMember(input: {
+  orgId: string;
+  cohortId: string;
+  membership: Membership;
+  email: string;
+  name: string;
+}) {
+  const now = new Date().toISOString();
+  const nextStatus = cohortMemberStatusForMembership(input.membership);
+  const promotedAt = promotedAtForMembership(input.membership, nextStatus, now);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const existing = store.cohortMembers.find(
+      (candidate) =>
+        candidate.cohortId === input.cohortId &&
+        candidate.membershipId === input.membership.id,
+    );
+
+    if (existing) {
+      existing.invitedEmail = input.email;
+      existing.invitedName = input.name;
+      if (nextStatus === "promoted") {
+        existing.status = "promoted";
+        existing.promotedAt = existing.promotedAt ?? promotedAt ?? now;
+      }
+      existing.updatedAt = now;
+      return { cohortMember: existing, created: false };
+    }
+
+    const cohortMember: CohortMember = {
+      id: `chm_${nanoid(8)}`,
+      orgId: input.orgId,
+      cohortId: input.cohortId,
+      membershipId: input.membership.id,
+      invitedEmail: input.email,
+      invitedName: input.name,
+      status: nextStatus,
+      invitedAt: now,
+      promotedAt,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.cohortMembers.unshift(cohortMember);
+    return { cohortMember, created: true };
+  }
+
+  const [existingRow] = await getDb()
+    .select()
+    .from(dbSchema.cohortMembers)
+    .where(
+      and(
+        eq(dbSchema.cohortMembers.cohortId, input.cohortId),
+        eq(dbSchema.cohortMembers.membershipId, input.membership.id),
+      ),
+    )
+    .limit(1);
+
+  if (existingRow) {
+    const existing = cohortMemberFromRow(existingRow);
+    const [row] = await getDb()
+      .update(dbSchema.cohortMembers)
+      .set({
+        invitedEmail: input.email,
+        invitedName: input.name,
+        status: nextStatus === "promoted" ? "promoted" : existing.status,
+        promotedAt:
+          nextStatus === "promoted"
+            ? maybeDate(existing.promotedAt ?? promotedAt ?? now)
+            : maybeDate(existing.promotedAt),
+        updatedAt: new Date(now),
+      })
+      .where(eq(dbSchema.cohortMembers.id, existing.id))
+      .returning();
+    return { cohortMember: cohortMemberFromRow(row), created: false };
+  }
+
+  const cohortMember: CohortMember = {
+    id: `chm_${nanoid(8)}`,
+    orgId: input.orgId,
+    cohortId: input.cohortId,
+    membershipId: input.membership.id,
+    invitedEmail: input.email,
+    invitedName: input.name,
+    status: nextStatus,
+    invitedAt: now,
+    promotedAt,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const [row] = await getDb()
+    .insert(dbSchema.cohortMembers)
+    .values(cohortMemberInsert(cohortMember))
+    .returning();
+  return { cohortMember: cohortMemberFromRow(row), created: true };
+}
+
+export async function importCohortMembers(
+  orgId: string,
+  cohortId: string,
+  students: CohortImportInput[],
+): Promise<CohortImportResult[]> {
+  const cohort = await getCohortById(cohortId);
+  if (!cohort || cohort.orgId !== orgId) {
+    throw new Error("Cohort not found.");
+  }
+
+  const uniqueStudents = new Map<string, { email: string; name: string }>();
+  for (const student of students) {
+    const email = normalizeEmailAddress(student.email);
+    if (!email.includes("@")) {
+      throw new Error(`Invalid email: ${student.email}`);
+    }
+
+    uniqueStudents.set(email, {
+      email,
+      name: student.name?.trim() || displayNameForEmail(email),
+    });
+  }
+
+  const results: CohortImportResult[] = [];
+  for (const student of uniqueStudents.values()) {
+    const existingUser = await getUserByEmail(student.email);
+    const existingMembership = existingUser
+      ? await getMembershipByUserAndOrg(existingUser.id, orgId)
+      : undefined;
+    const membershipCreated = !existingMembership;
+    const { user, membership } = existingMembership
+      ? { user: existingUser, membership: existingMembership }
+      : await createManagedAccount({
+          orgId,
+          email: student.email,
+          name: student.name,
+          role: "member",
+          status: "waitlist",
+          affiliationType: "current participant",
+          archetypes: ["cohort_participant", "student"],
+          programName: cohort.name,
+          cohortNameOrYear: cohort.eventLabel || cohort.name,
+          approvalNote: `Invited through ${cohort.name}.`,
+        });
+    const profile = await getProfileByMembershipId(membership.id);
+    const { cohortMember, created } = await upsertCohortMember({
+      orgId,
+      cohortId,
+      membership,
+      email: student.email,
+      name: student.name,
+    });
+
+    results.push({
+      cohortMember,
+      membership,
+      user,
+      profile,
+      membershipCreated,
+      cohortMemberCreated: created,
+      shouldInvite:
+        !membership.clerkMembershipId && membership.clerkInvitationStatus !== "pending",
+    });
+  }
+
+  return results;
+}
+
+export async function promoteCohortMembers(
+  orgId: string,
+  cohortId: string,
+  membershipIds: string[],
+  approvalNote?: string,
+): Promise<CohortPromotionResult[]> {
+  const uniqueMembershipIds = [...new Set(membershipIds.filter(Boolean))];
+  if (!uniqueMembershipIds.length) {
+    return [];
+  }
+
+  const cohort = await getCohortById(cohortId);
+  if (!cohort || cohort.orgId !== orgId) {
+    throw new Error("Cohort not found.");
+  }
+
+  const cohortMembers = !usesDatabase
+    ? getStore().cohortMembers.filter(
+        (cohortMember) =>
+          cohortMember.orgId === orgId &&
+          cohortMember.cohortId === cohortId &&
+          uniqueMembershipIds.includes(cohortMember.membershipId),
+      )
+    : (
+        await getDb()
+          .select()
+          .from(dbSchema.cohortMembers)
+          .where(
+            and(
+              eq(dbSchema.cohortMembers.orgId, orgId),
+              eq(dbSchema.cohortMembers.cohortId, cohortId),
+              inArray(dbSchema.cohortMembers.membershipId, uniqueMembershipIds),
+            ),
+          )
+      ).map(cohortMemberFromRow);
+
+  const results: CohortPromotionResult[] = [];
+  for (const cohortMember of cohortMembers) {
+    const existingMembership = await getMembershipById(cohortMember.membershipId);
+    if (!existingMembership || existingMembership.orgId !== orgId) {
+      continue;
+    }
+
+    const statusChanged = existingMembership.status !== "approved";
+    const membership = statusChanged
+      ? await updateMembershipStatus(
+          existingMembership.id,
+          "approved",
+          approvalNote ?? `Approved from cohort ${cohort.name}.`,
+          { existingMembership, recomputeMatches: false },
+        )
+      : existingMembership;
+    if (!membership) {
+      continue;
+    }
+
+    const now = new Date().toISOString();
+    let updatedCohortMember = cohortMember;
+    if (!usesDatabase) {
+      const stored = getStore().cohortMembers.find(
+        (candidate) => candidate.id === cohortMember.id,
+      );
+      if (stored) {
+        stored.status = "promoted";
+        stored.promotedAt = stored.promotedAt ?? membership.approvedAt ?? now;
+        stored.updatedAt = now;
+        updatedCohortMember = stored;
+      }
+    } else {
+      const [row] = await getDb()
+        .update(dbSchema.cohortMembers)
+        .set({
+          status: "promoted",
+          promotedAt: maybeDate(cohortMember.promotedAt ?? membership.approvedAt ?? now),
+          updatedAt: new Date(now),
+        })
+        .where(eq(dbSchema.cohortMembers.id, cohortMember.id))
+        .returning();
+      updatedCohortMember = cohortMemberFromRow(row);
+    }
+
+    results.push({
+      cohortMember: updatedCohortMember,
+      membership,
+      profile: await getProfileByMembershipId(membership.id),
+      statusChanged,
+    });
+  }
+
+  return results;
 }
 
 export async function listMembershipRecordsForOrg(
@@ -3662,13 +4553,13 @@ export async function updateMembershipStatus(
   const shouldRecomputeMatches = options.recomputeMatches ?? true;
 
   const now = new Date().toISOString();
+  const approvedAt =
+    status === "approved" ? membership.approvedAt ?? now : membership.approvedAt;
   if (!usesDatabase) {
     membership.status = status;
     membership.approvalNote = approvalNote ?? membership.approvalNote;
     membership.updatedAt = now;
-    if (status === "approved") {
-      membership.approvedAt = now;
-    }
+    membership.approvedAt = approvedAt;
     if (shouldRecomputeMatches) {
       await recomputeMatchesForMembership(membership.orgId, membership.id);
     }
@@ -3681,7 +4572,7 @@ export async function updateMembershipStatus(
       status,
       approvalNote: approvalNote ?? membership.approvalNote,
       updatedAt: new Date(now),
-      approvedAt: status === "approved" ? new Date(now) : maybeDate(membership.approvedAt),
+      approvedAt: maybeDate(approvedAt),
     })
     .where(eq(dbSchema.memberships.id, membershipId))
     .returning();
@@ -3693,6 +4584,106 @@ export async function updateMembershipStatus(
     await recomputeMatchesForMembership(row.orgId, row.id);
   }
   return membershipFromRow(row);
+}
+
+export async function updateMembershipRole(
+  membershipId: string,
+  role: MembershipRole,
+  options: { existingMembership?: Membership } = {},
+) {
+  const membership = options.existingMembership ?? (await getMembershipById(membershipId));
+  if (!membership) {
+    return null;
+  }
+  const now = new Date().toISOString();
+
+  if (!usesDatabase) {
+    membership.role = role;
+    membership.updatedAt = now;
+    return membership;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.memberships)
+    .set({ role, updatedAt: new Date(now) })
+    .where(eq(dbSchema.memberships.id, membershipId))
+    .returning();
+  return row ? membershipFromRow(row) : null;
+}
+
+export async function updateMembershipClerkState(
+  membershipId: string,
+  input: {
+    clerkMembershipId?: string | null;
+    clerkRole?: ClerkOrgRole | string | null;
+    clerkInvitationId?: string | null;
+    clerkInvitationStatus?: ClerkInvitationStatus | null;
+    clerkInvitationError?: string | null;
+    clerkInvitationUpdatedAt?: string | null;
+  },
+  options: { existingMembership?: Membership } = {},
+) {
+  const membership = options.existingMembership ?? (await getMembershipById(membershipId));
+  if (!membership) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const next = { ...membership, updatedAt: now };
+  if ("clerkMembershipId" in input) {
+    next.clerkMembershipId = input.clerkMembershipId ?? undefined;
+  }
+  if ("clerkRole" in input) {
+    next.clerkRole = (input.clerkRole as ClerkOrgRole | null) ?? undefined;
+  }
+  if ("clerkInvitationId" in input) {
+    next.clerkInvitationId = input.clerkInvitationId ?? undefined;
+  }
+  if ("clerkInvitationStatus" in input) {
+    next.clerkInvitationStatus = input.clerkInvitationStatus ?? undefined;
+  }
+  if ("clerkInvitationError" in input) {
+    next.clerkInvitationError = input.clerkInvitationError ?? undefined;
+  }
+  if ("clerkInvitationUpdatedAt" in input) {
+    next.clerkInvitationUpdatedAt = input.clerkInvitationUpdatedAt ?? undefined;
+  }
+
+  if (!usesDatabase) {
+    Object.assign(membership, next);
+    return membership;
+  }
+
+  const updateValues: Partial<typeof dbSchema.memberships.$inferInsert> = {
+    updatedAt: new Date(now),
+  };
+  if ("clerkMembershipId" in input) {
+    updateValues.clerkMembershipId = input.clerkMembershipId ?? null;
+  }
+  if ("clerkRole" in input) {
+    updateValues.clerkRole = input.clerkRole ?? null;
+  }
+  if ("clerkInvitationId" in input) {
+    updateValues.clerkInvitationId = input.clerkInvitationId ?? null;
+  }
+  if ("clerkInvitationStatus" in input) {
+    updateValues.clerkInvitationStatus = input.clerkInvitationStatus ?? null;
+  }
+  if ("clerkInvitationError" in input) {
+    updateValues.clerkInvitationError = input.clerkInvitationError ?? null;
+  }
+  if ("clerkInvitationUpdatedAt" in input) {
+    updateValues.clerkInvitationUpdatedAt = input.clerkInvitationUpdatedAt
+      ? new Date(input.clerkInvitationUpdatedAt)
+      : null;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.memberships)
+    .set(updateValues)
+    .where(eq(dbSchema.memberships.id, membershipId))
+    .returning();
+  return row ? membershipFromRow(row) : null;
 }
 
 export async function updatePostModeration(

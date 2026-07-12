@@ -60,33 +60,3 @@ export function enqueueMembershipEmail(input: {
     }
   });
 }
-
-export function enqueueClerkOrganizationInvitation(input: {
-  emailAddress: string;
-  inviterUserId: string;
-  organizationId: string;
-  redirectUrl: string;
-  role: string;
-  publicMetadata: Record<string, string>;
-}) {
-  after(async () => {
-    try {
-      const { clerkClient } = await import("@clerk/nextjs/server");
-      const client = await clerkClient();
-      await client.organizations.createOrganizationInvitation({
-        emailAddress: input.emailAddress,
-        inviterUserId: input.inviterUserId,
-        organizationId: input.organizationId,
-        redirectUrl: input.redirectUrl,
-        role: input.role,
-        publicMetadata: input.publicMetadata,
-      });
-    } catch (error) {
-      console.error(
-        "[wavesparks] clerk organization invitation failed",
-        input.emailAddress,
-        error,
-      );
-    }
-  });
-}

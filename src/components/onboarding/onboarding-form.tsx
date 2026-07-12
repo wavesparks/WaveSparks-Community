@@ -36,12 +36,14 @@ export function OnboardingForm({
   action,
   profile,
   links,
+  initialStep = 0,
 }: {
   action: (formData: FormData) => void;
   profile: Profile;
   links: ProfileLink[];
+  initialStep?: number;
 }) {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(Math.max(0, Math.min(initialStep, onboardingSteps.length - 1)));
   const [readiness, setReadiness] = useState(() => getProfileReadiness(profile));
   const [validationNotice, setValidationNotice] = useState<string | null>(null);
   const stepPanelClass =
@@ -62,6 +64,10 @@ export function OnboardingForm({
         updateReadiness(event.currentTarget);
       }}
       onSubmit={(event) => {
+        const submitter = event.nativeEvent.submitter as HTMLButtonElement | null;
+        if (submitter?.value === "draft") {
+          return;
+        }
         const next = updateReadiness(event.currentTarget);
 
         if (next.isReady) {
@@ -70,7 +76,7 @@ export function OnboardingForm({
 
         event.preventDefault();
         setValidationNotice(
-          `Add ${next.missingFields.map((field) => field.label).join(", ")} before saving.`,
+          `Add ${next.missingFields.map((field) => field.label).join(", ")} before completing onboarding.`,
         );
         setStep(
           Math.min(
@@ -227,19 +233,19 @@ export function OnboardingForm({
         </div>
         <div>
           <Label htmlFor="linkedin_url">LinkedIn</Label>
-          <Input defaultValue={linkValue(links, "linkedin")} id="linkedin_url" name="linkedin_url" />
+          <Input defaultValue={linkValue(links, "linkedin")} id="linkedin_url" name="linkedin_url" type="url" />
         </div>
         <div>
           <Label htmlFor="github_url">GitHub</Label>
-          <Input defaultValue={linkValue(links, "github")} id="github_url" name="github_url" />
+          <Input defaultValue={linkValue(links, "github")} id="github_url" name="github_url" type="url" />
         </div>
         <div>
           <Label htmlFor="website_url">Website</Label>
-          <Input defaultValue={linkValue(links, "website")} id="website_url" name="website_url" />
+          <Input defaultValue={linkValue(links, "website")} id="website_url" name="website_url" type="url" />
         </div>
         <div>
           <Label htmlFor="x_url">X</Label>
-          <Input defaultValue={linkValue(links, "x")} id="x_url" name="x_url" />
+          <Input defaultValue={linkValue(links, "x")} id="x_url" name="x_url" type="url" />
         </div>
       </div>
 
@@ -384,6 +390,8 @@ export function OnboardingForm({
             id="years_of_experience"
             name="years_of_experience"
             type="number"
+            min={0}
+            max={80}
           />
         </div>
         <div>
@@ -575,7 +583,7 @@ export function OnboardingForm({
         </div>
         <div>
           <Label htmlFor="max_mentees">Max mentees</Label>
-          <Input defaultValue={profile.maxMentees ?? ""} id="max_mentees" name="max_mentees" type="number" />
+          <Input defaultValue={profile.maxMentees ?? ""} id="max_mentees" max={100} min={0} name="max_mentees" type="number" />
         </div>
         <div className="md:col-span-2">
           <Label htmlFor="mentorship_preferences">Mentorship preferences</Label>
@@ -587,7 +595,7 @@ export function OnboardingForm({
         </div>
         <div>
           <Label htmlFor="email_for_intro">Email for intro</Label>
-          <Input defaultValue={profile.emailForIntro} id="email_for_intro" name="email_for_intro" />
+          <Input defaultValue={profile.emailForIntro} id="email_for_intro" name="email_for_intro" type="email" />
         </div>
         <div>
           <Label htmlFor="whatsapp_number">WhatsApp</Label>
@@ -639,13 +647,23 @@ export function OnboardingForm({
           Previous
         </Button>
         <div className="flex gap-3">
+          <SubmitButton
+            name="intent"
+            pendingLabel="Saving draft"
+            value="draft"
+            variant="secondary"
+          >
+            Save draft
+          </SubmitButton>
           {step < onboardingSteps.length - 1 ? (
             <Button onClick={() => setStep((current) => current + 1)} type="button">
               Next
               <ChevronRight className="size-4" />
             </Button>
           ) : (
-            <SubmitButton pendingLabel="Saving profile">Save profile</SubmitButton>
+            <SubmitButton name="intent" pendingLabel="Completing profile" value="complete">
+              Complete onboarding
+            </SubmitButton>
           )}
         </div>
       </div>

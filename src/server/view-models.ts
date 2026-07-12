@@ -12,9 +12,9 @@ import {
   listFollowedMembershipIdsForMembership,
   listIntroRequestsForOrg,
   listIntroRequestsForMembership,
+  listMembershipRecordsForOrg,
   listMembershipUserRecordsByIds,
   listMembershipProfileRecordsForOrg,
-  listMembershipUserRecordsForOrg,
   listMembershipProfileRecordsByIds,
   listMatchTargetRecordsForProfile,
   listNotificationsForMembership,
@@ -973,13 +973,17 @@ export async function getAdminIntroRequestDashboard(
       sourceType: options.sourceType,
       status: options.requestStatus,
     }),
-    listMembershipUserRecordsForOrg(orgId, {
+    listMembershipRecordsForOrg(orgId, {
       limit: options.candidateLimit ?? 100,
       status: "approved",
     }),
   ]);
+  const eligibleCandidateRecords = candidateRecords.filter(
+    (record) =>
+      record.profile?.introOptIn && getProfileReadiness(record.profile).isReady,
+  );
   const recordByMembershipId = new Map(
-    candidateRecords.map((record) => [record.membership.id, record]),
+    eligibleCandidateRecords.map((record) => [record.membership.id, record]),
   );
   const missingParticipantIds = [
     ...new Set(
@@ -1001,7 +1005,7 @@ export async function getAdminIntroRequestDashboard(
   }
 
   return {
-    manualIntroCandidates: candidateRecords.map((record) => ({
+    manualIntroCandidates: eligibleCandidateRecords.map((record) => ({
       membershipId: record.membership.id,
       name: record.user?.name ?? record.membership.id,
     })),

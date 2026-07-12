@@ -7,6 +7,12 @@ export type MembershipStatus =
   | "rejected"
   | "suspended"
   | "waitlist";
+export type ClerkInvitationStatus =
+  | "pending"
+  | "accepted"
+  | "revoked"
+  | "expired"
+  | "failed";
 export type AffiliationType =
   | "current participant"
   | "alumni"
@@ -34,6 +40,8 @@ export type NotificationType =
   | "manual_intro"
   | "admin_note";
 export type ProfileLinkType = "linkedin" | "github" | "website" | "x";
+export type CohortStatus = "active" | "archived";
+export type CohortMemberStatus = "invited" | "promoted";
 
 export interface Organization {
   id: string;
@@ -63,6 +71,7 @@ export interface User {
   name: string;
   imageUrl: string;
   platformRole: PlatformRole;
+  anonymizedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -71,6 +80,10 @@ export interface Membership {
   id: string;
   clerkMembershipId?: string;
   clerkRole?: ClerkOrgRole;
+  clerkInvitationId?: string;
+  clerkInvitationStatus?: ClerkInvitationStatus;
+  clerkInvitationError?: string;
+  clerkInvitationUpdatedAt?: string;
   orgId: string;
   userId: string;
   role: MembershipRole;
@@ -82,6 +95,32 @@ export interface Membership {
   invitedByUserId?: string;
   approvalNote?: string;
   approvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Cohort {
+  id: string;
+  orgId: string;
+  name: string;
+  description: string;
+  eventLabel: string;
+  status: CohortStatus;
+  createdByMembershipId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CohortMember {
+  id: string;
+  orgId: string;
+  cohortId: string;
+  membershipId: string;
+  invitedEmail: string;
+  invitedName: string;
+  status: CohortMemberStatus;
+  invitedAt: string;
+  promotedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -11,15 +11,13 @@ const baseProductionEnv: NodeJS.ProcessEnv = {
   DATABASE_URL: "postgres://wavespark:secret@db.wavesparks.co:5432/wavespark",
   CRON_SECRET: "cron-secret-with-enough-production-entropy",
   WAVESPARK_ADMIN_EMAILS: "letsbuild@wavesparks.co",
+  BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_production_token_with_enough_entropy",
   NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/org/wavespark/signin",
   NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/org/wavespark/sign-up",
   NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "/org/wavespark",
   NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: "/org/wavespark",
   RESEND_API_KEY: "resend-production-key",
   RESEND_FROM_EMAIL: "hello@wavesparks.co",
-  SUPABASE_URL: "https://storage.wavesparks.co",
-  SUPABASE_SERVICE_ROLE_KEY: "supabase-service-role-production-key",
-  SUPABASE_BUCKET: "wavesparks",
 };
 
 describe("production readiness checks", () => {
@@ -46,6 +44,19 @@ describe("production readiness checks", () => {
         "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY must use a Clerk live key in production.",
         "CLERK_SECRET_KEY must use a Clerk live key in production.",
         "DATABASE_URL must not point to localhost in production.",
+      ]),
+    );
+  });
+
+  it("blocks the marketing site as the production app URL", () => {
+    const result = checkProductionReadiness({
+      ...baseProductionEnv,
+      NEXT_PUBLIC_APP_URL: "https://wavesparks.co",
+    });
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        "NEXT_PUBLIC_APP_URL must point to the community app domain (for example, https://app.wavesparks.co) so Clerk invitations return to the app, not the marketing site.",
       ]),
     );
   });
@@ -84,13 +95,40 @@ describe("production readiness checks", () => {
     const result = checkProductionReadiness({
       ...baseProductionEnv,
       RESEND_FROM_EMAIL: undefined,
-      SUPABASE_SERVICE_ROLE_KEY: undefined,
     });
 
     expect(result.errors).toEqual(
       expect.arrayContaining([
         "Resend email config is incomplete. Set all of: RESEND_API_KEY, RESEND_FROM_EMAIL.",
-        "Supabase upload config is incomplete. Set all of: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_BUCKET.",
+      ]),
+    );
+  });
+
+  it("warns when Vercel Blob upload storage is not configured", () => {
+    const result = checkProductionReadiness({
+      ...baseProductionEnv,
+      BLOB_READ_WRITE_TOKEN: undefined,
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        "BLOB_READ_WRITE_TOKEN is not configured; related production features may be unavailable.",
+      ]),
+    );
+  });
+
+  it("rejects local E2E auth configuration in production", () => {
+    const result = checkProductionReadiness({
+      ...baseProductionEnv,
+      E2E_LOCAL_AUTH_ENABLED: "1",
+      E2E_LOCAL_AUTH_SECRET: "local-e2e-secret",
+    });
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        "E2E_LOCAL_AUTH_ENABLED must not be set in production.",
+        "E2E_LOCAL_AUTH_SECRET must not be set in production.",
       ]),
     );
   });

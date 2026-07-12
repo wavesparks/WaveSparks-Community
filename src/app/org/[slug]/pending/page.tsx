@@ -1,11 +1,13 @@
 import { AlertCircle, CheckCircle2, Circle } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
+import { SignOutButton } from "@/components/layout/sign-out-button";
 import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
 import { getPendingAccessExperience } from "@/lib/activation";
+import { isClerkConfigured } from "@/lib/env";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { canAccessFeed } from "@/server/permissions";
 
@@ -88,6 +90,11 @@ export default async function PendingPage({
             {experience.primaryLabel}
           </LinkButton>
         ) : null}
+        <SignOutButton
+          callbackUrl={`/org/${slug}/feed`}
+          mode={isClerkConfigured() ? "clerk" : "local"}
+          tone="light"
+        />
       </Card>
     </main>
   );

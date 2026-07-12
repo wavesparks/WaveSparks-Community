@@ -31,6 +31,7 @@ const env = {
   appUrl,
   clerkProxyUrl: withHttps(process.env.NEXT_PUBLIC_CLERK_PROXY_URL),
   clerkPublishableKey: nonEmpty(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY),
+  clerkJwtKey: nonEmpty(process.env.CLERK_JWT_KEY),
   clerkSecretKey: nonEmpty(process.env.CLERK_SECRET_KEY),
   clerkWebhookSigningSecret: nonEmpty(process.env.CLERK_WEBHOOK_SIGNING_SECRET),
   clerkSignInUrl:
@@ -49,9 +50,7 @@ const env = {
   resendFromEmail:
     nonEmpty(process.env.RESEND_FROM_EMAIL) ?? "hello@wavespark.community",
   cronSecret: nonEmpty(process.env.CRON_SECRET),
-  supabaseUrl: nonEmpty(process.env.SUPABASE_URL),
-  supabaseServiceRoleKey: nonEmpty(process.env.SUPABASE_SERVICE_ROLE_KEY),
-  supabaseBucket: nonEmpty(process.env.SUPABASE_BUCKET) ?? "wavesparks",
+  blobReadWriteToken: nonEmpty(process.env.BLOB_READ_WRITE_TOKEN),
   wavesparkAdminEmails: nonEmpty(process.env.WAVESPARK_ADMIN_EMAILS) ?? "",
 };
 
@@ -61,6 +60,10 @@ export function isClerkConfigured() {
 
 export function isClerkWebhookConfigured() {
   return Boolean(env.clerkWebhookSigningSecret);
+}
+
+export function isVercelPreviewEnvironment() {
+  return process.env.VERCEL_ENV === "preview";
 }
 
 export function getBootstrapAdminEmails() {

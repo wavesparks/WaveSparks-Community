@@ -13,7 +13,8 @@ import {
   getPostListPathForType,
   getPostListRevalidationPaths,
 } from "@/lib/post-action-routing";
-import { profileFromFormData } from "@/lib/profile-form";
+import { profileFromFormData, validateProfileFormData } from "@/lib/profile-form";
+import { getProfileReadiness } from "@/lib/activation";
 import { parseTags } from "@/lib/utils";
 import { absoluteAppUrl } from "@/lib/urls";
 import {
@@ -143,6 +144,13 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
     slug,
     membershipId,
   );
+  const validation = validateProfileFormData(formData);
+  if (!validation.isValid) {
+    const fields = validation.errors.map((error) => error.field).join(",");
+    redirect(
+      `/org/${slug}/onboarding?status=profile_invalid&fields=${encodeURIComponent(fields)}`,
+    );
+  }
   const result = profileFromFormData({
     formData,
     membership,
@@ -163,6 +171,22 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
   enqueueProfileMatchRecompute(slug, membership.orgId, result.profile.id);
   revalidateMemberActivationPaths(slug);
   revalidatePath(`/org/${slug}/pending`);
+  const readiness = getProfileReadiness(result.profile);
+  const intent = String(formData.get("intent") ?? "complete");
+  if (!readiness.isReady) {
+    const firstMissingStep = Math.min(
+      ...readiness.missingFields.map((field) => {
+        if (["preferred_name", "headline"].includes(field.key)) return 0;
+        if (["startup_one_liner", "startup_description"].includes(field.key)) return 1;
+        if (["looking_for_types", "desired_roles", "skill_tags"].includes(field.key)) return 2;
+        return 3;
+      }),
+    );
+    const missing = readiness.missingFields.map((field) => field.label).join(", ");
+    redirect(
+      `/org/${slug}/onboarding?status=${intent === "draft" ? "profile_draft_saved" : "profile_incomplete"}&step=${firstMissingStep}&missing=${encodeURIComponent(missing)}`,
+    );
+  }
   redirect(
     membership.status === "approved"
       ? `/org/${slug}/profile?status=profile_saved`

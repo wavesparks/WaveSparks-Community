@@ -1,8 +1,16 @@
-import { setupClerkTestingToken } from "@clerk/testing/playwright";
+import { clerkSetup, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { test, expect } from "@playwright/test";
 
+const usesClerk = process.env.E2E_AUTH_MODE === "clerk";
+
+test.beforeAll(async () => {
+  if (usesClerk) {
+    await clerkSetup();
+  }
+});
+
 test.beforeEach(async ({ page }) => {
-  if (process.env.CLERK_TESTING_TOKEN) {
+  if (usesClerk) {
     await setupClerkTestingToken({ page });
   }
 });
@@ -54,14 +62,19 @@ test("sign-in surface loads", async ({ page }) => {
   await expect(page.getByText("Preview accounts use")).toHaveCount(0);
 });
 
-test("sign-up route explains invitation-only access", async ({ page }) => {
+test("sign-up is invitation-only and exposes no account creation form", async ({ page }) => {
   await page.goto("/org/wavespark/sign-up");
   await expect(page.getByRole("heading", { name: "Join Wavespark by invitation" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Ask an admin for an invitation" }),
+    page.getByRole("heading", { name: "Check your invitation email" }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Back to forum" })).toBeVisible();
-  await expect(page.getByText("Use the credentials your admin sent")).toHaveCount(0);
+  await expect(page.getByLabel("Invitation code")).toHaveCount(0);
+  await expect(page.getByText("Direct public registration and shared invite codes are closed")).toBeVisible();
+
+  await page.goto("/org/wavespark/accept-invitation");
+  await expect(page.getByRole("heading", { name: "Invitation link required" })).toBeVisible();
+  await expect(page.getByText("Create your account")).toHaveCount(0);
 });
 
 test("anonymous protected pages redirect to sign-in", async ({ page }) => {

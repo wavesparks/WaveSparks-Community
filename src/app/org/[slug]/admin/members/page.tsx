@@ -1,6 +1,9 @@
-import { OrganizationProfile } from "@clerk/nextjs";
-
-import { createManagedAccountAction, updateMembershipAction } from "@/actions/admin";
+import {
+  createManagedAccountAction,
+  resendMembershipInvitationAction,
+  revokeMembershipInvitationAction,
+  updateMembershipAction,
+} from "@/actions/admin";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -67,34 +70,18 @@ export default async function AdminMembersPage({
           title="Accounts and membership states"
           description={
             clerkConfigured
-              ? "Invite members through Clerk, approve membership states, and control who can reach admin surfaces."
+              ? "Send community invites from the Wavesparks form, approve membership states, and manage Clerk roles for existing members."
               : "Configure Clerk keys before inviting new members."
           }
         />
         <StatusBanner status={singleQueryValue(query.status)} />
         <Card className="space-y-5">
           <SectionHeading
-            eyebrow="Clerk organization"
-            title="Invite members and manage Clerk roles"
-            description={
-              clerkConfigured
-                ? "Clerk is the source of truth for identities, organization membership, invitations, and roles."
-                : "Clerk keys are missing, so organization membership management is disabled in this environment."
-            }
-          />
-          {clerkConfigured ? (
-            <div className="overflow-hidden rounded-lg border border-[var(--line)]">
-              <OrganizationProfile />
-            </div>
-          ) : null}
-        </Card>
-        <Card className="space-y-5">
-          <SectionHeading
             eyebrow="Community status"
-            title="Create local review record and send a Clerk org invite"
+            title="Create local review record and send app-domain invite"
             description={
               clerkConfigured
-                ? "Use this for Wavespark-specific review status, onboarding defaults, and matching metadata."
+                ? "This sends a server-side Clerk organization invitation with the community app redirect and stores Wavespark review status, onboarding defaults, and matching metadata."
                 : "Clerk keys are missing, so invitations are disabled in this environment."
             }
           />
@@ -120,7 +107,7 @@ export default async function AdminMembersPage({
               </div>
               <div>
                 <Label htmlFor="status">Status</Label>
-                <Select defaultValue="approved" id="status" name="status">
+                <Select defaultValue="pending" id="status" name="status">
                   <option value="approved">Approved</option>
                   <option value="pending">Pending</option>
                   <option value="waitlist">Waitlist</option>
@@ -161,57 +148,89 @@ export default async function AdminMembersPage({
               })}
             </div>
           </div>
-          <div className="grid gap-3 bg-[var(--surface-muted)] px-4 py-3 text-xs font-semibold uppercase text-[var(--ink-soft)] lg:grid-cols-[1.2fr_0.8fr_1.2fr_auto]">
+          <div className="grid gap-3 bg-[var(--surface-muted)] px-4 py-3 text-xs font-semibold uppercase text-[var(--ink-soft)] lg:grid-cols-[1.2fr_0.8fr_0.8fr_1fr_auto]">
             <span>Member</span>
-            <span>Status</span>
+            <span>Role / status</span>
+            <span>Clerk</span>
             <span>Admin note</span>
             <span className="text-right">Action</span>
           </div>
           <div className="divide-y divide-[var(--line)]">
             {memberCards.map(({ membership, profile, user }) => {
+              const connectionLabel = membership.clerkMembershipId
+                ? "Connected"
+                : membership.clerkInvitationStatus
+                  ? `Invite ${membership.clerkInvitationStatus}`
+                  : "Not connected";
               return (
-                <form
-                  action={updateMembershipAction.bind(null, slug, membership.id)}
-                  className="grid gap-3 px-4 py-4 lg:grid-cols-[1.2fr_0.8fr_1.2fr_auto] lg:items-center"
-                  key={membership.id}
-                >
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-sm font-semibold text-[var(--ink)]">
-                        {user?.name ?? membership.id}
-                      </h3>
-                      <Badge variant={membership.status === "approved" ? "accent" : "default"}>
-                        {membership.status}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                      {membership.affiliationType} · {membership.programName} ·{" "}
-                      {membership.cohortNameOrYear}
-                    </p>
-                    <p className="mt-2 line-clamp-2 text-sm leading-5 text-[var(--ink-soft)]">
-                      {profile?.headline ?? "No profile headline yet."}
-                    </p>
-                  </div>
-                  <select
-                    className="h-10 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-[var(--ink)]"
-                    defaultValue={membership.status}
-                    name="status"
+                <div className="space-y-3 px-4 py-4" key={membership.id}>
+                  <form
+                    action={updateMembershipAction.bind(null, slug, membership.id)}
+                    className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr_0.8fr_1fr_auto] lg:items-center"
                   >
-                    <option value="pending">Pending</option>
-                    <option value="approved">Approved</option>
-                    <option value="waitlist">Waitlist</option>
-                    <option value="rejected">Rejected</option>
-                    <option value="suspended">Suspended</option>
-                  </select>
-                  <Input
-                    defaultValue={membership.approvalNote ?? ""}
-                    name="approval_note"
-                    placeholder="Admin note"
-                  />
-                  <SubmitButton className="lg:justify-self-end" pendingLabel="Saving">
-                    Save
-                  </SubmitButton>
-                </form>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-sm font-semibold text-[var(--ink)]">
+                          {user?.name ?? membership.id}
+                        </h3>
+                        <Badge variant={membership.status === "approved" ? "accent" : "default"}>
+                          {membership.status}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                        {user?.email ?? "Email unavailable"}
+                      </p>
+                      <p className="mt-2 line-clamp-2 text-sm leading-5 text-[var(--ink-soft)]">
+                        {profile?.headline ?? "No profile headline yet."}
+                      </p>
+                    </div>
+                    <div className="grid gap-2">
+                      <Select defaultValue={membership.role} name="role">
+                        <option value="member">Member</option>
+                        <option value="org_admin">Org admin</option>
+                      </Select>
+                      <Select defaultValue={membership.status} name="status">
+                        <option value="pending">Pending</option>
+                        <option value="approved">Approved</option>
+                        <option value="waitlist">Waitlist</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="suspended">Suspended</option>
+                      </Select>
+                    </div>
+                    <div className="min-w-0 text-sm">
+                      <Badge variant={membership.clerkMembershipId ? "accent" : "muted"}>
+                        {connectionLabel}
+                      </Badge>
+                      <p className="mt-2 break-words text-xs text-[var(--ink-soft)]">
+                        {membership.clerkInvitationError ?? "No Clerk error."}
+                      </p>
+                    </div>
+                    <Input
+                      defaultValue={membership.approvalNote ?? ""}
+                      name="approval_note"
+                      placeholder="Admin note"
+                    />
+                    <SubmitButton className="lg:justify-self-end" pendingLabel="Saving">
+                      Save
+                    </SubmitButton>
+                  </form>
+                  {!membership.clerkMembershipId && user ? (
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <form action={resendMembershipInvitationAction.bind(null, slug, membership.id)}>
+                        <SubmitButton pendingLabel="Sending" size="sm" variant="secondary">
+                          {membership.clerkInvitationStatus === "pending" ? "Resend invite" : "Send invite"}
+                        </SubmitButton>
+                      </form>
+                      {membership.clerkInvitationStatus === "pending" ? (
+                        <form action={revokeMembershipInvitationAction.bind(null, slug, membership.id)}>
+                          <SubmitButton pendingLabel="Revoking" size="sm" variant="ghost">
+                            Revoke invite
+                          </SubmitButton>
+                        </form>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
             {!memberCards.length ? (
