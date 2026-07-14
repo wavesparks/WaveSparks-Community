@@ -194,7 +194,9 @@ test.describe("authenticated admin flows", () => {
       .getByLabel("Longer description")
       .fill("A complete synthetic profile used only for automated lifecycle acceptance.");
     await page.getByRole("button", { name: /Step 3/ }).click();
-    await page.getByLabel("Looking for").fill("mentor, collaborator");
+    await page.getByLabel(/^I am looking for a mentor or adviser/).check();
+    await page.getByLabel(/^I am looking for a collaborator or teammate/).check();
+    await page.getByLabel(/^I am open to collaborating/).check();
     await page.getByLabel("Desired roles").fill("product, engineering");
     await page.getByLabel("Skill tags").fill("testing, product");
     await page.getByRole("button", { name: /Step 4/ }).click();

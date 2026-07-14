@@ -43,6 +43,13 @@
       "when": 1783658130712,
       "tag": "0005_quick_warpath",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783965846465,
+      "tag": "0006_aspiring_black_cat",
+      "breakpoints": true
     }
   ]
 }

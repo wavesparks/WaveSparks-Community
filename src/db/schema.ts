@@ -51,7 +51,6 @@ export const opportunitySourceEnum = pgEnum("opportunity_source", [
 ]);
 export const postStatusEnum = pgEnum("post_status", ["active", "closed", "archived"]);
 export const commentStatusEnum = pgEnum("comment_status", ["visible", "removed"]);
-export const matchTypeEnum = pgEnum("match_type", ["cofounder_match", "mentor_match"]);
 export const introStatusEnum = pgEnum("intro_status", [
   "pending",
   "accepted",
@@ -206,6 +205,41 @@ export const clerkWebhookEvents = pgTable("clerk_webhook_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
 });
 
+export const matchTypeConfigs = pgTable(
+  "match_type_configs",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    direction: text("direction").notNull(),
+    seekerLabel: text("seeker_label").notNull(),
+    providerLabel: text("provider_label").notNull(),
+    weightsJson: jsonb("weights_json")
+      .$type<{
+        semantic: number;
+        skills: number;
+        venture: number;
+        availability: number;
+        work_style: number;
+        location: number;
+      }>()
+      .notNull(),
+    minimumScore: integer("minimum_score").notNull().default(45),
+    active: boolean("active").notNull().default(true),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    orgSlugIdx: uniqueIndex("match_type_configs_org_slug_idx").on(
+      table.orgId,
+      table.slug,
+    ),
+  }),
+);
+
 export const profiles = pgTable("profiles", {
   id: text("id").primaryKey(),
   membershipId: text("membership_id").notNull(),
@@ -232,6 +266,8 @@ export const profiles = pgTable("profiles", {
   tractionSummary: text("traction_summary").notNull(),
   regionFocus: text("region_focus").notNull(),
   lookingForTypes: text("looking_for_types").array().notNull(),
+  seekingMatchTypes: text("seeking_match_types").array().notNull(),
+  offeringMatchTypes: text("offering_match_types").array().notNull(),
   desiredRoles: text("desired_roles").array().notNull(),
   helpNeededTags: text("help_needed_tags").array().notNull(),
   idealMatchDescription: text("ideal_match_description").notNull(),
@@ -278,8 +314,15 @@ export const profiles = pgTable("profiles", {
   featured: boolean("featured").notNull().default(false),
   stale: boolean("stale").notNull().default(false),
   onboardingComplete: boolean("onboarding_complete").notNull().default(false),
-  embeddingText: text("embedding_text").notNull(),
-  profileEmbedding: vector("profile_embedding", { dimensions: 24 }).notNull(),
+  seekingEmbeddingText: text("seeking_embedding_text").notNull(),
+  offeringEmbeddingText: text("offering_embedding_text").notNull(),
+  seekingEmbedding: vector("seeking_embedding", { dimensions: 1024 }),
+  offeringEmbedding: vector("offering_embedding", { dimensions: 1024 }),
+  embeddingModel: text("embedding_model"),
+  embeddingSourceHash: text("embedding_source_hash"),
+  embeddingStatus: text("embedding_status").notNull().default("pending"),
+  embeddingError: text("embedding_error"),
+  embeddingUpdatedAt: timestamp("embedding_updated_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
@@ -369,7 +412,7 @@ export const matches = pgTable("matches", {
   orgId: text("org_id").notNull(),
   sourceProfileId: text("source_profile_id").notNull(),
   targetProfileId: text("target_profile_id").notNull(),
-  matchType: matchTypeEnum("match_type").notNull(),
+  matchType: text("match_type").notNull(),
   score: integer("score").notNull(),
   scoreBreakdownJson: jsonb("score_breakdown_json")
     .$type<Record<string, number>>()
@@ -377,12 +420,45 @@ export const matches = pgTable("matches", {
   explanationText: text("explanation_text").notNull(),
   overlapTags: text("overlap_tags").array().notNull(),
   scoreBand: text("score_band").notNull(),
+  confidence: text("confidence").notNull().default("medium"),
+  algorithmVersion: text("algorithm_version").notNull().default("hybrid-v2"),
+  runId: text("run_id"),
   surfacedAt: timestamp("surfaced_at", { withTimezone: true }).notNull(),
   dismissedBySource: boolean("dismissed_by_source").notNull().default(false),
   hiddenByAdmin: boolean("hidden_by_admin").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-});
+}, (table) => ({
+  sourceTargetTypeIdx: uniqueIndex("matches_source_target_type_idx").on(
+    table.orgId,
+    table.sourceProfileId,
+    table.targetProfileId,
+    table.matchType,
+  ),
+}));
+
+export const matchFeedback = pgTable(
+  "match_feedback",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    matchId: text("match_id").notNull(),
+    sourceProfileId: text("source_profile_id").notNull(),
+    matchType: text("match_type").notNull(),
+    algorithmVersion: text("algorithm_version").notNull(),
+    score: integer("score").notNull(),
+    value: text("value").notNull(),
+    reasons: text("reasons").array().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    matchSourceIdx: uniqueIndex("match_feedback_match_source_idx").on(
+      table.matchId,
+      table.sourceProfileId,
+    ),
+  }),
+);
 
 export const introRequests = pgTable("intro_requests", {
   id: text("id").primaryKey(),

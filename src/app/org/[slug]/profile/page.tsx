@@ -10,6 +10,7 @@ import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { formatPercent } from "@/lib/utils";
 import { getMemberActivationState, getProfileLinks } from "@/server/view-models";
+import { listMatchTypeConfigsForOrg } from "@/server/store";
 
 export default async function ProfilePage({
   params,
@@ -30,7 +31,7 @@ export default async function ProfilePage({
     return null;
   }
 
-  const [links, activation] = await Promise.all([
+  const [links, activation, matchTypeConfigs] = await Promise.all([
     getProfileLinks(viewer.profile.id),
     getMemberActivationState(
       viewer.org.id,
@@ -38,7 +39,9 @@ export default async function ProfilePage({
       viewer.profile,
       slug,
     ),
+    listMatchTypeConfigsForOrg(viewer.org.id, { includeInactive: true }),
   ]);
+  const configBySlug = new Map(matchTypeConfigs.map((config) => [config.slug, config]));
 
   return (
     <AppShell currentPath={`/org/${slug}/profile`} viewer={viewer}>
@@ -87,8 +90,24 @@ export default async function ProfilePage({
               <h2 className="text-xl font-semibold text-[var(--ink)]">What you’re looking for</h2>
               <p className="text-sm text-[var(--ink-soft)]">{viewer.profile.idealMatchDescription}</p>
               <div className="flex flex-wrap gap-2">
+                {viewer.profile.seekingMatchTypes.map((matchType) => (
+                  <Badge key={`seeking-${matchType}`} variant="accent">
+                    {configBySlug.get(matchType)?.name ?? matchType.replaceAll("_", " ")}
+                  </Badge>
+                ))}
                 {viewer.profile.desiredRoles.map((role, index) => (
                   <Badge key={`desired-role-${role}-${index}`}>{role}</Badge>
+                ))}
+              </div>
+            </Card>
+
+            <Card className="space-y-4">
+              <h2 className="text-xl font-semibold text-[var(--ink)]">What you can offer</h2>
+              <div className="flex flex-wrap gap-2">
+                {viewer.profile.offeringMatchTypes.map((matchType) => (
+                  <Badge key={`offering-${matchType}`} variant="muted">
+                    {configBySlug.get(matchType)?.name ?? matchType.replaceAll("_", " ")}
+                  </Badge>
                 ))}
               </div>
             </Card>

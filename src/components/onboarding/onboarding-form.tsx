@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
-import type { Profile, ProfileLink } from "@/lib/domain";
+import type { MatchTypeConfig, Profile, ProfileLink } from "@/lib/domain";
 
 function linkValue(links: ProfileLink[], type: ProfileLink["type"]) {
   return links.find((link) => link.type === type)?.url ?? "";
@@ -36,11 +36,13 @@ export function OnboardingForm({
   action,
   profile,
   links,
+  matchTypeConfigs,
   initialStep = 0,
 }: {
   action: (formData: FormData) => void;
   profile: Profile;
   links: ProfileLink[];
+  matchTypeConfigs: MatchTypeConfig[];
   initialStep?: number;
 }) {
   const [step, setStep] = useState(Math.max(0, Math.min(initialStep, onboardingSteps.length - 1)));
@@ -85,6 +87,7 @@ export function OnboardingForm({
         );
       }}
     >
+      <input name="matching_intent_version" type="hidden" value="2" />
       <div
         aria-live="polite"
         className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-5 shadow-sm"
@@ -331,15 +334,57 @@ export function OnboardingForm({
       </div>
 
       <div className={step === 2 ? stepPanelClass : "hidden"}>
-        <div>
-          <Label htmlFor="looking_for_types">Looking for</Label>
-          <Input
-            defaultValue={profile.lookingForTypes.join(", ")}
-            id="looking_for_types"
-            name="looking_for_types"
-            placeholder="cofounder, mentor, teammate"
-          />
-        </div>
+        <fieldset className="space-y-4 md:col-span-2">
+          <legend className="text-sm font-semibold text-[var(--ink)]">
+            Matching intent
+          </legend>
+          <div className="grid gap-5 md:grid-cols-2">
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-[var(--ink)]">I am looking for</p>
+              {matchTypeConfigs.map((config) => (
+                <label
+                  className="flex min-h-11 items-start gap-3 border-b border-[var(--line)] py-2 text-sm text-[var(--ink)]"
+                  key={`seeking-${config.slug}`}
+                >
+                  <input
+                    className="mt-1 size-4 accent-[var(--accent)]"
+                    defaultChecked={profile.seekingMatchTypes.includes(config.slug)}
+                    name="seeking_match_types"
+                    type="checkbox"
+                    value={config.slug}
+                  />
+                  <span>
+                    <span className="block font-medium">{config.seekerLabel}</span>
+                    <span className="mt-1 block text-[var(--ink-soft)]">{config.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-[var(--ink)]">I can offer</p>
+              {matchTypeConfigs.map((config) => (
+                <label
+                  className="flex min-h-11 items-start gap-3 border-b border-[var(--line)] py-2 text-sm text-[var(--ink)]"
+                  key={`offering-${config.slug}`}
+                >
+                  <input
+                    className="mt-1 size-4 accent-[var(--accent)]"
+                    defaultChecked={profile.offeringMatchTypes.includes(config.slug)}
+                    name="offering_match_types"
+                    type="checkbox"
+                    value={config.slug}
+                  />
+                  <span>
+                    <span className="block font-medium">{config.providerLabel}</span>
+                    <span className="mt-1 block text-[var(--ink-soft)]">
+                      {config.direction === "mutual" ? "Reciprocal match" : "Seeker-to-provider match"}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </fieldset>
         <div>
           <Label htmlFor="desired_roles">Desired roles</Label>
           <Input

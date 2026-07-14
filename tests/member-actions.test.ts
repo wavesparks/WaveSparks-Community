@@ -230,15 +230,16 @@ describe("member server actions", () => {
           event.payload.postId === post?.id,
       );
     expect(hasPostAnalytics()).toBe(false);
-    expect(afterMock).toHaveBeenCalledTimes(1);
+    expect(afterMock).toHaveBeenCalledTimes(2);
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/feed");
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/profile");
 
-    const backgroundTask = afterMock.mock.calls[0]?.[0] as
-      | (() => Promise<void>)
-      | undefined;
-    await backgroundTask?.();
+    const backgroundTasks = afterMock.mock.calls.map(
+      ([task]) => task as () => Promise<void>,
+    );
+    await Promise.all(backgroundTasks.map((task) => task()));
     expect(hasPostAnalytics()).toBe(true);
+    expect(getStore().matchRuns).not.toHaveLength(0);
   });
 
   it("refreshes profile activation surfaces after follow and unfollow actions", async () => {

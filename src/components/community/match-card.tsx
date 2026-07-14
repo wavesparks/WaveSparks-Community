@@ -22,7 +22,7 @@ export function MatchCard({
           />
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase text-[var(--accent)]">
-              {match.matchType.replaceAll("_", " ")}
+              {match.matchTypeLabel}
             </p>
             <h3 className="mt-1 text-lg font-semibold leading-tight text-[var(--ink)]">
               {match.target.displayName}
@@ -32,15 +32,17 @@ export function MatchCard({
             </p>
           </div>
         </div>
-        <div className="w-full rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-4 py-3 sm:w-auto sm:min-w-28 sm:text-right">
+        <div className="w-full border-t border-[var(--line)] pt-3 sm:w-auto sm:min-w-28 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0 sm:text-right">
           <p className="text-xs font-semibold uppercase text-[var(--accent)]">
             Fit score
           </p>
           <p className="text-2xl font-semibold text-[var(--ink)]">{match.score}</p>
-          <p className="text-sm text-[var(--ink-soft)]">{match.scoreBand}</p>
+          <p className="text-sm text-[var(--ink-soft)]">
+            {match.scoreBand} · {match.confidence} confidence
+          </p>
         </div>
       </div>
-      <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3">
+      <div className="border-t border-[var(--line)] pt-4">
         <p className="text-xs font-semibold uppercase text-[var(--accent)]">Why this surfaced</p>
         <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">{match.explanationText}</p>
       </div>
@@ -51,7 +53,7 @@ export function MatchCard({
           </Badge>
         ))}
       </div>
-      <div className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3 text-sm leading-6 text-[var(--ink-soft)]">
+      <div className="border-t border-[var(--line)] pt-4 text-sm leading-6 text-[var(--ink-soft)]">
         <p className="font-semibold text-[var(--ink)]">What they’re building / offering</p>
         <p className="mt-2">{match.target.whatTheyAreBuilding}</p>
       </div>

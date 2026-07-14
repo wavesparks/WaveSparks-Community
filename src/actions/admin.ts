@@ -19,6 +19,13 @@ import {
 } from "@/server/action-side-effects";
 import { canViewAdminRoute } from "@/server/permissions";
 import {
+  balancedMatchWeights,
+  matchTypeSlug,
+  parseMatchDirection,
+  validateMatchTypeConfig,
+} from "@/lib/match-config";
+import type { MatchFactorKey, MatchFactorWeights, MatchTypeConfig } from "@/lib/domain";
+import {
   revokeMembershipInvitation,
   sendMembershipInvitation,
   syncMembershipClerkLifecycle,
@@ -31,12 +38,15 @@ import {
   getCommentRecordById,
   getMembershipRecordById,
   getPostById,
+  getProfileByMembershipId,
   getProfileRecordById,
   getUserById,
   importCohortMembers,
+  listMatchTypeConfigsForOrg,
   promoteCohortMembers,
   recomputeMatchesForProfile,
   recomputeMatchesForOrg,
+  saveMatchTypeConfig,
   updateCommentStatus,
   updateMembershipStatus,
   updateMembershipRole,
@@ -484,6 +494,10 @@ export async function updatePostModerationAction(slug: string, postId: string, f
     },
     { existingPost: post },
   );
+  if (["ask", "opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(post.type)) {
+    const profile = await getProfileByMembershipId(post.authorMembershipId);
+    if (profile) enqueueProfileMatchRecompute(slug, org.id, profile.id);
+  }
 
   revalidatePath(`/org/${slug}/admin/posts`);
   for (const path of getPostCommentRevalidationPaths(slug, postId, post.type)) {
@@ -598,6 +612,105 @@ export async function recomputeMatchesAction(slug: string) {
   revalidatePath(`/org/${slug}/matches`);
   revalidatePath(`/org/${slug}/admin/matches`);
   redirect(`/org/${slug}/admin/matches?status=matches_recomputed`);
+}
+
+const matchFactorKeys: MatchFactorKey[] = [
+  "semantic",
+  "skills",
+  "venture",
+  "availability",
+  "work_style",
+  "location",
+];
+
+function matchWeightsFromFormData(formData: FormData): MatchFactorWeights {
+  return Object.fromEntries(
+    matchFactorKeys.map((key) => {
+      const value = Number(formData.get(`weight_${key}`));
+      return [key, Number.isFinite(value) ? value : balancedMatchWeights[key]];
+    }),
+  ) as MatchFactorWeights;
+}
+
+export async function saveMatchTypeConfigAction(
+  slug: string,
+  existingSlug: string | null,
+  formData: FormData,
+) {
+  const { org } = await requireAdminForAction(slug);
+  const configs = await listMatchTypeConfigsForOrg(org.id, { includeInactive: true });
+  const existing = existingSlug
+    ? configs.find((config) => config.slug === existingSlug)
+    : undefined;
+  if (existingSlug && !existing) {
+    throw new Error("Matching type not found.");
+  }
+
+  const name = String(formData.get("name") ?? "").trim();
+  const nextSlug = existing?.slug ?? matchTypeSlug(name);
+  const weights = matchWeightsFromFormData(formData);
+  const minimumScore = Number(formData.get("minimum_score") ?? 45);
+  const directionValue = String(formData.get("direction") ?? "mutual");
+  const description = String(formData.get("description") ?? "").trim();
+  const seekerLabel = String(formData.get("seeker_label") ?? "").trim();
+  const providerLabel = String(formData.get("provider_label") ?? "").trim();
+  const active = formData.get("active") === "on";
+  const errors = validateMatchTypeConfig({
+    name,
+    description,
+    direction: directionValue,
+    seekerLabel,
+    providerLabel,
+    minimumScore,
+    weights,
+  });
+  if (!nextSlug || (!existing && configs.some((config) => config.slug === nextSlug))) {
+    errors.push("A matching type with this name already exists.");
+  }
+  if (
+    configs.some(
+      (config) =>
+        config.id !== existing?.id && config.name.toLowerCase() === name.toLowerCase(),
+    )
+  ) {
+    errors.push("Matching type names must be unique.");
+  }
+  if (active && !existing?.active && configs.filter((config) => config.active).length >= 12) {
+    errors.push("An organization can have at most 12 active matching types.");
+  }
+  if (errors.length) {
+    redirect(`/org/${slug}/admin/matches?status=match_type_invalid`);
+  }
+
+  const now = new Date().toISOString();
+  const config: MatchTypeConfig = {
+    id: existing?.id ?? `mtc_${nanoid(8)}`,
+    orgId: org.id,
+    slug: nextSlug,
+    name,
+    description,
+    direction: parseMatchDirection(directionValue),
+    seekerLabel,
+    providerLabel,
+    weights,
+    minimumScore,
+    active,
+    version: (existing?.version ?? 0) + 1,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  await saveMatchTypeConfig(config);
+  after(async () => {
+    try {
+      await recomputeMatchesForOrg(org.id);
+      revalidatePath(`/org/${slug}/matches`);
+      revalidatePath(`/org/${slug}/onboarding`);
+    } catch (error) {
+      console.error("[wavesparks] match type recompute failed", config.slug, error);
+    }
+  });
+  revalidatePath(`/org/${slug}/admin/matches`);
+  redirect(`/org/${slug}/admin/matches?status=match_type_saved`);
 }
 
 export async function moderateCommentAction(slug: string, commentId: string, status: "visible" | "removed") {

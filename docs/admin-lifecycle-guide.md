@@ -116,7 +116,26 @@ Import rules:
 
 Imported cohort members begin on the waitlist. Select intended members and use **Promote selected** to approve them. Notifications are sent only for real state transitions.
 
-## 7. Create a manual introduction
+## 7. Configure and review AI matching
+
+Open `/org/wavespark/admin/matches` to review recommendations, matching runs, embedding health, and aggregate member feedback.
+
+![Admin matching type configuration](assets/guides/admin-matches.png)
+
+Each matching type has a stable key and Admin-controlled name, description, direction, member-facing seeking and offering labels, six factor weights, minimum score, and active state. The six weights must total 100. Up to 12 types may be active at once.
+
+- **Mutual** requires both members to select the type under both **I am looking for** and **I can offer**.
+- **Seeker to provider** requires the source to seek the type and the target to offer it.
+- Archiving a type removes it from member choices and future rankings without deleting historical configuration.
+- Saving a type increments its version and starts a full organization recompute.
+
+Run health shows how many embeddings were refreshed or degraded. A degraded run uses the deterministic local fallback and displays the provider error; it must not be treated as a normal AI-quality run.
+
+Member feedback is private. Admins see aggregate Helpful, Not relevant, matching-type, and reason counts. A Not relevant response suppresses that recommendation for the source member across later recomputations. Feedback does not silently rewrite factor weights.
+
+See [AI matching engine](ai-matching-engine.md) for the scoring, post policy, embedding model, storage choice, and operating thresholds.
+
+## 8. Create a manual introduction
 
 Open `/org/wavespark/admin/requests`.
 
@@ -126,13 +145,13 @@ A valid manual introduction requires two different members, both `approved`, bot
 
 Select the requesting and receiving member separately, then add a concrete purpose and context. The receiving member must accept before either side sees private contact details.
 
-## 8. Moderate content and profiles
+## 9. Moderate content and profiles
 
 Use the Admin Posts and Profiles workspaces to hide or restore posts, lock comments, remove comments, feature profiles, mark stale profiles, and recompute matches after material changes.
 
 Public Feed and public post reading remain available to visitors and every membership state. Treat moderation as a public-reading decision, not only a member-area decision.
 
-## 9. Suspend, restore, reject, and delete
+## 10. Suspend, restore, reject, and delete
 
 ### Suspend
 
@@ -155,7 +174,7 @@ Clerk `user.deleted` triggers anonymization rather than destructive content dele
 - Clerk IDs, contacts, credentials, follows, saves, notifications, matching data, and pending intros are removed or terminated.
 - Posts and comments remain with the anonymized author.
 
-## 10. Understand webhook recovery
+## 11. Understand webhook recovery
 
 The Clerk webhook records an event as processed only after business handling succeeds. A failed handler returns an error so Clerk can retry the same event.
 
@@ -168,7 +187,7 @@ Important drift rules:
 - Clerk organization deletion only unlinks the local organization; it does not delete community data.
 - A suspended or rejected member is never silently re-added during login.
 
-## 11. Reconcile Clerk and Wavespark
+## 12. Reconcile Clerk and Wavespark
 
 Reconciliation is dry-run by default and requires an explicit environment.
 

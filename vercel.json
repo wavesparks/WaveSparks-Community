@@ -1,6 +1,7 @@
 {
   "framework": "nextjs",
   "buildCommand": "pnpm build",
+  "regions": ["sin1"],
   "crons": [
     {
       "path": "/api/internal/matches/recompute",

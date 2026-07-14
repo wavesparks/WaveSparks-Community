@@ -3,6 +3,7 @@ const requiredEnv = [
   "CLERK_SECRET_KEY",
   "CLERK_WEBHOOK_SIGNING_SECRET",
   "DATABASE_URL",
+  "OPENAI_API_KEY",
   "CRON_SECRET",
   "WAVESPARK_ADMIN_EMAILS",
 ] as const;

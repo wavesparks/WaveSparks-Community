@@ -39,12 +39,17 @@ async function buildViewerContextForOrg(
   }
   const membership = viewerRecord.membership;
   const profile = viewerRecord.profile;
-  const user = await upsertSessionUser({
-    clerkUserId: identity.clerkUserId,
-    email: identity.email,
-    name: identity.name,
-    imageUrl: identity.imageUrl,
-  });
+  const user = await upsertSessionUser(
+    {
+      clerkUserId: identity.clerkUserId,
+      email: identity.email,
+      name: identity.name,
+      imageUrl: identity.imageUrl,
+    },
+    {
+      existingUser: viewerRecord.user,
+    },
+  );
 
   const canAdmin = canAdminOrganization(user, membership);
 

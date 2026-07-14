@@ -8,7 +8,7 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 - Clerk-backed invitation-only account creation and sign-in
 - Structured onboarding and profile completion flow
 - Community feed, limited member directory, knowledge library, opportunities, post detail, comments, saved posts, and intro requests
-- AI-assisted cofounder and mentor matches with explainable scoring
+- Admin-configurable AI matching with separate seeking/offering intent, explainable scoring, and feedback
 - Admin console for cohort pools, approvals, moderation, manual intros, analytics, and org settings
 - Drizzle schema, generated SQL migration, seed script, and match recompute cron stub
 
@@ -26,6 +26,7 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 
 - [User lifecycle guide](docs/user-lifecycle-guide.md)
 - [Admin lifecycle guide](docs/admin-lifecycle-guide.md)
+- [AI matching engine](docs/ai-matching-engine.md)
 
 ## Local setup
 
@@ -115,7 +116,7 @@ pnpm test
 pnpm test:e2e
 pnpm test:e2e:clerk
 pnpm build
-pnpm cron:matches
+pnpm cron:matches -- --environment=development
 pnpm readiness:prod
 pnpm clerk:reconcile -- --environment=development
 pnpm env:audit
@@ -130,6 +131,7 @@ Before promoting a deployment to production:
 ```bash
 NEXT_PUBLIC_APP_URL=https://app.wavesparks.co
 DATABASE_URL=<postgres-url-with-pgvector>
+OPENAI_API_KEY=<production-embedding-key>
 CRON_SECRET=<long-random-secret>
 WAVESPARK_ADMIN_EMAILS=letsbuild@wavesparks.co
 BLOB_READ_WRITE_TOKEN=<vercel-blob-read-write-token>

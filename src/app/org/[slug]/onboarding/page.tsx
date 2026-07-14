@@ -5,6 +5,7 @@ import { saveOnboardingAction } from "@/actions/member";
 import { getViewerContext } from "@/lib/auth";
 import { emptyProfileForMember } from "@/lib/profile-form";
 import { getProfileLinks } from "@/server/view-models";
+import { listMatchTypeConfigsForOrg } from "@/server/store";
 import type { CSSProperties } from "react";
 
 export default async function OnboardingPage({
@@ -24,7 +25,10 @@ export default async function OnboardingPage({
 
   const profile =
     viewer.profile ?? emptyProfileForMember(viewer.user, viewer.membership);
-  const links = viewer.profile ? await getProfileLinks(viewer.profile.id) : [];
+  const [links, matchTypeConfigs] = await Promise.all([
+    viewer.profile ? getProfileLinks(viewer.profile.id) : Promise.resolve([]),
+    listMatchTypeConfigsForOrg(viewer.org.id),
+  ]);
   const action = saveOnboardingAction.bind(null, slug, viewer.membership.id);
   const status = Array.isArray(query.status) ? query.status[0] : query.status;
   const requestedStep = Number(Array.isArray(query.step) ? query.step[0] : query.step);
@@ -69,6 +73,7 @@ export default async function OnboardingPage({
             action={action}
             initialStep={Number.isInteger(requestedStep) ? requestedStep : 0}
             links={links}
+            matchTypeConfigs={matchTypeConfigs}
             profile={profile}
           />
         </section>

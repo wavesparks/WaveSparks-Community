@@ -1,5 +1,6 @@
 import type { MembershipStatus, Profile } from "@/lib/domain";
 import { parseTags } from "@/lib/utils";
+import { legacySeekingMatchTypes } from "@/lib/match-config";
 
 export interface ProfileReadinessField {
   key: string;
@@ -55,8 +56,8 @@ const readinessFields: Array<ProfileReadinessField & { hasValue: (profile: Profi
   },
   {
     key: "looking_for_types",
-    label: "Looking for",
-    hasValue: (profile) => profile.lookingForTypes.length > 0,
+    label: "Matching intent",
+    hasValue: (profile) => profile.seekingMatchTypes.length > 0,
   },
   {
     key: "desired_roles",
@@ -103,7 +104,9 @@ export function getProfileReadinessFromFormData(
     startupDescription: String(
       formData.get("startup_description") ?? fallbackProfile.startupDescription,
     ).trim(),
-    lookingForTypes: parseTags(formData.get("looking_for_types")),
+    seekingMatchTypes: formData.getAll("seeking_match_types").map(String).filter(Boolean).length
+      ? formData.getAll("seeking_match_types").map(String).filter(Boolean)
+      : legacySeekingMatchTypes(parseTags(formData.get("looking_for_types"))),
     desiredRoles: parseTags(formData.get("desired_roles")),
     skillTags: parseTags(formData.get("skill_tags")),
     emailForIntro:
@@ -184,6 +187,21 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       return {
         title: "Member unfollowed",
         body: "They will no longer be prioritized as a followed member.",
+      };
+    case "match_type_saved":
+      return {
+        title: "Matching type saved",
+        body: "The new configuration is active and a background ranking refresh has started.",
+      };
+    case "match_type_invalid":
+      return {
+        title: "Check the matching type",
+        body: "Complete every label, keep the minimum score in range, and make the six weights total 100.",
+      };
+    case "match_feedback_saved":
+      return {
+        title: "Feedback saved",
+        body: "Your private signal will be included in matching quality review.",
       };
     case "notifications_read":
       return {

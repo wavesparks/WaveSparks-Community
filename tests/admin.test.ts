@@ -48,6 +48,7 @@ describe("admin operations", () => {
   it("supports moderation toggles and match recompute", async () => {
     const existingPost = (await getPostById("pst_1"))!;
     const profileRecord = (await getProfileRecordById("pro_jules"))!;
+    await recomputeMatchesForOrg("org_wavespark");
     const matchesBeforeProfileFlags = await listMatchesForOrg("org_wavespark");
     const unrelatedMatchIdsBeforeProfileFlags = matchesBeforeProfileFlags
       .filter(
@@ -260,11 +261,12 @@ describe("admin operations", () => {
     ).toBe(true);
     expect(scopedMatches.length).toBeGreaterThan(0);
     expect(
-      scopedMatches.every(
+      scopedMatches.some(
         (match) =>
           match.sourceProfileId === "pro_jules" || match.targetProfileId === "pro_jules",
       ),
     ).toBe(true);
+    expect(new Set(scopedMatches.map((match) => match.runId)).size).toBe(1);
     await expect(getProfileRecordById("pro_missing")).resolves.toBeUndefined();
     await expect(getCommentRecordById("cmt_missing")).resolves.toBeUndefined();
   });

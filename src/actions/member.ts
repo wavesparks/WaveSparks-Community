@@ -15,6 +15,7 @@ import {
 } from "@/lib/post-action-routing";
 import { profileFromFormData, validateProfileFormData } from "@/lib/profile-form";
 import { getProfileReadiness } from "@/lib/activation";
+import { sanitizeMatchFeedbackReasons } from "@/lib/match-feedback";
 import { parseTags } from "@/lib/utils";
 import { absoluteAppUrl } from "@/lib/urls";
 import {
@@ -33,15 +34,23 @@ import {
   getPostById,
   getProfileByMembershipId,
   savePostForMembership,
+  listMatchTypeConfigsForOrg,
   listActiveIntroRequestStatusesForRequester,
   markNotificationsReadForMembership,
   recomputeMatchesForProfile,
+  recordMatchFeedback,
   respondToIntroRequest,
   unsavePostForMembership,
   unfollowMembership,
   upsertProfile,
 } from "@/server/store";
-import type { IntroSourceType, IntroStatus, Membership, PostType } from "@/lib/domain";
+import type {
+  IntroSourceType,
+  IntroStatus,
+  MatchFeedbackValue,
+  Membership,
+  PostType,
+} from "@/lib/domain";
 
 async function requireMemberForAction(
   slug: string,
@@ -151,6 +160,7 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
       `/org/${slug}/onboarding?status=profile_invalid&fields=${encodeURIComponent(fields)}`,
     );
   }
+  const matchTypeConfigs = await listMatchTypeConfigsForOrg(membership.orgId);
   const result = profileFromFormData({
     formData,
     membership,
@@ -162,6 +172,7 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
       updatedAt: new Date().toISOString(),
     },
     existingProfile,
+    matchTypeConfigs,
   });
 
   await upsertProfile(result.profile, result.links, {
@@ -194,8 +205,42 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
   );
 }
 
+export async function saveMatchFeedbackAction(
+  slug: string,
+  membershipId: string,
+  matchId: string,
+  formData: FormData,
+) {
+  const { org, profile } = await requireMemberForAction(slug, membershipId, {
+    requireFeedAccess: true,
+  });
+  if (!profile) throw new Error("A complete profile is required.");
+  const rawValue = String(formData.get("value") ?? "");
+  if (rawValue !== "helpful" && rawValue !== "not_relevant") {
+    throw new Error("Invalid match feedback.");
+  }
+  const value: MatchFeedbackValue = rawValue;
+  const reasons =
+    value === "not_relevant"
+      ? sanitizeMatchFeedbackReasons(formData.getAll("reason").map(String))
+      : [];
+  if (value === "not_relevant" && !reasons.length) {
+    throw new Error("Select a reason for dismissing this match.");
+  }
+  const feedback = await recordMatchFeedback({
+    orgId: org.id,
+    matchId,
+    sourceProfileId: profile.id,
+    value,
+    reasons,
+  });
+  if (!feedback) throw new Error("Match not found.");
+  revalidatePath(`/org/${slug}/matches`);
+  redirect(`/org/${slug}/matches?status=match_feedback_saved`);
+}
+
 export async function createPostAction(slug: string, membershipId: string, formData: FormData) {
-  const { org, membership } = await requireMemberForAction(slug, membershipId, {
+  const { org, membership, profile } = await requireMemberForAction(slug, membershipId, {
     requireFeedAccess: true,
   });
 
@@ -231,6 +276,12 @@ export async function createPostAction(slug: string, membershipId: string, formD
     payload: { postId: post.id, type: post.type },
     createdAt: post.createdAt,
   });
+  if (
+    profile &&
+    ["ask", "opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(post.type)
+  ) {
+    enqueueProfileMatchRecompute(slug, org.id, profile.id);
+  }
 
   for (const path of getPostListRevalidationPaths(slug, post.type)) {
     revalidatePath(path);

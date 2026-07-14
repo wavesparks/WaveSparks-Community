@@ -1,9 +1,11 @@
 import { nanoid } from "nanoid";
 
 import { parseBoolean, parseTags } from "@/lib/utils";
-import type { Membership, Profile, ProfileLink, User } from "@/lib/domain";
+import type { MatchTypeConfig, Membership, Profile, ProfileLink, User } from "@/lib/domain";
 import { getProfileReadiness } from "@/lib/activation";
-import { buildEmbedding, buildEmbeddingText } from "@/server/matching";
+import { legacySeekingMatchTypes } from "@/lib/match-config";
+import { LOCAL_EMBEDDING_MODEL } from "@/server/embeddings";
+import { buildEmbedding, buildMatchingEmbeddingTexts } from "@/server/matching";
 
 function field(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -69,7 +71,7 @@ function completionScore(profile: Profile) {
     profile.startupOneLiner,
     profile.startupDescription,
     profile.stage,
-    profile.lookingForTypes.length ? "yes" : "",
+    profile.seekingMatchTypes.length ? "yes" : "",
     profile.desiredRoles.length ? "yes" : "",
     profile.skillTags.length ? "yes" : "",
     profile.helpNeededTags.length ? "yes" : "",
@@ -109,6 +111,8 @@ export function emptyProfileForMember(user: User, membership: Membership) {
     tractionSummary: "",
     regionFocus: "",
     lookingForTypes: [],
+    seekingMatchTypes: [],
+    offeringMatchTypes: [],
     desiredRoles: [],
     helpNeededTags: [],
     idealMatchDescription: "",
@@ -151,13 +155,20 @@ export function emptyProfileForMember(user: User, membership: Membership) {
     featured: false,
     stale: false,
     onboardingComplete: false,
-    embeddingText: "",
-    profileEmbedding: [],
+    seekingEmbeddingText: "",
+    offeringEmbeddingText: "",
+    seekingEmbedding: [],
+    offeringEmbedding: [],
+    embeddingModel: LOCAL_EMBEDDING_MODEL,
+    embeddingStatus: "pending",
     createdAt: now,
     updatedAt: now,
   };
-  base.embeddingText = buildEmbeddingText(base);
-  base.profileEmbedding = buildEmbedding(base.embeddingText);
+  const texts = buildMatchingEmbeddingTexts(base);
+  base.seekingEmbeddingText = texts.seekingProfileText;
+  base.offeringEmbeddingText = texts.offeringText;
+  base.seekingEmbedding = buildEmbedding(texts.seekingProfileText);
+  base.offeringEmbedding = buildEmbedding(texts.offeringText);
   base.profileCompletionPercent = completionScore(base);
   return base;
 }
@@ -167,11 +178,13 @@ export function profileFromFormData({
   membership,
   user,
   existingProfile,
+  matchTypeConfigs = [],
 }: {
   formData: FormData;
   membership: Membership;
   user: User;
   existingProfile?: Profile;
+  matchTypeConfigs?: MatchTypeConfig[];
 }) {
   const now = new Date().toISOString();
   const profile = existingProfile
@@ -201,7 +214,43 @@ export function profileFromFormData({
   profile.currentProgress = field(formData, "current_progress");
   profile.tractionSummary = field(formData, "traction_summary");
   profile.regionFocus = field(formData, "region_focus");
-  profile.lookingForTypes = parseTags(formData.get("looking_for_types"));
+  const selectedSeekingTypes = formData
+    .getAll("seeking_match_types")
+    .map(String)
+    .filter(Boolean);
+  const selectedOfferingTypes = formData
+    .getAll("offering_match_types")
+    .map(String)
+    .filter(Boolean);
+  const usesConfiguredMatchingIntent = field(formData, "matching_intent_version") === "2";
+  const configBySlug = new Map(
+    matchTypeConfigs.filter((config) => config.active).map((config) => [config.slug, config]),
+  );
+  const configuredSlugs = new Set(configBySlug.keys());
+  const selectedConfiguredTypes = (values: string[]) => [
+    ...new Set(values.filter((value) => configuredSlugs.has(value))),
+  ];
+  profile.seekingMatchTypes = usesConfiguredMatchingIntent
+    ? selectedConfiguredTypes(selectedSeekingTypes)
+    : selectedSeekingTypes.length
+      ? [...new Set(selectedSeekingTypes)]
+      : legacySeekingMatchTypes(parseTags(formData.get("looking_for_types")));
+  profile.offeringMatchTypes = usesConfiguredMatchingIntent
+    ? selectedConfiguredTypes(selectedOfferingTypes)
+    : selectedOfferingTypes.length
+      ? [...new Set(selectedOfferingTypes)]
+      : [
+          ...(profile.seekingMatchTypes.includes("cofounder_match")
+            ? ["cofounder_match"]
+            : []),
+          ...(profile.seekingMatchTypes.includes("collaborator_match")
+            ? ["collaborator_match"]
+            : []),
+          ...(membership.archetypes.includes("mentor") ? ["mentor_match"] : []),
+        ];
+  profile.lookingForTypes = profile.seekingMatchTypes.map(
+    (slug) => configBySlug.get(slug)?.name ?? slug,
+  );
   profile.desiredRoles = parseTags(formData.get("desired_roles"));
   profile.helpNeededTags = parseTags(formData.get("help_needed_tags"));
   profile.idealMatchDescription = field(formData, "ideal_match_description");
@@ -252,8 +301,16 @@ export function profileFromFormData({
   );
   profile.lastActiveAt = now;
   profile.updatedAt = now;
-  profile.embeddingText = buildEmbeddingText(profile);
-  profile.profileEmbedding = buildEmbedding(profile.embeddingText);
+  const texts = buildMatchingEmbeddingTexts(profile);
+  profile.seekingEmbeddingText = texts.seekingProfileText;
+  profile.offeringEmbeddingText = texts.offeringText;
+  profile.seekingEmbedding = buildEmbedding(texts.seekingProfileText);
+  profile.offeringEmbedding = buildEmbedding(texts.offeringText);
+  profile.embeddingModel = LOCAL_EMBEDDING_MODEL;
+  profile.embeddingSourceHash = undefined;
+  profile.embeddingStatus = "pending";
+  profile.embeddingError = undefined;
+  profile.embeddingUpdatedAt = undefined;
   const readiness = getProfileReadiness(profile);
   profile.onboardingComplete = readiness.isReady;
   profile.profileCompletionPercent = readiness.completionPercent;

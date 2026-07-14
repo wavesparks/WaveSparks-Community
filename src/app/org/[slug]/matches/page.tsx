@@ -1,21 +1,26 @@
 import {
   followMembershipAction,
   requestIntroAction,
+  saveMatchFeedbackAction,
   unfollowMembershipAction,
 } from "@/actions/member";
+import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { MatchCard } from "@/components/community/match-card";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { Select } from "@/components/ui/select";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
 import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { getActiveIntroStatusCopy } from "@/lib/intro-status";
+import { matchFeedbackReasonLabels } from "@/lib/match-feedback";
 import { getMatchCardViewsForProfile } from "@/server/view-models";
+import { listMatchTypeConfigsForOrg } from "@/server/store";
 
 export default async function MatchesPage({
   params,
@@ -36,8 +41,15 @@ export default async function MatchesPage({
     return null;
   }
 
+  const configs = await listMatchTypeConfigsForOrg(viewer.org.id);
+  const requestedMatchType = singleQueryValue(query.match_type);
+  const selectedMatchType = configs.some((config) => config.slug === requestedMatchType)
+    ? requestedMatchType
+    : undefined;
   const matchCards = viewer.profile
-    ? await getMatchCardViewsForProfile(viewer.profile.id, viewer.membership.id)
+    ? await getMatchCardViewsForProfile(viewer.profile.id, viewer.membership.id, {
+        matchType: selectedMatchType,
+      })
     : [];
 
   return (
@@ -47,15 +59,91 @@ export default async function MatchesPage({
           eyebrow="Matches"
           level={1}
           title="AI-suggested people worth meeting"
-          description="These suggestions blend structured fit, semantic similarity, and trust signals. Use People when you want broader limited-profile search."
+          description="These suggestions blend explicit intent, structured fit, and semantic similarity. Use People when you want broader limited-profile search."
         />
         <StatusBanner status={singleQueryValue(query.status)} />
+        <div className="flex flex-wrap gap-2">
+          <LinkButton
+            href={`/org/${slug}/matches`}
+            size="sm"
+            variant={!selectedMatchType ? "primary" : "secondary"}
+          >
+            All
+          </LinkButton>
+          {configs.map((config) => (
+            <LinkButton
+              href={`/org/${slug}/matches?match_type=${encodeURIComponent(config.slug)}`}
+              key={config.slug}
+              size="sm"
+              variant={selectedMatchType === config.slug ? "primary" : "secondary"}
+            >
+              {config.name}
+            </LinkButton>
+          ))}
+        </div>
         <div className="grid gap-6 xl:grid-cols-2">
           {matchCards.map(({ following, introStatus, match }) => {
             const introCopy = getActiveIntroStatusCopy(introStatus);
             return (
               <MatchCard key={match.id} match={match}>
-                <div className="space-y-4 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                <div className="space-y-4 border-t border-[var(--line)] pt-4">
+                  <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--line)] pb-4">
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--ink)]">Private match feedback</p>
+                      <p className="mt-1 text-xs text-[var(--ink-soft)]">Visible only in aggregate to admins.</p>
+                    </div>
+                    <div className="flex flex-wrap items-end gap-2">
+                      <form
+                        action={saveMatchFeedbackAction.bind(
+                          null,
+                          slug,
+                          viewer.membership.id,
+                          match.id,
+                        )}
+                      >
+                        <input name="value" type="hidden" value="helpful" />
+                        <SubmitButton
+                          aria-label="Mark match helpful"
+                          pendingLabel="Saving"
+                          size="sm"
+                          title="Helpful"
+                          variant="secondary"
+                        >
+                          <ThumbsUp className="size-4" />
+                          Helpful
+                        </SubmitButton>
+                      </form>
+                      <form
+                        action={saveMatchFeedbackAction.bind(
+                          null,
+                          slug,
+                          viewer.membership.id,
+                          match.id,
+                        )}
+                        className="flex items-end gap-2"
+                      >
+                        <input name="value" type="hidden" value="not_relevant" />
+                        <Select aria-label="Why this match is not relevant" name="reason" required>
+                          <option value="">Reason</option>
+                          {Object.entries(matchFeedbackReasonLabels).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </Select>
+                        <SubmitButton
+                          aria-label="Mark match not relevant"
+                          pendingLabel="Saving"
+                          size="sm"
+                          title="Not relevant"
+                          variant="ghost"
+                        >
+                          <ThumbsDown className="size-4" />
+                          Not relevant
+                        </SubmitButton>
+                      </form>
+                    </div>
+                  </div>
                   <form
                     action={
                       following
@@ -83,7 +171,7 @@ export default async function MatchesPage({
                     </SubmitButton>
                   </form>
                   {introCopy ? (
-                    <div className="space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4">
+                    <div className="space-y-3 border-t border-[var(--line)] pt-4">
                       <div>
                         <p className="text-sm font-semibold text-[var(--ink)]">
                           {introCopy.title}
@@ -113,11 +201,7 @@ export default async function MatchesPage({
                       <Input
                         name="intro_purpose"
                         placeholder="Purpose: co-founder conversation / mentor guidance"
-                        defaultValue={
-                          match.matchType === "mentor_match"
-                            ? "mentor guidance"
-                            : "co-founder conversation"
-                        }
+                        defaultValue={`${match.matchTypeLabel.toLowerCase()} conversation`}
                       />
                       <Textarea
                         name="note"

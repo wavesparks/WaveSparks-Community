@@ -88,7 +88,7 @@ Required fields:
 - Headline
 - Startup one-liner
 - Startup description
-- At least one "looking for" type
+- At least one **I am looking for** matching type
 - At least one desired role
 - At least one skill tag
 - A valid email for introductions
@@ -115,11 +115,17 @@ Once both are true, you can publish posts and comments, follow approved members,
 
 ## 7. Use Matches and People safely
 
-Matches combine structured fit, profile similarity, and community trust signals. A match is a suggestion, not an automatic introduction.
+Choose matching intent in two separate lists: **I am looking for** controls which recommendations you request, while **I can offer** controls where you may appear as the other side of a recommendation. Leaving an offering type unchecked does not opt you into it.
+
+Matches combine explicit intent, structured fit, and semantic similarity. Recent active ask and opportunity posts may contribute a small intent signal; ordinary updates, comments, follows, and private contact details do not affect the score. A match is a suggestion, not an automatic introduction.
 
 ![AI-assisted member matches](assets/guides/user-matches.png)
 
+![AI-assisted member matches on mobile](assets/guides/user-matches-mobile.png)
+
 Use **Follow** to prioritize a member's activity. Use an introduction request when you have a concrete reason to meet. Include the conversation purpose, why this person is relevant, and a useful first message.
+
+Use **Helpful** to record a positive private quality signal. Use **Not relevant** with a reason to dismiss a recommendation. Dismissed matches remain hidden after recomputation; Admins see only organization-level feedback totals and reason counts in the product.
 
 ## 8. Request and accept introductions
 

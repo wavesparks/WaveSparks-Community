@@ -55,6 +55,24 @@ describe("permission guards", () => {
     expect(canViewAdminRoute(user, membership)).toBe(true);
   });
 
+  it("reuses an unchanged session user without rewriting it", async () => {
+    const existing = (await getUserById("usr_jules"))!;
+    existing.updatedAt = "2030-01-01T00:00:00.000Z";
+
+    const resolved = await upsertSessionUser(
+      {
+        clerkUserId: existing.clerkUserId,
+        email: existing.email,
+        imageUrl: existing.imageUrl,
+        name: existing.name,
+      },
+      { existingUser: existing },
+    );
+
+    expect(resolved).toBe(existing);
+    expect(resolved.updatedAt).toBe("2030-01-01T00:00:00.000Z");
+  });
+
   it("promotes an existing bootstrap admin membership from known auth context", async () => {
     const user = await upsertSessionUser({
       email: "letsbuild@wavesparks.co",

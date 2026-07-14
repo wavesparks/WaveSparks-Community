@@ -1,9 +1,18 @@
-import { buildEmbedding, buildEmbeddingText } from "@/server/matching";
+import {
+  buildEmbedding,
+  buildMatchingEmbeddingTexts,
+} from "@/server/matching";
+import { LOCAL_EMBEDDING_MODEL } from "@/server/embeddings";
+import {
+  legacySeekingMatchTypes,
+  stableDefaultMatchTypeConfigs,
+} from "@/lib/match-config";
 import type {
   AnalyticsEvent,
   Comment,
   Follow,
   IntroRequest,
+  MatchTypeConfig,
   Membership,
   Notification,
   Organization,
@@ -30,17 +39,49 @@ function avatar(seed: string) {
   return `https://api.dicebear.com/9.x/notionists/svg?seed=${seed}`;
 }
 
-function buildProfile(input: Omit<Profile, "embeddingText" | "profileEmbedding">): Profile {
-  const embeddingText = buildEmbeddingText({
-    ...input,
-    embeddingText: "",
-    profileEmbedding: [],
-  });
+type SeedProfileInput = Omit<
+  Profile,
+  | "seekingMatchTypes"
+  | "offeringMatchTypes"
+  | "seekingEmbeddingText"
+  | "offeringEmbeddingText"
+  | "seekingEmbedding"
+  | "offeringEmbedding"
+  | "embeddingModel"
+  | "embeddingSourceHash"
+  | "embeddingStatus"
+  | "embeddingError"
+  | "embeddingUpdatedAt"
+> &
+  Partial<Pick<Profile, "seekingMatchTypes" | "offeringMatchTypes">>;
 
-  return {
+function buildProfile(input: SeedProfileInput): Profile {
+  const seekingMatchTypes =
+    input.seekingMatchTypes ?? legacySeekingMatchTypes(input.lookingForTypes);
+  const offeringMatchTypes = input.offeringMatchTypes ?? [
+    ...(seekingMatchTypes.includes("cofounder_match") ? ["cofounder_match"] : []),
+    ...(seekingMatchTypes.includes("collaborator_match") ? ["collaborator_match"] : []),
+    ...(input.currentStatus === "mentor" || input.mentorOffers.length
+      ? ["mentor_match"]
+      : []),
+  ];
+  const draft = {
     ...input,
-    embeddingText,
-    profileEmbedding: buildEmbedding(embeddingText),
+    seekingMatchTypes,
+    offeringMatchTypes,
+    seekingEmbeddingText: "",
+    offeringEmbeddingText: "",
+    embeddingStatus: "ready" as const,
+  } satisfies Profile;
+  const texts = buildMatchingEmbeddingTexts(draft);
+  return {
+    ...draft,
+    seekingEmbeddingText: texts.seekingProfileText,
+    offeringEmbeddingText: texts.offeringText,
+    seekingEmbedding: buildEmbedding(texts.seekingProfileText),
+    offeringEmbedding: buildEmbedding(texts.offeringText),
+    embeddingModel: LOCAL_EMBEDDING_MODEL,
+    embeddingUpdatedAt: draft.updatedAt,
   };
 }
 
@@ -68,6 +109,9 @@ export const seedOrganization: Organization = {
   status: "active",
   createdAt: daysAgo(120),
 };
+
+export const seedMatchTypeConfigs: MatchTypeConfig[] =
+  stableDefaultMatchTypeConfigs(seedOrganization.id, seedOrganization.createdAt);
 
 export const seedUsers: User[] = [
   {

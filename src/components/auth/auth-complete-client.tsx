@@ -10,15 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
 
-const authCompleteRetryCount = 8;
-const authCompleteRetryDelayMs = 750;
-
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
+const authCompleteRetryCount = 2;
 
 export function AuthCompleteClient({ slug }: { slug: string }) {
-  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const { getToken, isLoaded, isSignedIn, orgId } = useAuth();
   const { setActive, signOut } = useClerk();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +56,6 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
           }
 
           if (!token) {
-            await wait(authCompleteRetryDelayMs);
             continue;
           }
 
@@ -78,7 +72,6 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
           }
 
           if (response.status === 401 && index < authCompleteRetryCount - 1) {
-            await wait(authCompleteRetryDelayMs);
             continue;
           }
 
@@ -105,7 +98,11 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
             target?: string;
           };
           const target = payload.target ?? `/org/${slug}/feed`;
-          if (payload.clerkOrgId && payload.state !== "inactive") {
+          if (
+            payload.clerkOrgId &&
+            payload.state !== "inactive" &&
+            orgId !== payload.clerkOrgId
+          ) {
             await setActive({
               organization: payload.clerkOrgId,
               redirectUrl: target,
@@ -131,7 +128,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
     return () => {
       active = false;
     };
-  }, [attempt, getToken, isLoaded, isSignedIn, router, setActive, slug]);
+  }, [attempt, getToken, isLoaded, isSignedIn, orgId, router, setActive, slug]);
 
   return (
     <main className="ws-page-shell grid min-h-screen place-items-center px-4 py-8">

@@ -1,6 +1,10 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
+const mediumDateFormatter = new Intl.DateTimeFormat("en-SG", {
+  dateStyle: "medium",
+});
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -25,9 +29,7 @@ export function formatPercent(value: number) {
 }
 
 export function formatDate(iso: string) {
-  return new Intl.DateTimeFormat("en-SG", {
-    dateStyle: "medium",
-  }).format(new Date(iso));
+  return mediumDateFormatter.format(new Date(iso));
 }
 
 export function formatRelativeCount(value: number, label: string) {

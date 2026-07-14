@@ -17,6 +17,7 @@ import {
   listMembershipProfileRecordsForOrg,
   listMembershipProfileRecordsByIds,
   listMatchTargetRecordsForProfile,
+  listMatchTypeConfigsForOrg,
   listNotificationsForMembership,
   listPostsForOrg,
   listPublicFeedPostRecordsForOrg,
@@ -738,8 +739,10 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
 export async function getMatchViews(membershipId: string, matchRecords: Array<{
   id: string;
   matchType: MatchCardView["matchType"];
+  matchTypeLabel?: string;
   score: number;
   scoreBand: MatchCardView["scoreBand"];
+  confidence?: MatchCardView["confidence"];
   explanationText: string;
   overlapTags: string[];
   targetProfileId: string;
@@ -765,8 +768,10 @@ export async function getMatchViews(membershipId: string, matchRecords: Array<{
     return {
       id: match.id,
       matchType: match.matchType,
+      matchTypeLabel: match.matchTypeLabel ?? match.matchType.replaceAll("_", " "),
       score: match.score,
       scoreBand: match.scoreBand,
+      confidence: match.confidence ?? "medium",
       explanationText: match.explanationText,
       overlapTags: match.overlapTags,
       target: toLimitedProfileCard(profile, membership),
@@ -779,11 +784,18 @@ export async function getMatchViews(membershipId: string, matchRecords: Array<{
 export async function getMatchCardViewsForProfile(
   profileId: string,
   membershipId: string,
+  options: { matchType?: string } = {},
 ) {
   const [records, introStatusByReceiver] = await Promise.all([
-    listMatchTargetRecordsForProfile(profileId, membershipId),
+    listMatchTargetRecordsForProfile(profileId, membershipId, {
+      matchType: options.matchType,
+    }),
     listActiveIntroRequestStatusesForRequester(membershipId),
   ]);
+  const configs = records[0]
+    ? await listMatchTypeConfigsForOrg(records[0].match.orgId, { includeInactive: true })
+    : [];
+  const configBySlug = new Map(configs.map((config) => [config.slug, config]));
   const views: Array<{
     match: MatchCardView;
     following: boolean;
@@ -800,8 +812,12 @@ export async function getMatchCardViewsForProfile(
       match: {
         id: record.match.id,
         matchType: record.match.matchType,
+        matchTypeLabel:
+          configBySlug.get(record.match.matchType)?.name ??
+          record.match.matchType.replaceAll("_", " "),
         score: record.match.score,
         scoreBand: record.match.scoreBand,
+        confidence: record.match.confidence,
         explanationText: record.match.explanationText,
         overlapTags: record.match.overlapTags,
         target: toLimitedProfileCard(record.targetProfile, record.targetMembership),

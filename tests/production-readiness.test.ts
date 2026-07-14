@@ -9,6 +9,7 @@ const baseProductionEnv: NodeJS.ProcessEnv = {
   CLERK_SECRET_KEY: "sk_live_wavesparks",
   CLERK_WEBHOOK_SIGNING_SECRET: "whsec_wavesparks",
   DATABASE_URL: "postgres://wavespark:secret@db.wavesparks.co:5432/wavespark",
+  OPENAI_API_KEY: "sk-production-embedding-key",
   CRON_SECRET: "cron-secret-with-enough-production-entropy",
   WAVESPARK_ADMIN_EMAILS: "letsbuild@wavesparks.co",
   BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_production_token_with_enough_entropy",
@@ -102,6 +103,15 @@ describe("production readiness checks", () => {
         "Resend email config is incomplete. Set all of: RESEND_API_KEY, RESEND_FROM_EMAIL.",
       ]),
     );
+  });
+
+  it("requires the production embedding provider", () => {
+    const result = checkProductionReadiness({
+      ...baseProductionEnv,
+      OPENAI_API_KEY: undefined,
+    });
+
+    expect(result.errors).toContain("OPENAI_API_KEY is required.");
   });
 
   it("warns when Vercel Blob upload storage is not configured", () => {

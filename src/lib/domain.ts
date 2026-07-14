@@ -29,7 +29,18 @@ export type PostType =
 export type OpportunitySource = "member" | "mentor" | "official";
 export type PostStatus = "active" | "closed" | "archived";
 export type CommentStatus = "visible" | "removed";
-export type MatchType = "cofounder_match" | "mentor_match";
+export type MatchType = string;
+export type MatchDirection = "mutual" | "seeker_provider";
+export type MatchConfidence = "high" | "medium" | "low";
+export type MatchFeedbackValue = "helpful" | "not_relevant";
+export type MatchFactorKey =
+  | "semantic"
+  | "skills"
+  | "venture"
+  | "availability"
+  | "work_style"
+  | "location";
+export type MatchFactorWeights = Record<MatchFactorKey, number>;
 export type IntroStatus = "pending" | "accepted" | "declined" | "expired";
 export type IntroSourceType = "match" | "post" | "profile" | "admin_manual";
 export type NotificationType =
@@ -62,6 +73,23 @@ export interface Organization {
   inviteSettings: string;
   status: "active" | "draft";
   createdAt: string;
+}
+
+export interface MatchTypeConfig {
+  id: string;
+  orgId: string;
+  slug: string;
+  name: string;
+  description: string;
+  direction: MatchDirection;
+  seekerLabel: string;
+  providerLabel: string;
+  weights: MatchFactorWeights;
+  minimumScore: number;
+  active: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface User {
@@ -151,6 +179,8 @@ export interface Profile {
   tractionSummary: string;
   regionFocus: string;
   lookingForTypes: string[];
+  seekingMatchTypes: string[];
+  offeringMatchTypes: string[];
   desiredRoles: string[];
   helpNeededTags: string[];
   idealMatchDescription: string;
@@ -193,8 +223,15 @@ export interface Profile {
   featured: boolean;
   stale: boolean;
   onboardingComplete: boolean;
-  embeddingText: string;
-  profileEmbedding: number[];
+  seekingEmbeddingText: string;
+  offeringEmbeddingText: string;
+  seekingEmbedding?: number[];
+  offeringEmbedding?: number[];
+  embeddingModel?: string;
+  embeddingSourceHash?: string;
+  embeddingStatus: "pending" | "ready" | "failed";
+  embeddingError?: string;
+  embeddingUpdatedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -263,11 +300,50 @@ export interface MatchRecord {
   explanationText: string;
   overlapTags: string[];
   scoreBand: "high" | "good" | "emerging";
+  confidence: MatchConfidence;
+  algorithmVersion: string;
+  runId?: string;
   surfacedAt: string;
   dismissedBySource: boolean;
   hiddenByAdmin: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MatchRun {
+  id: string;
+  orgId: string;
+  startedAt: string;
+  completedAt?: string;
+  status: "running" | "completed" | "failed";
+  metadata: Record<string, unknown>;
+}
+
+export interface MatchFeedback {
+  id: string;
+  orgId: string;
+  matchId: string;
+  sourceProfileId: string;
+  matchType: MatchType;
+  algorithmVersion: string;
+  score: number;
+  value: MatchFeedbackValue;
+  reasons: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MatchFeedbackSummary {
+  total: number;
+  helpful: number;
+  notRelevant: number;
+  byMatchType: Array<{
+    matchType: MatchType;
+    helpful: number;
+    notRelevant: number;
+    total: number;
+  }>;
+  reasons: Array<{ reason: string; count: number }>;
 }
 
 export interface IntroRequest {
@@ -387,8 +463,10 @@ export interface KnowledgePostView extends FeedPostView {
 export interface MatchCardView {
   id: string;
   matchType: MatchType;
+  matchTypeLabel: string;
   score: number;
   scoreBand: "high" | "good" | "emerging";
+  confidence: MatchConfidence;
   explanationText: string;
   overlapTags: string[];
   target: LimitedProfileCard;

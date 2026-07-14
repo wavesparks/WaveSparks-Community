@@ -4,7 +4,9 @@ import type {
   MembershipRole,
   Profile,
 } from "@/lib/domain";
-import { buildEmbedding, buildEmbeddingText } from "@/server/matching";
+import { legacySeekingMatchTypes } from "@/lib/match-config";
+import { LOCAL_EMBEDDING_MODEL } from "@/server/embeddings";
+import { buildEmbedding, buildMatchingEmbeddingTexts } from "@/server/matching";
 import {
   createManagedAccount,
   upsertProfile,
@@ -108,6 +110,14 @@ function buildPreviewProfile(spec: PreviewAccountSpec, membershipId: string) {
         : "A test profile with complete onboarding for role-specific product review.",
     lookingForTypes:
       spec.kind === "mentor" ? ["founders"] : ["cofounder", "mentor", "collaborators"],
+    seekingMatchTypes:
+      spec.kind === "mentor"
+        ? ["collaborator_match"]
+        : legacySeekingMatchTypes(["cofounder", "mentor", "collaborators"]),
+    offeringMatchTypes:
+      spec.kind === "mentor"
+        ? ["mentor_match", "collaborator_match"]
+        : ["cofounder_match", "collaborator_match"],
     desiredRoles: spec.kind === "founder" ? ["engineering", "growth"] : template.desiredRoles,
     canContribute:
       spec.kind === "admin"
@@ -121,11 +131,18 @@ function buildPreviewProfile(spec: PreviewAccountSpec, membershipId: string) {
     onboardingComplete: true,
     createdAt: template.createdAt,
     updatedAt: now,
-    embeddingText: "",
-    profileEmbedding: [],
+    seekingEmbeddingText: "",
+    offeringEmbeddingText: "",
+    seekingEmbedding: [],
+    offeringEmbedding: [],
+    embeddingModel: LOCAL_EMBEDDING_MODEL,
+    embeddingStatus: "ready",
   };
-  profile.embeddingText = buildEmbeddingText(profile);
-  profile.profileEmbedding = buildEmbedding(profile.embeddingText);
+  const texts = buildMatchingEmbeddingTexts(profile);
+  profile.seekingEmbeddingText = texts.seekingProfileText;
+  profile.offeringEmbeddingText = texts.offeringText;
+  profile.seekingEmbedding = buildEmbedding(texts.seekingProfileText);
+  profile.offeringEmbedding = buildEmbedding(texts.offeringText);
   return profile;
 }
 

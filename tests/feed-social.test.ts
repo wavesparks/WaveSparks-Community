@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { seedMatchTypeConfigs } from "@/data/seed-data";
 import { activeFeedFilterCount, parseFeedFilters } from "@/lib/feed-filters";
 import { opportunitySourceForPost } from "@/lib/opportunities";
 import { profileFromFormData } from "@/lib/profile-form";
@@ -709,5 +710,26 @@ describe("feed filters and social recommendations", () => {
     });
 
     expect(result.profile.profilePhoto).toBe("https://example.com/portrait.png");
+  });
+
+  it("keeps configured seeking and offering intent separate", async () => {
+    const membership = (await getMembershipById("mem_jules"))!;
+    const user = (await getUserById(membership.userId))!;
+    const existingProfile = (await getProfileByMembershipId(membership.id))!;
+    const formData = new FormData();
+    formData.set("matching_intent_version", "2");
+    formData.append("seeking_match_types", "mentor_match");
+    formData.append("seeking_match_types", "unconfigured_match");
+
+    const result = profileFromFormData({
+      formData,
+      membership,
+      user,
+      existingProfile,
+      matchTypeConfigs: seedMatchTypeConfigs,
+    });
+
+    expect(result.profile.seekingMatchTypes).toEqual(["mentor_match"]);
+    expect(result.profile.offeringMatchTypes).toEqual([]);
   });
 });

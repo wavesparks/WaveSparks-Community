@@ -1,26 +1,24 @@
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
 import {
   PublicFeedExplorer,
   type PublicFeedPostView,
 } from "@/components/community/public-feed-explorer";
 import { ForumShell } from "@/components/layout/forum-shell";
-import { StatusBanner } from "@/components/ui/status-banner";
-import { singleQueryValue } from "@/lib/feed-filters";
+import { SearchParamStatusBanner } from "@/components/ui/search-param-status-banner";
 import { getOrganizationBySlug, listPublicFeedPostRecordsForOrg } from "@/server/store";
 import { toLimitedProfileCard } from "@/server/view-models";
 
+export const dynamic = "force-static";
 export const revalidate = 60;
 
 export default async function AnonymousFeedPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { slug } = await params;
-  const query = await searchParams;
   const org = await getOrganizationBySlug(slug);
 
   if (!org) {
@@ -57,7 +55,9 @@ export default async function AnonymousFeedPage({
   return (
     <ForumShell currentPath={`/org/${slug}/feed`} org={org} viewer={null}>
       <div className="space-y-5">
-        <StatusBanner status={singleQueryValue(query.status)} />
+        <Suspense fallback={null}>
+          <SearchParamStatusBanner />
+        </Suspense>
         <PublicFeedExplorer posts={posts} slug={slug} />
       </div>
     </ForumShell>

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { nanoid } from "nanoid";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -9,6 +11,7 @@ import {
   seedComments,
   seedFollows,
   seedIntroRequests,
+  seedMatchTypeConfigs,
   seedMemberships,
   seedNotifications,
   seedOrganization,
@@ -20,12 +23,25 @@ import {
 } from "@/data/seed-data";
 import { env, isBootstrapAdminEmail } from "@/lib/env";
 import { localRoleFromClerkRole } from "@/lib/clerk-roles";
+import { sanitizeMatchFeedbackReasons } from "@/lib/match-feedback";
 import {
   buildDailySeriesFromCounts,
   buildOrgAnalyticsSnapshot,
   dailySeriesStartDate,
 } from "@/server/analytics";
-import { recomputeMatchesForProfiles } from "@/server/matching";
+import {
+  blendEmbeddings,
+  buildMatchingEmbeddingTexts,
+  recomputeMatchesForProfiles,
+} from "@/server/matching";
+import {
+  buildLocalEmbedding,
+  generateEmbeddingVectors,
+  hasConfiguredEmbeddingProvider,
+  LOCAL_EMBEDDING_MODEL,
+  MATCHING_EMBEDDING_DIMENSIONS,
+  MATCHING_EMBEDDING_MODEL,
+} from "@/server/embeddings";
 import type {
   AnalyticsEvent,
   Cohort,
@@ -36,7 +52,11 @@ import type {
   IntroRequest,
   IntroStatus,
   MatchRecord,
+  MatchFeedback,
+  MatchFeedbackSummary,
+  MatchRun,
   MatchType,
+  MatchTypeConfig,
   AffiliationType,
   ClerkOrgRole,
   ClerkInvitationStatus,
@@ -85,7 +105,10 @@ export interface StoreState {
   comments: Comment[];
   follows: Follow[];
   postSaves: PostSave[];
+  matchTypeConfigs: MatchTypeConfig[];
   matches: MatchRecord[];
+  matchRuns: MatchRun[];
+  matchFeedback: MatchFeedback[];
   introRequests: IntroRequest[];
   notifications: Notification[];
   analyticsEvents: AnalyticsEvent[];
@@ -265,7 +288,10 @@ function initializeStore(): StoreState {
     comments: structuredClone(seedComments),
     follows: structuredClone(seedFollows),
     postSaves: structuredClone(seedPostSaves),
+    matchTypeConfigs: structuredClone(seedMatchTypeConfigs),
     matches: [],
+    matchRuns: [],
+    matchFeedback: [],
     introRequests: structuredClone(seedIntroRequests),
     notifications: structuredClone(seedNotifications),
     analyticsEvents: structuredClone(seedAnalyticsEvents),
@@ -275,6 +301,7 @@ function initializeStore(): StoreState {
     seedOrganization,
     base.memberships,
     base.profiles,
+    base.matchTypeConfigs,
   );
 
   return base;
@@ -287,6 +314,9 @@ function ensureStoreShape(store: StoreState) {
   store.clerkWebhookEvents ??= [];
   store.cohorts ??= [];
   store.cohortMembers ??= [];
+  store.matchTypeConfigs ??= structuredClone(seedMatchTypeConfigs);
+  store.matchRuns ??= [];
+  store.matchFeedback ??= [];
   return store;
 }
 
@@ -430,6 +460,8 @@ function profileFromRow(row: typeof dbSchema.profiles.$inferSelect): Profile {
     tractionSummary: row.tractionSummary,
     regionFocus: row.regionFocus,
     lookingForTypes: row.lookingForTypes,
+    seekingMatchTypes: row.seekingMatchTypes,
+    offeringMatchTypes: row.offeringMatchTypes,
     desiredRoles: row.desiredRoles,
     helpNeededTags: row.helpNeededTags,
     idealMatchDescription: row.idealMatchDescription,
@@ -472,8 +504,15 @@ function profileFromRow(row: typeof dbSchema.profiles.$inferSelect): Profile {
     featured: row.featured,
     stale: row.stale,
     onboardingComplete: row.onboardingComplete,
-    embeddingText: row.embeddingText,
-    profileEmbedding: row.profileEmbedding,
+    seekingEmbeddingText: row.seekingEmbeddingText,
+    offeringEmbeddingText: row.offeringEmbeddingText,
+    seekingEmbedding: row.seekingEmbedding ?? undefined,
+    offeringEmbedding: row.offeringEmbedding ?? undefined,
+    embeddingModel: row.embeddingModel ?? undefined,
+    embeddingSourceHash: row.embeddingSourceHash ?? undefined,
+    embeddingStatus: row.embeddingStatus as Profile["embeddingStatus"],
+    embeddingError: row.embeddingError ?? undefined,
+    embeddingUpdatedAt: maybeIso(row.embeddingUpdatedAt),
     createdAt: requiredIso(row.createdAt),
     updatedAt: requiredIso(row.updatedAt),
   };
@@ -542,6 +581,27 @@ function commentFromRow(row: typeof dbSchema.comments.$inferSelect): Comment {
   };
 }
 
+function matchTypeConfigFromRow(
+  row: typeof dbSchema.matchTypeConfigs.$inferSelect,
+): MatchTypeConfig {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    direction: row.direction as MatchTypeConfig["direction"],
+    seekerLabel: row.seekerLabel,
+    providerLabel: row.providerLabel,
+    weights: row.weightsJson,
+    minimumScore: row.minimumScore,
+    active: row.active,
+    version: row.version,
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
 function matchFromRow(row: typeof dbSchema.matches.$inferSelect): MatchRecord {
   return {
     id: row.id,
@@ -554,9 +614,41 @@ function matchFromRow(row: typeof dbSchema.matches.$inferSelect): MatchRecord {
     explanationText: row.explanationText,
     overlapTags: row.overlapTags,
     scoreBand: row.scoreBand as MatchRecord["scoreBand"],
+    confidence: row.confidence as MatchRecord["confidence"],
+    algorithmVersion: row.algorithmVersion,
+    runId: row.runId ?? undefined,
     surfacedAt: requiredIso(row.surfacedAt),
     dismissedBySource: row.dismissedBySource,
     hiddenByAdmin: row.hiddenByAdmin,
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function matchRunFromRow(row: typeof dbSchema.matchRuns.$inferSelect): MatchRun {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    startedAt: requiredIso(row.startedAt),
+    completedAt: maybeIso(row.completedAt),
+    status: row.status as MatchRun["status"],
+    metadata: row.metadataJson,
+  };
+}
+
+function matchFeedbackFromRow(
+  row: typeof dbSchema.matchFeedback.$inferSelect,
+): MatchFeedback {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    matchId: row.matchId,
+    sourceProfileId: row.sourceProfileId,
+    matchType: row.matchType,
+    algorithmVersion: row.algorithmVersion,
+    score: row.score,
+    value: row.value as MatchFeedback["value"],
+    reasons: row.reasons,
     createdAt: requiredIso(row.createdAt),
     updatedAt: requiredIso(row.updatedAt),
   };
@@ -637,9 +729,31 @@ function cohortMemberInsert(
 function profileInsert(profile: Profile): typeof dbSchema.profiles.$inferInsert {
   return {
     ...profile,
+    embeddingUpdatedAt: maybeDate(profile.embeddingUpdatedAt),
     createdAt: new Date(profile.createdAt),
     updatedAt: new Date(profile.updatedAt),
     lastActiveAt: new Date(profile.lastActiveAt),
+  };
+}
+
+function matchTypeConfigInsert(
+  config: MatchTypeConfig,
+): typeof dbSchema.matchTypeConfigs.$inferInsert {
+  return {
+    id: config.id,
+    orgId: config.orgId,
+    slug: config.slug,
+    name: config.name,
+    description: config.description,
+    direction: config.direction,
+    seekerLabel: config.seekerLabel,
+    providerLabel: config.providerLabel,
+    weightsJson: config.weights,
+    minimumScore: config.minimumScore,
+    active: config.active,
+    version: config.version,
+    createdAt: new Date(config.createdAt),
+    updatedAt: new Date(config.updatedAt),
   };
 }
 
@@ -680,11 +794,35 @@ function matchInsert(match: MatchRecord): typeof dbSchema.matches.$inferInsert {
     explanationText: match.explanationText,
     overlapTags: match.overlapTags,
     scoreBand: match.scoreBand,
+    confidence: match.confidence,
+    algorithmVersion: match.algorithmVersion,
+    runId: match.runId,
     surfacedAt: new Date(match.surfacedAt),
     dismissedBySource: match.dismissedBySource,
     hiddenByAdmin: match.hiddenByAdmin,
     createdAt: new Date(match.createdAt),
     updatedAt: new Date(match.updatedAt),
+  };
+}
+
+function matchRunInsert(run: MatchRun): typeof dbSchema.matchRuns.$inferInsert {
+  return {
+    id: run.id,
+    orgId: run.orgId,
+    startedAt: new Date(run.startedAt),
+    completedAt: maybeDate(run.completedAt),
+    status: run.status,
+    metadataJson: run.metadata,
+  };
+}
+
+function matchFeedbackInsert(
+  feedback: MatchFeedback,
+): typeof dbSchema.matchFeedback.$inferInsert {
+  return {
+    ...feedback,
+    createdAt: new Date(feedback.createdAt),
+    updatedAt: new Date(feedback.updatedAt),
   };
 }
 
@@ -1173,20 +1311,46 @@ export async function setPasswordCredential(userId: string, email: string, passw
   });
 }
 
-export async function upsertSessionUser(input: {
-  clerkUserId?: string;
-  email: string;
-  name: string;
-  imageUrl?: string;
-}) {
+export async function upsertSessionUser(
+  input: {
+    clerkUserId?: string;
+    email: string;
+    name: string;
+    imageUrl?: string;
+  },
+  options: { existingUser?: User } = {},
+) {
   const now = new Date().toISOString();
   const email = normalizeEmailAddress(input.email);
+  const knownUser =
+    options.existingUser &&
+    (options.existingUser.email.toLowerCase() === email ||
+      (input.clerkUserId && options.existingUser.clerkUserId === input.clerkUserId))
+      ? options.existingUser
+      : undefined;
   const existing =
+    knownUser ??
     (input.clerkUserId ? await getUserByClerkUserId(input.clerkUserId) : undefined) ??
     (await getUserByEmail(email));
   const platformRole = isBootstrapAdminEmail(email)
     ? "platform_owner"
     : existing?.platformRole ?? "standard";
+
+  if (existing) {
+    const nextClerkUserId = input.clerkUserId ?? existing.clerkUserId;
+    const nextImageUrl = input.imageUrl ?? existing.imageUrl;
+
+    if (
+      existing.clerkUserId === nextClerkUserId &&
+      existing.email === email &&
+      existing.name === input.name &&
+      existing.imageUrl === nextImageUrl &&
+      existing.platformRole === platformRole &&
+      !existing.anonymizedAt
+    ) {
+      return existing;
+    }
+  }
 
   if (!usesDatabase) {
     const store = getStore();
@@ -1565,6 +1729,8 @@ function anonymizedProfile(profile: Profile): Profile {
     tractionSummary: "",
     regionFocus: "",
     lookingForTypes: [],
+    seekingMatchTypes: [],
+    offeringMatchTypes: [],
     desiredRoles: [],
     helpNeededTags: [],
     idealMatchDescription: "",
@@ -1607,8 +1773,15 @@ function anonymizedProfile(profile: Profile): Profile {
     featured: false,
     stale: false,
     onboardingComplete: false,
-    embeddingText: "",
-    profileEmbedding: Array.from({ length: 24 }, () => 0),
+    seekingEmbeddingText: "",
+    offeringEmbeddingText: "",
+    seekingEmbedding: Array.from({ length: MATCHING_EMBEDDING_DIMENSIONS }, () => 0),
+    offeringEmbedding: Array.from({ length: MATCHING_EMBEDDING_DIMENSIONS }, () => 0),
+    embeddingModel: "deleted",
+    embeddingSourceHash: undefined,
+    embeddingStatus: "pending",
+    embeddingError: undefined,
+    embeddingUpdatedAt: now,
     updatedAt: now,
   };
 }
@@ -3747,6 +3920,228 @@ export async function listCommentsForPost(postId: string) {
   return rows.map(commentFromRow);
 }
 
+export async function listMatchTypeConfigsForOrg(
+  orgId: string,
+  options: { includeInactive?: boolean } = {},
+) {
+  if (!usesDatabase) {
+    return getStore().matchTypeConfigs
+      .filter(
+        (config) =>
+          config.orgId === orgId && (options.includeInactive || config.active),
+      )
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.matchTypeConfigs)
+    .where(
+      and(
+        eq(dbSchema.matchTypeConfigs.orgId, orgId),
+        options.includeInactive
+          ? undefined
+          : eq(dbSchema.matchTypeConfigs.active, true),
+      ),
+    )
+    .orderBy(asc(dbSchema.matchTypeConfigs.name));
+  return rows.map(matchTypeConfigFromRow);
+}
+
+export async function saveMatchTypeConfig(config: MatchTypeConfig) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const index = store.matchTypeConfigs.findIndex(
+      (candidate) => candidate.orgId === config.orgId && candidate.slug === config.slug,
+    );
+    if (index >= 0) {
+      store.matchTypeConfigs[index] = config;
+    } else {
+      store.matchTypeConfigs.push(config);
+    }
+    return config;
+  }
+  const [row] = await getDb()
+    .insert(dbSchema.matchTypeConfigs)
+    .values(matchTypeConfigInsert(config))
+    .onConflictDoUpdate({
+      target: [dbSchema.matchTypeConfigs.orgId, dbSchema.matchTypeConfigs.slug],
+      set: {
+        name: config.name,
+        description: config.description,
+        direction: config.direction,
+        seekerLabel: config.seekerLabel,
+        providerLabel: config.providerLabel,
+        weightsJson: config.weights,
+        minimumScore: config.minimumScore,
+        active: config.active,
+        version: config.version,
+        updatedAt: new Date(config.updatedAt),
+      },
+    })
+    .returning();
+  return matchTypeConfigFromRow(row);
+}
+
+export async function listMatchRunsForOrg(orgId: string, limit = 10) {
+  if (!usesDatabase) {
+    return getStore().matchRuns
+      .filter((run) => run.orgId === orgId)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+      .slice(0, limit);
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.matchRuns)
+    .where(eq(dbSchema.matchRuns.orgId, orgId))
+    .orderBy(desc(dbSchema.matchRuns.startedAt))
+    .limit(limit);
+  return rows.map(matchRunFromRow);
+}
+
+export async function recordMatchFeedback(input: {
+  orgId: string;
+  matchId: string;
+  sourceProfileId: string;
+  value: MatchFeedback["value"];
+  reasons: string[];
+}) {
+  const now = new Date().toISOString();
+  const reasons = sanitizeMatchFeedbackReasons(input.reasons).slice(0, 4);
+  const buildFeedback = (
+    match: Pick<MatchRecord, "matchType" | "algorithmVersion" | "score">,
+  ): MatchFeedback => ({
+    id: `mfb_${nanoid(8)}`,
+    ...input,
+    matchType: match.matchType,
+    algorithmVersion: match.algorithmVersion,
+    score: match.score,
+    reasons,
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (!usesDatabase) {
+    const store = getStore();
+    const match = store.matches.find(
+      (candidate) =>
+        candidate.id === input.matchId &&
+        candidate.orgId === input.orgId &&
+        candidate.sourceProfileId === input.sourceProfileId,
+    );
+    if (!match) return null;
+    const feedback = buildFeedback(match);
+    const existing = store.matchFeedback.findIndex(
+      (candidate) =>
+        candidate.matchId === input.matchId &&
+        candidate.sourceProfileId === input.sourceProfileId,
+    );
+    if (existing >= 0) {
+      feedback.id = store.matchFeedback[existing].id;
+      feedback.createdAt = store.matchFeedback[existing].createdAt;
+      store.matchFeedback[existing] = feedback;
+    } else {
+      store.matchFeedback.push(feedback);
+    }
+    match.dismissedBySource = input.value === "not_relevant";
+    match.updatedAt = now;
+    return feedback;
+  }
+
+  const [match] = await getDb()
+    .select({
+      id: dbSchema.matches.id,
+      matchType: dbSchema.matches.matchType,
+      algorithmVersion: dbSchema.matches.algorithmVersion,
+      score: dbSchema.matches.score,
+    })
+    .from(dbSchema.matches)
+    .where(
+      and(
+        eq(dbSchema.matches.id, input.matchId),
+        eq(dbSchema.matches.orgId, input.orgId),
+        eq(dbSchema.matches.sourceProfileId, input.sourceProfileId),
+      ),
+    )
+    .limit(1);
+  if (!match) return null;
+  const feedback = buildFeedback(match);
+  const [row] = await getDb()
+    .insert(dbSchema.matchFeedback)
+    .values(matchFeedbackInsert(feedback))
+    .onConflictDoUpdate({
+      target: [dbSchema.matchFeedback.matchId, dbSchema.matchFeedback.sourceProfileId],
+      set: {
+        matchType: feedback.matchType,
+        algorithmVersion: feedback.algorithmVersion,
+        score: feedback.score,
+        value: feedback.value,
+        reasons: feedback.reasons,
+        updatedAt: new Date(feedback.updatedAt),
+      },
+    })
+    .returning();
+  await getDb()
+    .update(dbSchema.matches)
+    .set({
+      dismissedBySource: input.value === "not_relevant",
+      updatedAt: new Date(now),
+    })
+    .where(eq(dbSchema.matches.id, input.matchId));
+  return matchFeedbackFromRow(row);
+}
+
+function summarizeMatchFeedback(feedback: MatchFeedback[]): MatchFeedbackSummary {
+  const byMatchType = new Map<
+    string,
+    MatchFeedbackSummary["byMatchType"][number]
+  >();
+  const reasons = new Map<string, number>();
+  let helpful = 0;
+  let notRelevant = 0;
+
+  for (const item of feedback) {
+    if (item.value === "helpful") helpful += 1;
+    else notRelevant += 1;
+    const typeSummary = byMatchType.get(item.matchType) ?? {
+      matchType: item.matchType,
+      helpful: 0,
+      notRelevant: 0,
+      total: 0,
+    };
+    typeSummary.total += 1;
+    if (item.value === "helpful") typeSummary.helpful += 1;
+    else typeSummary.notRelevant += 1;
+    byMatchType.set(item.matchType, typeSummary);
+    for (const reason of item.reasons) {
+      reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+    }
+  }
+
+  return {
+    total: feedback.length,
+    helpful,
+    notRelevant,
+    byMatchType: [...byMatchType.values()].sort(
+      (left, right) => right.total - left.total || left.matchType.localeCompare(right.matchType),
+    ),
+    reasons: [...reasons.entries()]
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((left, right) => right.count - left.count || left.reason.localeCompare(right.reason)),
+  };
+}
+
+export async function getMatchFeedbackSummaryForOrg(orgId: string) {
+  if (!usesDatabase) {
+    return summarizeMatchFeedback(
+      getStore().matchFeedback.filter((feedback) => feedback.orgId === orgId),
+    );
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.matchFeedback)
+    .where(eq(dbSchema.matchFeedback.orgId, orgId));
+  return summarizeMatchFeedback(rows.map(matchFeedbackFromRow));
+}
+
 export async function listMatchesForProfile(profileId: string) {
   if (!usesDatabase) {
     return getStore().matches
@@ -3783,7 +4178,7 @@ export async function listMatchesForMembership(membershipId: string) {
 export async function listMatchTargetRecordsForProfile(
   profileId: string,
   followerMembershipId: string,
-  options: { limit?: number } = {},
+  options: { limit?: number; matchType?: string } = {},
 ): Promise<MatchTargetRecord[]> {
   const limit = positiveIntegerLimit(options.limit) ?? 12;
 
@@ -3803,6 +4198,7 @@ export async function listMatchTargetRecordsForProfile(
       .filter(
         (match) =>
           match.sourceProfileId === profileId &&
+          (!options.matchType || match.matchType === options.matchType) &&
           !match.hiddenByAdmin &&
           !match.dismissedBySource,
       )
@@ -3845,6 +4241,7 @@ export async function listMatchTargetRecordsForProfile(
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        options.matchType ? eq(dbSchema.matches.matchType, options.matchType) : undefined,
         eq(dbSchema.matches.hiddenByAdmin, false),
         eq(dbSchema.matches.dismissedBySource, false),
       ),
@@ -4850,13 +5247,15 @@ async function recomputeMatchesForMembership(orgId: string, membershipId: string
   }
 
   const profile = input.profiles.find((candidate) => candidate.membershipId === membershipId);
-  return profile ? recomputeMatchesForProfileInput(orgId, profile.id, input) : [];
+  return profile ? runMatchRecompute(input) : [];
 }
 
 async function getMatchRecomputeInput(orgId: string) {
-  const [organization, membershipRecords] = await Promise.all([
+  const [organization, membershipRecords, configs, posts] = await Promise.all([
     getOrganizationById(orgId),
     listMembershipRecordsForOrg(orgId),
+    listMatchTypeConfigsForOrg(orgId),
+    listPostsForOrg(orgId, { hidden: false }),
   ]);
 
   if (!organization) {
@@ -4869,86 +5268,288 @@ async function getMatchRecomputeInput(orgId: string) {
     profiles: membershipRecords.flatMap((record) =>
       record.profile ? [record.profile] : [],
     ),
+    configs,
+    posts,
   };
 }
 
 export async function recomputeMatchesForProfile(orgId: string, profileId: string) {
   const input = await getMatchRecomputeInput(orgId);
-  if (!input) {
+  if (!input || !input.profiles.some((profile) => profile.id === profileId)) {
     return [];
   }
-
-  return recomputeMatchesForProfileInput(orgId, profileId, input);
+  return runMatchRecompute(input);
 }
 
-async function recomputeMatchesForProfileInput(
-  orgId: string,
-  profileId: string,
+async function prepareMatchingEmbeddings(
   input: NonNullable<Awaited<ReturnType<typeof getMatchRecomputeInput>>>,
 ) {
-  const scopedMatches = recomputeMatchesForProfiles(
-    input.organization,
-    input.memberships,
-    input.profiles,
-    { profileIds: [profileId], limit: null },
-  );
-
-  if (!usesDatabase) {
-    const store = getStore();
-    store.matches = [
-      ...store.matches.filter(
-        (match) =>
-          match.orgId !== orgId ||
-          (match.sourceProfileId !== profileId && match.targetProfileId !== profileId),
-      ),
-      ...scopedMatches,
-    ];
-    return scopedMatches;
+  const hasProvider = hasConfiguredEmbeddingProvider();
+  const postsByMembership = new Map<string, Post[]>();
+  for (const post of input.posts) {
+    const posts = postsByMembership.get(post.authorMembershipId) ?? [];
+    posts.push(post);
+    postsByMembership.set(post.authorMembershipId, posts);
   }
 
-  await getDb()
-    .delete(dbSchema.matches)
-    .where(
-      and(
-        eq(dbSchema.matches.orgId, orgId),
-        or(
-          eq(dbSchema.matches.sourceProfileId, profileId),
-          eq(dbSchema.matches.targetProfileId, profileId),
-        ),
-      ),
+  const pending = input.profiles.flatMap((profile) => {
+    const texts = buildMatchingEmbeddingTexts(
+      profile,
+      postsByMembership.get(profile.membershipId) ?? [],
     );
-  if (scopedMatches.length) {
-    await getDb().insert(dbSchema.matches).values(scopedMatches.map(matchInsert));
+    const sourceHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          dimensions: MATCHING_EMBEDDING_DIMENSIONS,
+          localModel: LOCAL_EMBEDDING_MODEL,
+          providerModel: MATCHING_EMBEDDING_MODEL,
+          texts,
+        }),
+      )
+      .digest("hex");
+    const hasCurrentVectors =
+      profile.embeddingSourceHash === sourceHash &&
+      profile.seekingEmbedding?.length === MATCHING_EMBEDDING_DIMENSIONS &&
+      profile.offeringEmbedding?.length === MATCHING_EMBEDDING_DIMENSIONS;
+    const canReuseLocalFallback =
+      !hasProvider && profile.embeddingModel === LOCAL_EMBEDDING_MODEL;
+    if (
+      hasCurrentVectors &&
+      (profile.embeddingStatus === "ready" || canReuseLocalFallback)
+    ) {
+      return [];
+    }
+    return [{ profile, sourceHash, texts }];
+  });
+  if (!pending.length) {
+    const degraded = input.profiles.filter(
+      (profile) => profile.embeddingModel === LOCAL_EMBEDDING_MODEL,
+    ).length;
+    return {
+      refreshed: 0,
+      degraded,
+      degradedReason: degraded
+        ? "OPENAI_API_KEY is not configured; deterministic local embeddings are in use."
+        : undefined,
+    };
   }
-  return scopedMatches;
+
+  const embeddingInputs = pending.flatMap(({ texts }) => [
+    texts.seekingProfileText,
+    texts.offeringText,
+    ...(texts.recentIntentText ? [texts.recentIntentText] : []),
+  ]);
+  let generated: Awaited<ReturnType<typeof generateEmbeddingVectors>>;
+  let providerError: string | undefined;
+  try {
+    generated = await generateEmbeddingVectors(embeddingInputs);
+  } catch (error) {
+    providerError = error instanceof Error ? error.message.slice(0, 500) : "Embedding request failed.";
+    generated = {
+      model: LOCAL_EMBEDDING_MODEL,
+      vectors: embeddingInputs.map(buildLocalEmbedding),
+    };
+  }
+  const degradedReason =
+    providerError ??
+    (generated.model === LOCAL_EMBEDDING_MODEL
+      ? "OPENAI_API_KEY is not configured; deterministic local embeddings are in use."
+      : undefined);
+
+  let offset = 0;
+  for (const { profile, sourceHash, texts } of pending) {
+    const seekingProfileEmbedding = generated.vectors[offset];
+    const offeringEmbedding = generated.vectors[offset + 1];
+    const recentIntentEmbedding = texts.recentIntentText
+      ? generated.vectors[offset + 2]
+      : undefined;
+    offset += texts.recentIntentText ? 3 : 2;
+    profile.seekingEmbeddingText = [
+      texts.seekingProfileText,
+      texts.recentIntentText ? `Recent intent:\n${texts.recentIntentText}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    profile.offeringEmbeddingText = texts.offeringText;
+    profile.seekingEmbedding = blendEmbeddings(
+      seekingProfileEmbedding,
+      recentIntentEmbedding,
+      0.2,
+    );
+    profile.offeringEmbedding = offeringEmbedding;
+    profile.embeddingModel = generated.model;
+    profile.embeddingSourceHash = sourceHash;
+    profile.embeddingStatus = degradedReason ? "failed" : "ready";
+    profile.embeddingError = degradedReason;
+    profile.embeddingUpdatedAt = new Date().toISOString();
+
+    if (usesDatabase) {
+      await getDb()
+        .update(dbSchema.profiles)
+        .set({
+          seekingEmbeddingText: profile.seekingEmbeddingText,
+          offeringEmbeddingText: profile.offeringEmbeddingText,
+          seekingEmbedding: profile.seekingEmbedding,
+          offeringEmbedding: profile.offeringEmbedding,
+          embeddingModel: profile.embeddingModel,
+          embeddingSourceHash: profile.embeddingSourceHash,
+          embeddingStatus: profile.embeddingStatus,
+          embeddingError: profile.embeddingError,
+          embeddingUpdatedAt: new Date(profile.embeddingUpdatedAt),
+        })
+        .where(eq(dbSchema.profiles.id, profile.id));
+    }
+  }
+  return {
+    refreshed: pending.length,
+    degraded: degradedReason ? pending.length : 0,
+    degradedReason,
+  };
+}
+
+async function beginMatchRun(orgId: string) {
+  const run: MatchRun = {
+    id: `mrun_${nanoid(10)}`,
+    orgId,
+    startedAt: new Date().toISOString(),
+    status: "running",
+    metadata: {},
+  };
+  if (!usesDatabase) {
+    getStore().matchRuns.unshift(run);
+  } else {
+    await getDb().insert(dbSchema.matchRuns).values(matchRunInsert(run));
+  }
+  return run;
+}
+
+async function finishMatchRun(
+  run: MatchRun,
+  status: MatchRun["status"],
+  metadata: Record<string, unknown>,
+) {
+  run.status = status;
+  run.completedAt = new Date().toISOString();
+  run.metadata = metadata;
+  if (usesDatabase) {
+    await getDb()
+      .update(dbSchema.matchRuns)
+      .set({
+        status,
+        completedAt: new Date(run.completedAt),
+        metadataJson: metadata,
+      })
+      .where(eq(dbSchema.matchRuns.id, run.id));
+  }
+}
+
+async function runMatchRecompute(
+  input: NonNullable<Awaited<ReturnType<typeof getMatchRecomputeInput>>>,
+) {
+  const run = await beginMatchRun(input.organization.id);
+  try {
+    const embeddingResult = await prepareMatchingEmbeddings(input);
+    const matches = recomputeMatchesForProfiles(
+      input.organization,
+      input.memberships,
+      input.profiles,
+      input.configs,
+      { runId: run.id },
+    );
+
+    if (!usesDatabase) {
+      const store = getStore();
+      const priorState = new Map(
+        store.matches
+          .filter((match) => match.orgId === input.organization.id)
+          .map((match) => [
+            match.id,
+            {
+              dismissedBySource: match.dismissedBySource,
+              hiddenByAdmin: match.hiddenByAdmin,
+            },
+          ]),
+      );
+      const dismissedByFeedback = new Set(
+        store.matchFeedback
+          .filter(
+            (feedback) =>
+              feedback.orgId === input.organization.id &&
+              feedback.value === "not_relevant",
+          )
+          .map((feedback) => feedback.matchId),
+      );
+      for (const match of matches) {
+        Object.assign(match, priorState.get(match.id));
+        if (dismissedByFeedback.has(match.id)) match.dismissedBySource = true;
+      }
+      store.matches = [
+        ...store.matches.filter((match) => match.orgId !== input.organization.id),
+        ...matches,
+      ];
+    } else {
+      const [previousRows, feedbackRows] = await Promise.all([
+        getDb()
+          .select({
+            id: dbSchema.matches.id,
+            dismissedBySource: dbSchema.matches.dismissedBySource,
+            hiddenByAdmin: dbSchema.matches.hiddenByAdmin,
+          })
+          .from(dbSchema.matches)
+          .where(eq(dbSchema.matches.orgId, input.organization.id)),
+        getDb()
+          .select({ matchId: dbSchema.matchFeedback.matchId })
+          .from(dbSchema.matchFeedback)
+          .where(
+            and(
+              eq(dbSchema.matchFeedback.orgId, input.organization.id),
+              eq(dbSchema.matchFeedback.value, "not_relevant"),
+            ),
+          ),
+      ]);
+      const priorState = new Map(previousRows.map((row) => [row.id, row]));
+      const dismissedByFeedback = new Set(feedbackRows.map((row) => row.matchId));
+      for (const match of matches) {
+        Object.assign(match, priorState.get(match.id));
+        if (dismissedByFeedback.has(match.id)) match.dismissedBySource = true;
+      }
+      const deleteQuery = getDb()
+        .delete(dbSchema.matches)
+        .where(eq(dbSchema.matches.orgId, input.organization.id));
+      if (matches.length) {
+        await getDb().batch([
+          deleteQuery,
+          getDb().insert(dbSchema.matches).values(matches.map(matchInsert)),
+        ]);
+      } else {
+        await deleteQuery;
+      }
+    }
+
+    await finishMatchRun(run, "completed", {
+      algorithmVersion: matches[0]?.algorithmVersion ?? "hybrid-v2",
+      activeTypes: input.configs.length,
+      eligibleProfiles: input.profiles.filter((profile) => profile.onboardingComplete).length,
+      matches: matches.length,
+      embeddingsRefreshed: embeddingResult.refreshed,
+      embeddingsDegraded: embeddingResult.degraded,
+      ...(embeddingResult.degradedReason
+        ? { embeddingDegradedReason: embeddingResult.degradedReason }
+        : {}),
+    });
+    return matches;
+  } catch (error) {
+    await finishMatchRun(run, "failed", {
+      error: error instanceof Error ? error.message.slice(0, 500) : "Match recompute failed.",
+    });
+    throw error;
+  }
 }
 
 export async function recomputeMatchesForOrg(orgId: string) {
   const input = await getMatchRecomputeInput(orgId);
-  if (!input) {
-    return [];
-  }
-
-  const matches = recomputeMatchesForProfiles(
-    input.organization,
-    input.memberships,
-    input.profiles,
-  );
-
-  if (!usesDatabase) {
-    const store = getStore();
-    store.matches = [
-      ...store.matches.filter((match) => match.orgId !== orgId),
-      ...matches,
-    ];
-    return matches;
-  }
-
-  await getDb().delete(dbSchema.matches).where(eq(dbSchema.matches.orgId, orgId));
-  if (matches.length) {
-    await getDb().insert(dbSchema.matches).values(matches.map(matchInsert));
-  }
-  return matches;
+  if (!input) return [];
+  return runMatchRecompute(input);
 }
 
 export async function getAnalyticsSnapshot(orgId: string) {
