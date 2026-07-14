@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { nanoid } from "nanoid";
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
 import { getDb } from "@/db/client";
@@ -128,7 +128,12 @@ export interface PublicOrgStats {
 export interface CohortRecord {
   cohort: Cohort;
   totalMembers: number;
+  needsDecisionMembers: number;
+  activeMembers: number;
+  needsAttentionMembers: number;
+  /** @deprecated Use needsDecisionMembers. */
   invitedMembers: number;
+  /** @deprecated Use activeMembers. */
   promotedMembers: number;
 }
 
@@ -165,6 +170,62 @@ export interface MembershipRecord {
   membership: Membership;
   user?: User;
   profile?: Profile;
+}
+
+export type MemberWorkspaceInvitationStatus =
+  | ClerkInvitationStatus
+  | "connected"
+  | "not_invited";
+
+export interface MemberWorkspaceRecord extends MembershipRecord {
+  cohorts: Cohort[];
+}
+
+export interface MemberWorkspaceOptions {
+  query?: string;
+  status?: MembershipStatus;
+  invitationStatus?: MemberWorkspaceInvitationStatus;
+  cohortId?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface MemberWorkspacePage {
+  records: MemberWorkspaceRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+}
+
+export interface BulkMemberImportInput {
+  email: string;
+  name?: string;
+  rowNumber?: number;
+}
+
+export interface MemberImportCandidateRecord {
+  email: string;
+  user?: User;
+  membership?: Membership;
+  cohortMember?: CohortMember;
+  inCohort: boolean;
+}
+
+export interface BulkMemberImportResult {
+  input: {
+    email: string;
+    name: string;
+    rowNumber?: number;
+  };
+  user: User;
+  membership: Membership;
+  cohortMember?: CohortMember;
+  membershipCreated: boolean;
+  cohortMemberCreated: boolean;
+  classification: "created" | "existing" | "conflict";
+  conflictReason?: "rejected" | "suspended";
+  shouldInvite: boolean;
 }
 
 export interface ProfileRecord {
@@ -265,6 +326,10 @@ interface VisibleCommentCountOptions {
 
 function positiveIntegerLimit(value?: number) {
   return value && value > 0 ? Math.floor(value) : undefined;
+}
+
+function positiveInteger(value: number | undefined, fallback: number) {
+  return value && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 declare global {
@@ -1559,6 +1624,7 @@ export async function createManagedAccount(input: {
   archetypes?: string[];
   programName?: string;
   cohortNameOrYear?: string;
+  invitedByUserId?: string;
   approvalNote?: string;
 }) {
   const email = normalizeEmailAddress(input.email);
@@ -1605,6 +1671,7 @@ export async function createManagedAccount(input: {
     archetypes,
     programName,
     cohortNameOrYear,
+    invitedByUserId: existing?.invitedByUserId ?? input.invitedByUserId,
     approvalNote: input.approvalNote ?? existing?.approvalNote ?? "Managed account.",
     approvedAt:
       status === "approved"
@@ -2232,14 +2299,373 @@ export async function listMembershipsForOrg(orgId: string) {
   return rows.map(membershipFromRow);
 }
 
-function cohortRecordFromMembers(cohort: Cohort, members: CohortMember[]): CohortRecord {
+function matchesInvitationFilter(
+  membership: Membership,
+  invitationStatus: MemberWorkspaceInvitationStatus | undefined,
+) {
+  if (!invitationStatus) {
+    return true;
+  }
+
+  if (invitationStatus === "connected") {
+    return Boolean(membership.clerkMembershipId);
+  }
+
+  if (invitationStatus === "not_invited") {
+    return !membership.clerkMembershipId && !membership.clerkInvitationStatus;
+  }
+
+  return membership.clerkInvitationStatus === invitationStatus;
+}
+
+async function listCohortsByMembershipIds(
+  orgId: string,
+  membershipIds: string[],
+): Promise<Map<string, Cohort[]>> {
+  const uniqueMembershipIds = [...new Set(membershipIds.filter(Boolean))];
+  const cohortsByMembershipId = new Map<string, Cohort[]>(
+    uniqueMembershipIds.map((membershipId) => [membershipId, []]),
+  );
+
+  if (!uniqueMembershipIds.length) {
+    return cohortsByMembershipId;
+  }
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const cohortsById = new Map(
+      store.cohorts
+        .filter((cohort) => cohort.orgId === orgId)
+        .map((cohort) => [cohort.id, cohort]),
+    );
+    for (const cohortMember of store.cohortMembers) {
+      if (
+        cohortMember.orgId !== orgId ||
+        !cohortsByMembershipId.has(cohortMember.membershipId)
+      ) {
+        continue;
+      }
+
+      const cohort = cohortsById.get(cohortMember.cohortId);
+      if (cohort) {
+        cohortsByMembershipId.get(cohortMember.membershipId)?.push(cohort);
+      }
+    }
+  } else {
+    const rows = await getDb()
+      .select({
+        membershipId: dbSchema.cohortMembers.membershipId,
+        cohort: dbSchema.cohorts,
+      })
+      .from(dbSchema.cohortMembers)
+      .innerJoin(dbSchema.cohorts, eq(dbSchema.cohorts.id, dbSchema.cohortMembers.cohortId))
+      .where(
+        and(
+          eq(dbSchema.cohortMembers.orgId, orgId),
+          eq(dbSchema.cohorts.orgId, orgId),
+          inArray(dbSchema.cohortMembers.membershipId, uniqueMembershipIds),
+        ),
+      );
+
+    for (const row of rows) {
+      cohortsByMembershipId.get(row.membershipId)?.push(cohortFromRow(row.cohort));
+    }
+  }
+
+  for (const cohortsForMember of cohortsByMembershipId.values()) {
+    cohortsForMember.sort((left, right) => left.name.localeCompare(right.name));
+  }
+  return cohortsByMembershipId;
+}
+
+export async function listMemberWorkspaceForOrg(
+  orgId: string,
+  options: MemberWorkspaceOptions = {},
+): Promise<MemberWorkspacePage> {
+  const queryText = options.query?.trim() ?? "";
+  const normalizedQuery = queryText.toLowerCase();
+  const pageSize = Math.min(100, positiveInteger(options.pageSize, 25));
+  const requestedPage = positiveInteger(options.page, 1);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const cohortMembershipIds = options.cohortId
+      ? new Set(
+          store.cohortMembers
+            .filter(
+              (cohortMember) =>
+                cohortMember.orgId === orgId && cohortMember.cohortId === options.cohortId,
+            )
+            .map((cohortMember) => cohortMember.membershipId),
+        )
+      : undefined;
+    const records = store.memberships
+      .filter((membership) => {
+        if (
+          membership.orgId !== orgId ||
+          (options.status && membership.status !== options.status) ||
+          !matchesInvitationFilter(membership, options.invitationStatus) ||
+          (cohortMembershipIds && !cohortMembershipIds.has(membership.id))
+        ) {
+          return false;
+        }
+
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        const user = store.users.find((candidate) => candidate.id === membership.userId);
+        return Boolean(
+          user &&
+            (user.name.toLowerCase().includes(normalizedQuery) ||
+              user.email.toLowerCase().includes(normalizedQuery)),
+        );
+      })
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    const total = records.length;
+    const pageCount = total ? Math.ceil(total / pageSize) : 0;
+    const page = pageCount ? Math.min(requestedPage, pageCount) : 1;
+    const pageMemberships = records.slice((page - 1) * pageSize, page * pageSize);
+    const cohortsByMembershipId = await listCohortsByMembershipIds(
+      orgId,
+      pageMemberships.map((membership) => membership.id),
+    );
+
+    return {
+      records: pageMemberships.map((membership) => ({
+        membership,
+        user: store.users.find((user) => user.id === membership.userId),
+        profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+        cohorts: cohortsByMembershipId.get(membership.id) ?? [],
+      })),
+      total,
+      page,
+      pageSize,
+      pageCount,
+    };
+  }
+
+  const cohortMembershipQuery = options.cohortId
+    ? getDb()
+        .select({ membershipId: dbSchema.cohortMembers.membershipId })
+        .from(dbSchema.cohortMembers)
+        .where(
+          and(
+            eq(dbSchema.cohortMembers.orgId, orgId),
+            eq(dbSchema.cohortMembers.cohortId, options.cohortId),
+          ),
+        )
+    : undefined;
+  const invitationCondition =
+    options.invitationStatus === "connected"
+      ? sql`${dbSchema.memberships.clerkMembershipId} is not null`
+      : options.invitationStatus === "not_invited"
+        ? sql`${dbSchema.memberships.clerkMembershipId} is null and ${dbSchema.memberships.clerkInvitationStatus} is null`
+        : options.invitationStatus
+          ? eq(dbSchema.memberships.clerkInvitationStatus, options.invitationStatus)
+          : undefined;
+  const filters = and(
+    eq(dbSchema.memberships.orgId, orgId),
+    options.status ? eq(dbSchema.memberships.status, options.status) : undefined,
+    queryText
+      ? or(
+          ilike(dbSchema.users.name, `%${queryText}%`),
+          ilike(dbSchema.users.email, `%${queryText}%`),
+        )
+      : undefined,
+    invitationCondition,
+    cohortMembershipQuery
+      ? inArray(dbSchema.memberships.id, cohortMembershipQuery)
+      : undefined,
+  );
+  const [countRow] = await getDb()
+    .select({ total: sql<number>`count(*)`.mapWith(Number) })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .where(filters);
+  const total = countRow?.total ?? 0;
+  const pageCount = total ? Math.ceil(total / pageSize) : 0;
+  const page = pageCount ? Math.min(requestedPage, pageCount) : 1;
+  const rows = await getDb()
+    .select({
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+      profile: dbSchema.profiles,
+    })
+    .from(dbSchema.memberships)
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .where(filters)
+    .orderBy(desc(dbSchema.memberships.createdAt))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize);
+  const cohortsByMembershipId = await listCohortsByMembershipIds(
+    orgId,
+    rows.map((row) => row.membership.id),
+  );
+
+  return {
+    records: rows.map((row) => ({
+      membership: membershipFromRow(row.membership),
+      user: row.user ? userFromRow(row.user) : undefined,
+      profile: row.profile ? profileFromRow(row.profile) : undefined,
+      cohorts: cohortsByMembershipId.get(row.membership.id) ?? [],
+    })),
+    total,
+    page,
+    pageSize,
+    pageCount,
+  };
+}
+
+export async function listMemberImportCandidatesForOrg(
+  orgId: string,
+  emails: string[],
+  cohortId?: string,
+): Promise<MemberImportCandidateRecord[]> {
+  const normalizedEmails = [
+    ...new Set(emails.map(normalizeEmailAddress).filter(Boolean)),
+  ];
+  if (normalizedEmails.length > 100) {
+    throw new Error("Member imports are limited to 100 unique email addresses.");
+  }
+
+  if (cohortId) {
+    const cohort = await getCohortById(cohortId);
+    if (!cohort || cohort.orgId !== orgId) {
+      throw new Error("Cohort not found.");
+    }
+  }
+
+  if (!normalizedEmails.length) {
+    return [];
+  }
+
+  if (!usesDatabase) {
+    const store = getStore();
+    return normalizedEmails.map((email) => {
+      const user = store.users.find(
+        (candidate) => normalizeEmailAddress(candidate.email) === email,
+      );
+      const membership = user
+        ? store.memberships.find(
+            (candidate) => candidate.orgId === orgId && candidate.userId === user.id,
+          )
+        : undefined;
+      const cohortMember =
+        cohortId && membership
+          ? store.cohortMembers.find(
+              (candidate) =>
+                candidate.orgId === orgId &&
+                candidate.cohortId === cohortId &&
+                candidate.membershipId === membership.id,
+            )
+          : undefined;
+
+      return {
+        email,
+        user,
+        membership,
+        cohortMember,
+        inCohort: Boolean(cohortMember),
+      };
+    });
+  }
+
+  const rows = await getDb()
+    .select({
+      user: dbSchema.users,
+      membership: dbSchema.memberships,
+    })
+    .from(dbSchema.users)
+    .leftJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.orgId, orgId),
+        eq(dbSchema.memberships.userId, dbSchema.users.id),
+      ),
+    )
+    .where(inArray(sql<string>`lower(${dbSchema.users.email})`, normalizedEmails));
+  const recordsByEmail = new Map<string, MemberImportCandidateRecord>(
+    normalizedEmails.map((email) => [email, { email, inCohort: false }]),
+  );
+  const membershipIds: string[] = [];
+  for (const row of rows) {
+    const email = normalizeEmailAddress(row.user.email);
+    const membership = row.membership ? membershipFromRow(row.membership) : undefined;
+    recordsByEmail.set(email, {
+      email,
+      user: userFromRow(row.user),
+      membership,
+      inCohort: false,
+    });
+    if (membership) {
+      membershipIds.push(membership.id);
+    }
+  }
+
+  if (cohortId && membershipIds.length) {
+    const cohortMemberRows = await getDb()
+      .select()
+      .from(dbSchema.cohortMembers)
+      .where(
+        and(
+          eq(dbSchema.cohortMembers.orgId, orgId),
+          eq(dbSchema.cohortMembers.cohortId, cohortId),
+          inArray(dbSchema.cohortMembers.membershipId, membershipIds),
+        ),
+      );
+    const cohortMembersByMembershipId = new Map(
+      cohortMemberRows.map((row) => {
+        const cohortMember = cohortMemberFromRow(row);
+        return [cohortMember.membershipId, cohortMember] as const;
+      }),
+    );
+    for (const record of recordsByEmail.values()) {
+      const cohortMember = record.membership
+        ? cohortMembersByMembershipId.get(record.membership.id)
+        : undefined;
+      record.cohortMember = cohortMember;
+      record.inCohort = Boolean(cohortMember);
+    }
+  }
+
+  return normalizedEmails.map((email) => recordsByEmail.get(email)!);
+}
+
+function cohortRecordFromMembers(
+  cohort: Cohort,
+  members: CohortMember[],
+  membershipsById: Map<string, Membership>,
+): CohortRecord {
   const cohortMembers = members.filter((member) => member.cohortId === cohort.id);
+  const memberships = cohortMembers
+    .map((member) => membershipsById.get(member.membershipId))
+    .filter((membership): membership is Membership => Boolean(membership));
+  const needsDecisionMembers = memberships.filter(
+    (membership) => membership.status === "pending" || membership.status === "waitlist",
+  ).length;
+  const activeMembers = memberships.filter(
+    (membership) => membership.status === "approved",
+  ).length;
+  const needsAttentionMembers = memberships.filter(
+    (membership) =>
+      membership.status === "rejected" ||
+      membership.status === "suspended" ||
+      membership.clerkInvitationStatus === "failed" ||
+      membership.clerkInvitationStatus === "expired" ||
+      membership.clerkInvitationStatus === "revoked" ||
+      Boolean(membership.clerkInvitationError),
+  ).length;
 
   return {
     cohort,
-    totalMembers: cohortMembers.length,
-    invitedMembers: cohortMembers.filter((member) => member.status === "invited").length,
-    promotedMembers: cohortMembers.filter((member) => member.status === "promoted").length,
+    totalMembers: memberships.length,
+    needsDecisionMembers,
+    activeMembers,
+    needsAttentionMembers,
+    invitedMembers: needsDecisionMembers,
+    promotedMembers: activeMembers,
   };
 }
 
@@ -2292,6 +2718,79 @@ export async function createCohort(input: {
   return cohortFromRow(row);
 }
 
+export async function updateCohort(
+  orgId: string,
+  cohortId: string,
+  input: {
+    name?: string;
+    description?: string;
+    eventLabel?: string;
+  },
+) {
+  const existing = await getCohortById(cohortId);
+  if (!existing || existing.orgId !== orgId) {
+    return undefined;
+  }
+
+  const name = input.name === undefined ? existing.name : input.name.trim();
+  if (!name) {
+    throw new Error("Cohort name is required.");
+  }
+
+  const now = new Date().toISOString();
+  const next: Cohort = {
+    ...existing,
+    name,
+    description:
+      input.description === undefined ? existing.description : input.description.trim(),
+    eventLabel:
+      input.eventLabel === undefined ? existing.eventLabel : input.eventLabel.trim(),
+    updatedAt: now,
+  };
+
+  if (!usesDatabase) {
+    Object.assign(existing, next);
+    return existing;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.cohorts)
+    .set({
+      name: next.name,
+      description: next.description,
+      eventLabel: next.eventLabel,
+      updatedAt: new Date(next.updatedAt),
+    })
+    .where(and(eq(dbSchema.cohorts.id, cohortId), eq(dbSchema.cohorts.orgId, orgId)))
+    .returning();
+  return row ? cohortFromRow(row) : undefined;
+}
+
+export async function archiveCohort(orgId: string, cohortId: string) {
+  const existing = await getCohortById(cohortId);
+  if (!existing || existing.orgId !== orgId) {
+    return undefined;
+  }
+
+  if (existing.status === "archived") {
+    return existing;
+  }
+
+  const now = new Date().toISOString();
+  if (!usesDatabase) {
+    existing.status = "archived";
+    existing.updatedAt = now;
+    return existing;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.cohorts)
+    .set({ status: "archived", updatedAt: new Date(now) })
+    .where(and(eq(dbSchema.cohorts.id, cohortId), eq(dbSchema.cohorts.orgId, orgId)))
+    .returning();
+  return row ? cohortFromRow(row) : undefined;
+}
+
 export async function getCohortById(cohortId: string) {
   if (!usesDatabase) {
     return getStore().cohorts.find((cohort) => cohort.id === cohortId);
@@ -2314,8 +2813,15 @@ export async function getCohortRecordForOrg(
     return undefined;
   }
 
-  const cohortMembers = await listCohortMembersForOrg(orgId);
-  return cohortRecordFromMembers(cohort, cohortMembers);
+  const [cohortMembers, memberships] = await Promise.all([
+    listCohortMembersForOrg(orgId),
+    listMembershipsForOrg(orgId),
+  ]);
+  return cohortRecordFromMembers(
+    cohort,
+    cohortMembers,
+    new Map(memberships.map((membership) => [membership.id, membership])),
+  );
 }
 
 export async function listCohortRecordsForOrg(orgId: string): Promise<CohortRecord[]> {
@@ -2325,10 +2831,17 @@ export async function listCohortRecordsForOrg(orgId: string): Promise<CohortReco
       .filter((cohort) => cohort.orgId === orgId)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     const members = store.cohortMembers.filter((member) => member.orgId === orgId);
-    return cohorts.map((cohort) => cohortRecordFromMembers(cohort, members));
+    const membershipsById = new Map(
+      store.memberships
+        .filter((membership) => membership.orgId === orgId)
+        .map((membership) => [membership.id, membership]),
+    );
+    return cohorts.map((cohort) =>
+      cohortRecordFromMembers(cohort, members, membershipsById),
+    );
   }
 
-  const [cohortRows, memberRows] = await Promise.all([
+  const [cohortRows, memberRows, membershipRows] = await Promise.all([
     getDb()
       .select()
       .from(dbSchema.cohorts)
@@ -2338,9 +2851,21 @@ export async function listCohortRecordsForOrg(orgId: string): Promise<CohortReco
       .select()
       .from(dbSchema.cohortMembers)
       .where(eq(dbSchema.cohortMembers.orgId, orgId)),
+    getDb()
+      .select()
+      .from(dbSchema.memberships)
+      .where(eq(dbSchema.memberships.orgId, orgId)),
   ]);
   const members = memberRows.map(cohortMemberFromRow);
-  return cohortRows.map((row) => cohortRecordFromMembers(cohortFromRow(row), members));
+  const membershipsById = new Map(
+    membershipRows.map((row) => {
+      const membership = membershipFromRow(row);
+      return [membership.id, membership] as const;
+    }),
+  );
+  return cohortRows.map((row) =>
+    cohortRecordFromMembers(cohortFromRow(row), members, membershipsById),
+  );
 }
 
 export async function listCohortMembersForOrg(orgId: string) {
@@ -2433,13 +2958,6 @@ async function upsertCohortMember(input: {
     );
 
     if (existing) {
-      existing.invitedEmail = input.email;
-      existing.invitedName = input.name;
-      if (nextStatus === "promoted") {
-        existing.status = "promoted";
-        existing.promotedAt = existing.promotedAt ?? promotedAt ?? now;
-      }
-      existing.updatedAt = now;
       return { cohortMember: existing, created: false };
     }
 
@@ -2472,22 +2990,7 @@ async function upsertCohortMember(input: {
     .limit(1);
 
   if (existingRow) {
-    const existing = cohortMemberFromRow(existingRow);
-    const [row] = await getDb()
-      .update(dbSchema.cohortMembers)
-      .set({
-        invitedEmail: input.email,
-        invitedName: input.name,
-        status: nextStatus === "promoted" ? "promoted" : existing.status,
-        promotedAt:
-          nextStatus === "promoted"
-            ? maybeDate(existing.promotedAt ?? promotedAt ?? now)
-            : maybeDate(existing.promotedAt),
-        updatedAt: new Date(now),
-      })
-      .where(eq(dbSchema.cohortMembers.id, existing.id))
-      .returning();
-    return { cohortMember: cohortMemberFromRow(row), created: false };
+    return { cohortMember: cohortMemberFromRow(existingRow), created: false };
   }
 
   const cohortMember: CohortMember = {
@@ -2506,14 +3009,404 @@ async function upsertCohortMember(input: {
   const [row] = await getDb()
     .insert(dbSchema.cohortMembers)
     .values(cohortMemberInsert(cohortMember))
+    .onConflictDoNothing({
+      target: [dbSchema.cohortMembers.cohortId, dbSchema.cohortMembers.membershipId],
+    })
     .returning();
-  return { cohortMember: cohortMemberFromRow(row), created: true };
+  if (row) {
+    return { cohortMember: cohortMemberFromRow(row), created: true };
+  }
+
+  const [concurrentRow] = await getDb()
+    .select()
+    .from(dbSchema.cohortMembers)
+    .where(
+      and(
+        eq(dbSchema.cohortMembers.cohortId, input.cohortId),
+        eq(dbSchema.cohortMembers.membershipId, input.membership.id),
+      ),
+    )
+    .limit(1);
+  if (!concurrentRow) {
+    throw new Error("Unable to add membership to cohort.");
+  }
+  return { cohortMember: cohortMemberFromRow(concurrentRow), created: false };
+}
+
+export async function addMembershipToCohort(
+  orgId: string,
+  cohortId: string,
+  membership: Membership,
+  input: { email: string; name: string },
+) {
+  const cohort = await getCohortById(cohortId);
+  if (!cohort || cohort.orgId !== orgId) {
+    throw new Error("Cohort not found.");
+  }
+  if (cohort.status !== "active") {
+    throw new Error("Archived cohorts cannot accept new members.");
+  }
+  if (membership.orgId !== orgId) {
+    throw new Error("Membership does not belong to this organization.");
+  }
+  if (membership.status === "rejected" || membership.status === "suspended") {
+    throw new Error("Inactive memberships cannot be added to a cohort.");
+  }
+
+  const email = normalizeEmailAddress(input.email);
+  if (!email.includes("@")) {
+    throw new Error("A valid email is required.");
+  }
+
+  return upsertCohortMember({
+    orgId,
+    cohortId,
+    membership,
+    email,
+    name: input.name.trim() || displayNameForEmail(email),
+  });
+}
+
+function importedMembershipForUser(input: {
+  orgId: string;
+  user: User;
+  status: "pending" | "waitlist" | "approved";
+  invitedByUserId: string;
+  cohort?: Cohort;
+  now: string;
+}): Membership {
+  const { cohort, now } = input;
+  return {
+    id: `mem_${nanoid(8)}`,
+    orgId: input.orgId,
+    userId: input.user.id,
+    role: "member",
+    affiliationType: cohort ? "current participant" : "invited outsider",
+    status: input.status,
+    archetypes: cohort
+      ? ["cohort_participant", "student"]
+      : ["invited_outsider"],
+    programName: cohort?.name ?? "Guest Network",
+    cohortNameOrYear: cohort ? cohort.eventLabel || cohort.name : "Rolling",
+    invitedByUserId: input.invitedByUserId,
+    approvalNote: cohort
+      ? `Invited through ${cohort.name}.`
+      : "Invited by an organization administrator.",
+    approvedAt: input.status === "approved" ? now : undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function membershipNeedsInvitation(membership: Membership) {
+  if (membership.clerkMembershipId) {
+    return false;
+  }
+
+  return (
+    !membership.clerkInvitationStatus ||
+    membership.clerkInvitationStatus === "failed" ||
+    membership.clerkInvitationStatus === "expired" ||
+    membership.clerkInvitationStatus === "revoked"
+  );
+}
+
+export async function bulkImportMembersForOrg(input: {
+  orgId: string;
+  cohortId?: string;
+  members: BulkMemberImportInput[];
+  status: "pending" | "waitlist" | "approved";
+  invitedByUserId: string;
+}): Promise<BulkMemberImportResult[]> {
+  if (input.members.length > 100) {
+    throw new Error("Member imports are limited to 100 rows.");
+  }
+  if (!input.invitedByUserId) {
+    throw new Error("An inviting user is required.");
+  }
+
+  const uniqueMembers = new Map<
+    string,
+    { email: string; name: string; rowNumber?: number }
+  >();
+  for (const member of input.members) {
+    const email = normalizeEmailAddress(member.email);
+    if (!email.includes("@")) {
+      throw new Error(`Invalid email: ${member.email}`);
+    }
+    if (!uniqueMembers.has(email)) {
+      uniqueMembers.set(email, {
+        email,
+        name: member.name?.trim() || displayNameForEmail(email),
+        rowNumber: member.rowNumber,
+      });
+    }
+  }
+
+  if (!uniqueMembers.size) {
+    return [];
+  }
+
+  const cohort = input.cohortId ? await getCohortById(input.cohortId) : undefined;
+  if (input.cohortId && (!cohort || cohort.orgId !== input.orgId)) {
+    throw new Error("Cohort not found.");
+  }
+  if (cohort?.status === "archived") {
+    throw new Error("Archived cohorts cannot accept new members.");
+  }
+
+  const initialCandidates = await listMemberImportCandidatesForOrg(
+    input.orgId,
+    [...uniqueMembers.keys()],
+    input.cohortId,
+  );
+  const initialByEmail = new Map(
+    initialCandidates.map((candidate) => [candidate.email, candidate]),
+  );
+  const now = new Date().toISOString();
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const results: BulkMemberImportResult[] = [];
+    for (const normalizedInput of uniqueMembers.values()) {
+      const candidate = initialByEmail.get(normalizedInput.email);
+      let user = candidate?.user;
+      let membership = candidate?.membership;
+      let membershipCreated = false;
+
+      user ??= store.users.find(
+        (storedUser) => normalizeEmailAddress(storedUser.email) === normalizedInput.email,
+      );
+      membership ??= user
+        ? store.memberships.find(
+            (storedMembership) =>
+              storedMembership.orgId === input.orgId && storedMembership.userId === user!.id,
+          )
+        : undefined;
+
+      if (!user) {
+        user = {
+          id: `usr_${nanoid(8)}`,
+          email: normalizedInput.email,
+          name: normalizedInput.name,
+          imageUrl: `https://api.dicebear.com/9.x/notionists/svg?seed=${normalizedInput.name}`,
+          platformRole: "standard",
+          createdAt: now,
+          updatedAt: now,
+        };
+        store.users.unshift(user);
+      }
+
+      if (!membership) {
+        membership = importedMembershipForUser({
+          orgId: input.orgId,
+          user,
+          status: input.status,
+          invitedByUserId: input.invitedByUserId,
+          cohort,
+          now,
+        });
+        store.memberships.unshift(membership);
+        membershipCreated = true;
+      }
+
+      if (membership.status === "rejected" || membership.status === "suspended") {
+        results.push({
+          input: normalizedInput,
+          user,
+          membership,
+          membershipCreated: false,
+          cohortMemberCreated: false,
+          classification: "conflict",
+          conflictReason: membership.status,
+          shouldInvite: false,
+        });
+        continue;
+      }
+
+      let cohortMember = candidate?.cohortMember;
+      let cohortMemberCreated = false;
+      if (cohort && !cohortMember) {
+        const linked = await upsertCohortMember({
+          orgId: input.orgId,
+          cohortId: cohort.id,
+          membership,
+          email: user.email,
+          name: user.name,
+        });
+        cohortMember = linked.cohortMember;
+        cohortMemberCreated = linked.created;
+      }
+
+      results.push({
+        input: normalizedInput,
+        user,
+        membership,
+        cohortMember,
+        membershipCreated,
+        cohortMemberCreated,
+        classification: membershipCreated ? "created" : "existing",
+        shouldInvite: membershipNeedsInvitation(membership),
+      });
+    }
+    return results;
+  }
+
+  const db = getDb();
+  const newUsers = [...uniqueMembers.values()]
+    .filter((member) => !initialByEmail.get(member.email)?.user)
+    .map<User>((member) => ({
+      id: `usr_${nanoid(8)}`,
+      email: member.email,
+      name: member.name,
+      imageUrl: `https://api.dicebear.com/9.x/notionists/svg?seed=${member.name}`,
+      platformRole: "standard",
+      createdAt: now,
+      updatedAt: now,
+    }));
+  if (newUsers.length) {
+    await db
+      .insert(dbSchema.users)
+      .values(newUsers.map(userInsert))
+      .onConflictDoNothing({ target: dbSchema.users.email });
+  }
+
+  const candidatesWithUsers = await listMemberImportCandidatesForOrg(
+    input.orgId,
+    [...uniqueMembers.keys()],
+    input.cohortId,
+  );
+  const membershipsToCreate = candidatesWithUsers
+    .filter(
+      (candidate): candidate is MemberImportCandidateRecord & { user: User } =>
+        Boolean(candidate.user && !candidate.membership),
+    )
+    .map((candidate) =>
+      importedMembershipForUser({
+        orgId: input.orgId,
+        user: candidate.user,
+        status: input.status,
+        invitedByUserId: input.invitedByUserId,
+        cohort,
+        now,
+      }),
+    );
+  const createdMembershipIds = new Set<string>();
+  if (membershipsToCreate.length) {
+    const createdRows = await db
+      .insert(dbSchema.memberships)
+      .values(membershipsToCreate.map(membershipInsert))
+      .onConflictDoNothing({
+        target: [dbSchema.memberships.orgId, dbSchema.memberships.userId],
+      })
+      .returning({ id: dbSchema.memberships.id });
+    for (const row of createdRows) {
+      createdMembershipIds.add(row.id);
+    }
+  }
+
+  const candidatesWithMemberships = await listMemberImportCandidatesForOrg(
+    input.orgId,
+    [...uniqueMembers.keys()],
+    input.cohortId,
+  );
+  const createdCohortMemberIds = new Set<string>();
+  if (cohort) {
+    const cohortMembersToCreate = candidatesWithMemberships
+      .filter(
+        (candidate): candidate is MemberImportCandidateRecord & {
+          user: User;
+          membership: Membership;
+        } =>
+          Boolean(
+            candidate.user &&
+              candidate.membership &&
+              !candidate.inCohort &&
+              candidate.membership.status !== "rejected" &&
+              candidate.membership.status !== "suspended",
+          ),
+      )
+      .map((candidate) => {
+        const status = cohortMemberStatusForMembership(candidate.membership);
+        const cohortMember: CohortMember = {
+          id: `chm_${nanoid(8)}`,
+          orgId: input.orgId,
+          cohortId: cohort.id,
+          membershipId: candidate.membership.id,
+          invitedEmail: candidate.user.email,
+          invitedName: candidate.user.name,
+          status,
+          invitedAt: now,
+          promotedAt: promotedAtForMembership(candidate.membership, status, now),
+          createdAt: now,
+          updatedAt: now,
+        };
+        return cohortMember;
+      });
+    if (cohortMembersToCreate.length) {
+      const createdRows = await db
+        .insert(dbSchema.cohortMembers)
+        .values(cohortMembersToCreate.map(cohortMemberInsert))
+        .onConflictDoNothing({
+          target: [dbSchema.cohortMembers.cohortId, dbSchema.cohortMembers.membershipId],
+        })
+        .returning({ id: dbSchema.cohortMembers.id });
+      for (const row of createdRows) {
+        createdCohortMemberIds.add(row.id);
+      }
+    }
+  }
+
+  const finalCandidates = cohort
+    ? await listMemberImportCandidatesForOrg(
+        input.orgId,
+        [...uniqueMembers.keys()],
+        cohort.id,
+      )
+    : candidatesWithMemberships;
+  const finalByEmail = new Map(finalCandidates.map((candidate) => [candidate.email, candidate]));
+
+  return [...uniqueMembers.values()].map((normalizedInput) => {
+    const candidate = finalByEmail.get(normalizedInput.email);
+    if (!candidate?.user || !candidate.membership) {
+      throw new Error(`Unable to create membership for ${normalizedInput.email}.`);
+    }
+
+    const { membership } = candidate;
+    const conflictReason =
+      membership.status === "rejected"
+        ? "rejected" as const
+        : membership.status === "suspended"
+          ? "suspended" as const
+          : undefined;
+    const conflict = Boolean(conflictReason);
+    return {
+      input: normalizedInput,
+      user: candidate.user,
+      membership,
+      cohortMember: conflict ? undefined : candidate.cohortMember,
+      membershipCreated: createdMembershipIds.has(membership.id),
+      cohortMemberCreated: Boolean(
+        !conflict &&
+          candidate.cohortMember &&
+          createdCohortMemberIds.has(candidate.cohortMember.id),
+      ),
+      classification: conflict
+        ? "conflict" as const
+        : createdMembershipIds.has(membership.id)
+          ? "created" as const
+          : "existing" as const,
+      conflictReason,
+      shouldInvite: conflict ? false : membershipNeedsInvitation(membership),
+    };
+  });
 }
 
 export async function importCohortMembers(
   orgId: string,
   cohortId: string,
   students: CohortImportInput[],
+  options: { invitedByUserId?: string } = {},
 ): Promise<CohortImportResult[]> {
   const cohort = await getCohortById(cohortId);
   if (!cohort || cohort.orgId !== orgId) {
@@ -2527,55 +3420,59 @@ export async function importCohortMembers(
       throw new Error(`Invalid email: ${student.email}`);
     }
 
-    uniqueStudents.set(email, {
-      email,
-      name: student.name?.trim() || displayNameForEmail(email),
-    });
+    if (!uniqueStudents.has(email)) {
+      uniqueStudents.set(email, {
+        email,
+        name: student.name?.trim() || displayNameForEmail(email),
+      });
+    }
   }
 
-  const results: CohortImportResult[] = [];
-  for (const student of uniqueStudents.values()) {
-    const existingUser = await getUserByEmail(student.email);
-    const existingMembership = existingUser
-      ? await getMembershipByUserAndOrg(existingUser.id, orgId)
-      : undefined;
-    const membershipCreated = !existingMembership;
-    const { user, membership } = existingMembership
-      ? { user: existingUser, membership: existingMembership }
-      : await createManagedAccount({
-          orgId,
-          email: student.email,
-          name: student.name,
-          role: "member",
-          status: "waitlist",
-          affiliationType: "current participant",
-          archetypes: ["cohort_participant", "student"],
-          programName: cohort.name,
-          cohortNameOrYear: cohort.eventLabel || cohort.name,
-          approvalNote: `Invited through ${cohort.name}.`,
-        });
-    const profile = await getProfileByMembershipId(membership.id);
-    const { cohortMember, created } = await upsertCohortMember({
-      orgId,
-      cohortId,
-      membership,
-      email: student.email,
-      name: student.name,
-    });
-
-    results.push({
-      cohortMember,
-      membership,
-      user,
-      profile,
-      membershipCreated,
-      cohortMemberCreated: created,
-      shouldInvite:
-        !membership.clerkMembershipId && membership.clerkInvitationStatus !== "pending",
-    });
+  const candidates = await listMemberImportCandidatesForOrg(
+    orgId,
+    [...uniqueStudents.keys()],
+    cohortId,
+  );
+  const inactiveCandidate = candidates.find(
+    (candidate) =>
+      candidate.membership?.status === "rejected" ||
+      candidate.membership?.status === "suspended",
+  );
+  if (inactiveCandidate) {
+    throw new Error(`Inactive membership cannot be imported: ${inactiveCandidate.email}`);
   }
 
-  return results;
+  const creatorMembership = cohort.createdByMembershipId
+    ? await getMembershipById(cohort.createdByMembershipId)
+    : undefined;
+  const invitedByUserId = options.invitedByUserId ?? creatorMembership?.userId;
+  if (!invitedByUserId) {
+    throw new Error("An inviting user is required.");
+  }
+
+  const imported = await bulkImportMembersForOrg({
+    orgId,
+    cohortId,
+    members: [...uniqueStudents.values()],
+    status: "waitlist",
+    invitedByUserId,
+  });
+  return Promise.all(
+    imported.map(async (result) => {
+      if (!result.cohortMember) {
+        throw new Error(`Unable to add ${result.input.email} to cohort.`);
+      }
+      return {
+        cohortMember: result.cohortMember,
+        membership: result.membership,
+        user: result.user,
+        profile: await getProfileByMembershipId(result.membership.id),
+        membershipCreated: result.membershipCreated,
+        cohortMemberCreated: result.cohortMemberCreated,
+        shouldInvite: result.shouldInvite,
+      };
+    }),
+  );
 }
 
 export async function promoteCohortMembers(

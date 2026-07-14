@@ -7,9 +7,19 @@ import type {
 } from "@clerk/nextjs/server";
 import postgres from "postgres";
 
-import type { MembershipRole, MembershipStatus } from "@/lib/domain";
+import type {
+  ClerkInvitationStatus,
+  ClerkOrgRole,
+  MembershipRole,
+  MembershipStatus,
+} from "@/lib/domain";
 import { loadScriptEnv } from "./load-script-env";
-import { clerkKeyTarget, databaseTarget, readScriptTarget } from "./script-safety";
+import {
+  assertWriteAllowed,
+  clerkKeyTarget,
+  databaseTarget,
+  readScriptTarget,
+} from "./script-safety";
 
 const activeStatuses = new Set<MembershipStatus>(["pending", "waitlist", "approved"]);
 const reportPaths = {
@@ -37,6 +47,10 @@ interface ReconcileItem {
 
 interface ReconcileLocalRecord {
   membership: {
+    clerkInvitationId?: string;
+    clerkInvitationStatus?: ClerkInvitationStatus;
+    clerkMembershipId?: string;
+    clerkRole?: ClerkOrgRole;
     id: string;
     role: MembershipRole;
     status: MembershipStatus;
@@ -53,16 +67,26 @@ async function listProductionRecords(databaseUrl: string, orgId: string) {
     const rows = await sql<
       Array<{
         email: string;
+        clerk_invitation_id: string | null;
+        clerk_invitation_status: ClerkInvitationStatus | null;
+        clerk_membership_id: string | null;
+        clerk_role: ClerkOrgRole | null;
         membership_id: string;
         role: MembershipRole;
         status: MembershipStatus;
+        user_anonymized_at: Date | null;
       }>
     >`
       select
         u.email,
+        m.clerk_invitation_id,
+        m.clerk_invitation_status,
+        m.clerk_membership_id,
+        m.clerk_role,
         m.id as membership_id,
         m.role,
-        m.status
+        m.status,
+        u.anonymized_at as user_anonymized_at
       from memberships m
       inner join users u on u.id = m.user_id
       where m.org_id = ${orgId}
@@ -71,11 +95,18 @@ async function listProductionRecords(databaseUrl: string, orgId: string) {
     return rows.map(
       (row): ReconcileLocalRecord => ({
         membership: {
+          clerkInvitationId: row.clerk_invitation_id ?? undefined,
+          clerkInvitationStatus: row.clerk_invitation_status ?? undefined,
+          clerkMembershipId: row.clerk_membership_id ?? undefined,
+          clerkRole: row.clerk_role ?? undefined,
           id: row.membership_id,
           role: row.role,
           status: row.status,
         },
-        user: { email: row.email },
+        user: {
+          anonymizedAt: row.user_anonymized_at?.toISOString(),
+          email: row.email,
+        },
       }),
     );
   } finally {
@@ -115,18 +146,22 @@ async function backendRequest<T>(secretKey: string, path: string, init?: Request
       ...init?.headers,
     },
   });
-  const body = (await response.json()) as T;
+  const responseText = await response.text();
+  const body = responseText ? (JSON.parse(responseText) as T) : (undefined as T);
   if (!response.ok) {
-    throw new Error(`Clerk ${init?.method ?? "GET"} ${path} failed (${response.status}).`);
+    const details = responseText.replace(/\s+/g, " ").slice(0, 1000);
+    throw new Error(
+      `Clerk ${init?.method ?? "GET"} ${path} failed (${response.status})${
+        details ? `: ${details}` : ""
+      }`,
+    );
   }
   return body;
 }
 
 async function main() {
   const target = readScriptTarget();
-  if (target.environment === "production" && target.apply) {
-    throw new Error("Production reconciliation is preview-only in this release.");
-  }
+  assertWriteAllowed(target);
 
   loadScriptEnv(target.environment);
   const [{ clerkClient }, { seedOrganization }, clerkRoles, envModule, store, urls] =
@@ -141,6 +176,13 @@ async function main() {
   const { env } = envModule;
   if (!env.clerkSecretKey || !env.clerkPublishableKey || !env.databaseUrl) {
     throw new Error("Clerk keys and DATABASE_URL are required for reconciliation.");
+  }
+  if (
+    target.environment === "production" &&
+    target.apply &&
+    !env.clerkPublishableKey.startsWith("pk_live_")
+  ) {
+    throw new Error("Production reconciliation requires live Clerk credentials.");
   }
 
   const client = await clerkClient();
@@ -173,7 +215,6 @@ async function main() {
         }),
         client.organizations.getOrganizationInvitationList({
           organizationId: clerkOrg.id,
-          status: ["pending", "accepted", "revoked", "expired"],
           limit: 500,
         }),
       ])
@@ -291,6 +332,10 @@ async function main() {
         return false;
       }
       if (invitation.status === "pending") {
+        const clerkUser = clerkUsersByEmail.get(email);
+        if (clerkUser && membershipsByUserId.has(clerkUser.id)) {
+          return true;
+        }
         return (
           !localEmails.has(email) || pendingInvitationsByEmail.get(email)?.id !== invitation.id
         );
@@ -317,13 +362,6 @@ async function main() {
           to: true,
         }
       : null,
-    settings.max_allowed_memberships !== 0
-      ? {
-          field: "max_allowed_memberships",
-          from: settings.max_allowed_memberships,
-          to: 0,
-        }
-      : null,
     settings.slug_disabled !== false
       ? { field: "slug_disabled", from: settings.slug_disabled, to: false }
       : null,
@@ -341,6 +379,14 @@ async function main() {
       targetClerkOrganizationId: clerkOrg?.id ?? null,
     },
     organizationSettingChanges,
+    organizationCapacityConstraint:
+      settings.max_allowed_memberships === 0
+        ? null
+        : {
+            currentMaximum: settings.max_allowed_memberships ?? null,
+            desiredMaximum: 0,
+            managedBy: "Clerk subscription plan",
+          },
     organizationToCreate: clerkOrg
       ? null
       : { name: seedOrganization.name, slug: seedOrganization.slug },
@@ -371,9 +417,9 @@ async function main() {
       body: JSON.stringify({
         admin_delete_enabled: false,
         force_organization_selection: true,
-        max_allowed_memberships: 0,
         organization_creation_defaults: { enabled: false },
         slug_disabled: false,
+        ...(target.environment === "development" ? { max_allowed_memberships: 0 } : {}),
       }),
     },
   );
@@ -382,17 +428,287 @@ async function main() {
     clerkOrg = await client.organizations.createOrganization({
       name: seedOrganization.name,
       slug: seedOrganization.slug,
-      maxAllowedMemberships: 0,
+      ...(target.environment === "development" ? { maxAllowedMemberships: 0 } : {}),
     });
   } else {
     clerkOrg = await client.organizations.updateOrganization(clerkOrg.id, {
       adminDeleteEnabled: false,
-      maxAllowedMemberships: 0,
       name: seedOrganization.name,
       slug: seedOrganization.slug,
+      ...(target.environment === "development" ? { maxAllowedMemberships: 0 } : {}),
     });
   }
   await store.linkOrganizationToClerkOrg(localOrg.id, clerkOrg.id);
+
+  if (target.environment === "production") {
+    if (untrackedClerkMemberships.length) {
+      throw new Error(
+        "Production reconciliation stopped because the target Clerk organization has untracked memberships.",
+      );
+    }
+
+    const ensureOrganizationMembership = async (item: ReconcileItem) => {
+      if (!item.clerkId || !item.localMembershipId || !item.targetRole) {
+        throw new Error(`Incomplete membership reconciliation item for ${item.email}.`);
+      }
+      const existing = await client.organizations.getOrganizationMembershipList({
+        organizationId: clerkOrg.id,
+        userId: [item.clerkId],
+        limit: 1,
+      });
+      const clerkMembership = existing.data[0]
+        ? existing.data[0].role === item.targetRole
+          ? existing.data[0]
+          : await client.organizations.updateOrganizationMembership({
+              organizationId: clerkOrg.id,
+              role: item.targetRole,
+              userId: item.clerkId,
+            })
+        : await client.organizations.createOrganizationMembership({
+            organizationId: clerkOrg.id,
+            role: item.targetRole,
+            userId: item.clerkId,
+          });
+      const clerkUser = clerkUsersByEmail.get(item.email);
+      if (clerkUser) {
+        const clerkEmail = primaryEmailForUser(clerkUser) ?? item.email;
+        await store.upsertSessionUser({
+          clerkUserId: clerkUser.id,
+          email: clerkEmail,
+          imageUrl: clerkUser.imageUrl,
+          name: displayNameForUser(clerkUser, clerkEmail),
+        });
+      }
+      await store.updateMembershipClerkState(item.localMembershipId, {
+        clerkInvitationError: null,
+        clerkInvitationUpdatedAt: new Date().toISOString(),
+        clerkMembershipId: clerkMembership.id,
+        clerkRole: clerkMembership.role,
+      });
+    };
+
+    let inviterUserId = clerkMemberships.data.find(
+      (membership) => membership.role === "org:admin",
+    )?.publicUserData?.userId;
+    const stalePendingInvitations = staleInvitations.filter(
+      (invitation) => invitation.status === "pending",
+    );
+    if (
+      (invitationRevocations.length > 0 || stalePendingInvitations.length > 0) &&
+      !inviterUserId
+    ) {
+      throw new Error(
+        "Production reconciliation requires an active Clerk organization admin before revoking invitations.",
+      );
+    }
+
+    for (const item of invitationRevocations) {
+      if (!item.clerkId || !item.localMembershipId || !inviterUserId) {
+        throw new Error(`Incomplete invitation revocation item for ${item.email}.`);
+      }
+      await client.organizations.revokeOrganizationInvitation({
+        invitationId: item.clerkId,
+        organizationId: clerkOrg.id,
+        requestingUserId: inviterUserId,
+      });
+      await store.updateMembershipClerkState(item.localMembershipId, {
+        clerkInvitationError: null,
+        clerkInvitationId: item.clerkId,
+        clerkInvitationStatus: "revoked",
+        clerkInvitationUpdatedAt: new Date().toISOString(),
+        clerkMembershipId: null,
+        clerkRole: null,
+      });
+    }
+
+    for (const invitation of stalePendingInvitations) {
+      await client.organizations.revokeOrganizationInvitation({
+        invitationId: invitation.id,
+        organizationId: clerkOrg.id,
+        requestingUserId: inviterUserId!,
+      });
+    }
+
+    for (const item of [...additions, ...roleChanges]) {
+      await ensureOrganizationMembership(item);
+    }
+
+    const refreshedMemberships = await client.organizations.getOrganizationMembershipList({
+      organizationId: clerkOrg.id,
+      limit: 500,
+    });
+    inviterUserId = refreshedMemberships.data.find(
+      (membership) => membership.role === "org:admin",
+    )?.publicUserData?.userId ?? inviterUserId;
+    if (invitations.length > 0 && !inviterUserId) {
+      throw new Error("Production reconciliation requires an active Clerk organization admin.");
+    }
+
+    for (const item of removals) {
+      if (!item.clerkId || !item.localMembershipId) {
+        throw new Error(`Incomplete removal reconciliation item for ${item.email}.`);
+      }
+      await client.organizations.deleteOrganizationMembership({
+        organizationId: clerkOrg.id,
+        userId: item.clerkId,
+      });
+      const localRecord = localRecords.find(
+        (record) => record.membership.id === item.localMembershipId,
+      );
+      await store.updateMembershipClerkState(item.localMembershipId, {
+        clerkInvitationError: null,
+        clerkInvitationStatus: localRecord?.membership.clerkInvitationId ? "revoked" : null,
+        clerkInvitationUpdatedAt: new Date().toISOString(),
+        clerkMembershipId: null,
+        clerkRole: null,
+      });
+    }
+
+    for (const item of invitations) {
+      if (!item.localMembershipId || !item.targetRole || !inviterUserId) {
+        throw new Error(`Incomplete invitation reconciliation item for ${item.email}.`);
+      }
+      try {
+        const invitation = await client.organizations.createOrganizationInvitation({
+          emailAddress: item.email,
+          inviterUserId,
+          organizationId: clerkOrg.id,
+          publicMetadata: {
+            membershipId: item.localMembershipId,
+            membershipRole: item.localRole,
+            orgSlug: seedOrganization.slug,
+          },
+          redirectUrl: urls.absoluteAppUrl(
+            `/org/${seedOrganization.slug}/accept-invitation`,
+          ),
+          role: item.targetRole,
+        });
+        await store.updateMembershipClerkState(item.localMembershipId, {
+          clerkInvitationError: null,
+          clerkInvitationId: invitation.id,
+          clerkInvitationStatus: "pending",
+          clerkInvitationUpdatedAt: new Date().toISOString(),
+          clerkMembershipId: null,
+          clerkRole: null,
+        });
+      } catch (error) {
+        await store.updateMembershipClerkState(item.localMembershipId, {
+          clerkInvitationError: errorMessage(error),
+          clerkInvitationStatus: "failed",
+          clerkInvitationUpdatedAt: new Date().toISOString(),
+        });
+        throw error;
+      }
+    }
+
+    const [finalMemberships, finalInvitations] = await Promise.all([
+      client.organizations.getOrganizationMembershipList({
+        organizationId: clerkOrg.id,
+        limit: 500,
+      }),
+      client.organizations.getOrganizationInvitationList({
+        organizationId: clerkOrg.id,
+        limit: 500,
+      }),
+    ]);
+    const finalMembershipsByUserId = new Map(
+      finalMemberships.data.flatMap((membership) =>
+        membership.publicUserData?.userId
+          ? [[membership.publicUserData.userId, membership] as const]
+          : [],
+      ),
+    );
+    const finalInvitationsByEmail = new Map(
+      finalInvitations.data
+        .filter((invitation) => invitation.status === "pending")
+        .map((invitation) => [invitationEmail(invitation), invitation]),
+    );
+
+    for (const record of localRecords) {
+      const email = record.user?.email.toLowerCase();
+      if (!email || record.user?.anonymizedAt) {
+        continue;
+      }
+      const clerkUser = clerkUsersByEmail.get(email);
+      const clerkMembership = clerkUser
+        ? finalMembershipsByUserId.get(clerkUser.id)
+        : undefined;
+      const invitation = finalInvitationsByEmail.get(email);
+      if (!activeStatuses.has(record.membership.status)) {
+        await store.updateMembershipClerkState(record.membership.id, {
+          clerkInvitationError: null,
+          clerkInvitationStatus: record.membership.clerkInvitationId ? "revoked" : null,
+          clerkInvitationUpdatedAt: new Date().toISOString(),
+          clerkMembershipId: null,
+          clerkRole: null,
+        });
+        continue;
+      }
+      if (clerkMembership && clerkUser) {
+        const clerkEmail = primaryEmailForUser(clerkUser) ?? email;
+        await store.upsertSessionUser({
+          clerkUserId: clerkUser.id,
+          email: clerkEmail,
+          imageUrl: clerkUser.imageUrl,
+          name: displayNameForUser(clerkUser, clerkEmail),
+        });
+        await store.updateMembershipClerkState(record.membership.id, {
+          clerkInvitationError: null,
+          clerkInvitationStatus: record.membership.clerkInvitationId ? "accepted" : null,
+          clerkInvitationUpdatedAt: new Date().toISOString(),
+          clerkMembershipId: clerkMembership.id,
+          clerkRole: clerkMembership.role,
+        });
+        continue;
+      }
+      if (!invitation) {
+        throw new Error(`Active local membership ${record.membership.id} is not connected in Clerk.`);
+      }
+      await store.updateMembershipClerkState(record.membership.id, {
+        clerkInvitationError: null,
+        clerkInvitationId: invitation.id,
+        clerkInvitationStatus: "pending",
+        clerkInvitationUpdatedAt: new Date().toISOString(),
+        clerkMembershipId: null,
+        clerkRole: null,
+      });
+    }
+
+    const targetUserIds = new Set(
+      finalMemberships.data.flatMap((membership) =>
+        membership.publicUserData?.userId ? [membership.publicUserData.userId] : [],
+      ),
+    );
+    for (const organization of extraOrganizations) {
+      const [members, pendingInvitations] = await Promise.all([
+        client.organizations.getOrganizationMembershipList({
+          organizationId: organization.id,
+          limit: 500,
+        }),
+        client.organizations.getOrganizationInvitationList({
+          organizationId: organization.id,
+          limit: 500,
+        }),
+      ]);
+      const sourceUserIds = members.data.map(
+        (membership) => membership.publicUserData?.userId,
+      );
+      if (
+        pendingInvitations.data.some((invitation) => invitation.status === "pending") ||
+        sourceUserIds.some((userId) => !userId || !targetUserIds.has(userId))
+      ) {
+        throw new Error(
+          `Refusing to delete extra Clerk organization ${organization.id}; it still contains unreconciled access.`,
+        );
+      }
+      await client.organizations.deleteOrganization(organization.id);
+    }
+
+    console.info(
+      `Production Clerk reconciliation applied: ${additions.length} additions, ${invitations.length} invitations, ${roleChanges.length} role updates, ${removals.length} removals, ${extraOrganizations.length} extra organizations removed.`,
+    );
+    return;
+  }
 
   const e2eSpecs = [
     {
@@ -486,11 +802,11 @@ async function main() {
         : { data: [] as OrganizationMembership[] };
       const pendingInvitationList = await client.organizations.getOrganizationInvitationList({
         organizationId: clerkOrg.id,
-        status: ["pending"],
         limit: 500,
       });
       const pendingInvitation = pendingInvitationList.data.find(
-        (invitation) => invitationEmail(invitation) === email,
+        (invitation) =>
+          invitation.status === "pending" && invitationEmail(invitation) === email,
       );
 
       if (!activeStatuses.has(record.membership.status)) {

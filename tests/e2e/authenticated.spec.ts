@@ -47,6 +47,93 @@ async function signInPendingMember(page: Page) {
   });
 }
 
+async function createCohort(
+  page: Page,
+  input: { eventLabel: string; name: string; notes?: string },
+) {
+  await page.goto("/org/wavespark/admin/cohorts");
+  await expect(page.getByRole("heading", { name: "Cohorts", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New cohort" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "New cohort" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Name").fill(input.name);
+  await dialog.getByLabel("Event label").fill(input.eventLabel);
+  if (input.notes) {
+    await dialog.getByLabel("Notes").fill(input.notes);
+  }
+  await dialog.getByRole("button", { name: "Create cohort" }).click();
+
+  await expect(page.getByRole("heading", { name: input.name })).toBeVisible();
+  await expect(page.getByRole("status").getByText("Cohort created")).toBeVisible();
+}
+
+async function invitePastedListToCohort(
+  page: Page,
+  input: { email: string; name: string },
+) {
+  await page.getByRole("button", { name: "Add people" }).click();
+  const dialog = page.getByRole("dialog", { name: "Invite people" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("tab", { name: "Upload list" }).click();
+  await dialog.getByRole("button", { name: "Paste list" }).click();
+  await dialog
+    .getByLabel("Paste email and name")
+    .fill(`email,name\n${input.email},${input.name}`);
+  await dialog.getByRole("button", { name: "Continue to mapping" }).click();
+
+  await expect(dialog.getByLabel("Email column")).toBeVisible();
+  await dialog.getByLabel("Email column").selectOption({ label: "email" });
+  await dialog.getByLabel("Name column (optional)").selectOption({ label: "name" });
+  await expect(dialog.locator("#member-import-access")).toHaveValue("waitlist");
+  await expect(dialog.locator("#member-import-cohort")).not.toHaveValue("");
+  await dialog.getByRole("button", { name: "Review people" }).click();
+
+  await expect(dialog.getByText("Ready to invite", { exact: true }).first()).toBeVisible();
+  await expect(dialog.locator('[id^="member-import-email-"]').first()).toHaveValue(input.email);
+  await dialog.getByRole("button", { name: "Invite 1 person" }).click();
+
+  await expect(dialog.getByRole("status").getByText("Import complete")).toBeVisible();
+  await expect(dialog.getByText("Invitation created", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(input.email, { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "Close dialog" }).click();
+  await page.reload();
+  await expect(page.getByText(input.email, { exact: true })).toBeVisible();
+}
+
+async function approveCohortMember(page: Page, email: string, note: string) {
+  const memberRow = page.locator("label").filter({ hasText: email }).first();
+  await expect(memberRow).toBeVisible();
+  await memberRow.getByRole("checkbox").check();
+  await page.getByLabel("Approval note").fill(note);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Approve 1 for community" }).click();
+
+  await expect(
+    page.getByRole("status").getByText("Community access approved"),
+  ).toBeVisible();
+  await expect(memberRow.getByText("Approved", { exact: true })).toBeVisible();
+}
+
+async function updateMemberAccess(
+  page: Page,
+  input: { email: string; note: string; status: "approved" | "suspended" },
+) {
+  await page.goto(
+    `/org/wavespark/admin/members?search=${encodeURIComponent(input.email)}`,
+  );
+  const memberCard = page.locator(".ws-card-glow").filter({ hasText: input.email }).first();
+  await expect(memberCard).toBeVisible();
+  await memberCard.getByText("Manage member", { exact: true }).click();
+  await memberCard.getByLabel("Community access").selectOption(input.status);
+  await memberCard.getByLabel("Admin note").fill(input.note);
+  if (input.status === "suspended") {
+    page.once("dialog", (dialog) => dialog.accept());
+  }
+  await memberCard.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("status").getByText("Membership updated")).toBeVisible();
+}
+
 test.describe("authenticated member flows", () => {
   test.skip(
     !canUseLocalAuth,
@@ -104,43 +191,53 @@ test.describe("authenticated admin flows", () => {
     await page.goto("/org/wavespark/admin");
     await expect(page.getByRole("heading", { name: "Community command center" })).toBeVisible();
     await page.goto("/org/wavespark/admin/cohorts");
-    await expect(page.getByRole("heading", { name: "Event cohort pools" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Cohorts", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New cohort" })).toBeVisible();
     await page.goto("/org/wavespark/admin/members");
+    await expect(page.getByRole("heading", { name: "Members", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Invite people" })).toBeVisible();
+    await expect(page.getByLabel("Name or email")).toBeVisible();
+    await expect(page.locator("#member-access")).toBeVisible();
+    await expect(page.getByLabel("Invitation")).toBeVisible();
+    await expect(page.getByLabel("Cohort")).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Accounts and membership states" }),
+      page.locator(".ws-card-glow").filter({ hasText: "jules@example.com" }).first(),
     ).toBeVisible();
-    await expect(page.getByText("jules@example.com")).toBeVisible();
+
+    await page.getByLabel("Name or email").fill("jules@example.com");
+    await page.locator("#member-access").selectOption("approved");
+    await page.getByRole("button", { name: "Filter" }).click();
+    await expect(page).toHaveURL(/search=jules%40example\.com/);
+    await expect(page).toHaveURL(/access=approved/);
+    await expect(
+      page.locator(".ws-card-glow").filter({ hasText: "jules@example.com" }).first(),
+    ).toBeVisible();
   });
 
-  test("admins can create, import, and promote a cohort", async ({ page }) => {
+  test("admins can create a cohort, review a pasted list, invite, and approve", async ({ page }) => {
     test.skip(!canUseLocalAuth, "Cohort mutation browser flow uses local auth without Clerk.");
     await signInAdmin(page);
     const suffix = Date.now();
     const cohortName = `E2E Cohort ${suffix}`;
     const studentEmail = `e2e.cohort.${suffix}@example.com`;
 
-    await page.goto("/org/wavespark/admin/cohorts");
-    await page.getByLabel("Name").fill(cohortName);
-    await page.getByLabel("Event label").fill("E2E Event");
-    await page.getByLabel("Notes").fill("Created by Playwright local auth.");
-    await page.getByRole("button", { name: "Create cohort" }).click();
-    await expect(page.getByRole("heading", { name: cohortName })).toBeVisible();
-    await expect(page.getByText("Cohort created")).toBeVisible();
-
-    await page.getByPlaceholder("email,name\nstudent@example.com,Student Name").fill(
-      `${studentEmail},E2E Cohort Student`,
+    await createCohort(page, {
+      eventLabel: "E2E Event",
+      name: cohortName,
+      notes: "Created by Playwright local auth.",
+    });
+    await invitePastedListToCohort(page, {
+      email: studentEmail,
+      name: "E2E Cohort Student",
+    });
+    await expect(
+      page.locator("label").filter({ hasText: studentEmail }).getByText("Waitlist", { exact: true }),
+    ).toBeVisible();
+    await approveCohortMember(
+      page,
+      studentEmail,
+      "Approved by Playwright local auth.",
     );
-    await page.getByRole("button", { name: "Import and invite" }).click();
-    await expect(page.getByText("Students imported")).toBeVisible();
-    await expect(page.getByText(studentEmail)).toBeVisible();
-    await expect(page.getByText("waitlist")).toBeVisible();
-
-    await page.getByRole("checkbox").check();
-    await page.getByLabel("Approval note").fill("Promoted by Playwright local auth.");
-    await page.getByRole("button", { name: "Promote selected" }).click();
-    await expect(page.getByText("Students promoted")).toBeVisible();
-    await expect(page.getByText("promoted", { exact: true })).toBeVisible();
-    await expect(page.getByRole("main").getByText("approved", { exact: true })).toBeVisible();
   });
 
   test("covers the member lifecycle from cohort invite through access recovery", async ({
@@ -162,17 +259,14 @@ test.describe("authenticated admin flows", () => {
     const introPurpose = `Lifecycle intro ${suffix}`;
 
     await signInAdmin(page);
-    await page.goto("/org/wavespark/admin/cohorts");
-    await page.getByLabel("Name").fill(cohortName);
-    await page.getByLabel("Event label").fill("Lifecycle acceptance");
-    await page.getByRole("button", { name: "Create cohort" }).click();
-    await expect(page.getByRole("heading", { name: cohortName })).toBeVisible();
-    await page
-      .getByPlaceholder("email,name\nstudent@example.com,Student Name")
-      .fill(`${memberEmail},${memberName}`);
-    await page.getByRole("button", { name: "Import and invite" }).click();
-    await expect(page.getByText(memberEmail)).toBeVisible();
-    await expect(page.getByText("waitlist", { exact: true })).toBeVisible();
+    await createCohort(page, {
+      eventLabel: "Lifecycle acceptance",
+      name: cohortName,
+    });
+    await invitePastedListToCohort(page, { email: memberEmail, name: memberName });
+    await expect(
+      page.locator("label").filter({ hasText: memberEmail }).getByText("Waitlist", { exact: true }),
+    ).toBeVisible();
 
     await signInWithLocalAuth(page, {
       email: memberEmail,
@@ -206,12 +300,11 @@ test.describe("authenticated admin flows", () => {
     await expect(page.getByRole("heading", { name: "You’re on the waitlist" })).toBeVisible();
 
     await signInAdmin(page);
-    await page.goto("/org/wavespark/admin/members");
-    const memberForm = page.locator("form").filter({ hasText: memberEmail }).first();
-    await memberForm.locator('select[name="status"]').selectOption("approved");
-    await memberForm.locator('input[name="approval_note"]').fill("Approved by lifecycle E2E.");
-    await memberForm.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByRole("status").getByText("Membership updated")).toBeVisible();
+    await updateMemberAccess(page, {
+      email: memberEmail,
+      note: "Approved by lifecycle E2E.",
+      status: "approved",
+    });
 
     await signInWithLocalAuth(page, {
       email: memberEmail,
@@ -265,11 +358,11 @@ test.describe("authenticated admin flows", () => {
     ).toBeVisible();
 
     await signInAdmin(page);
-    await page.goto("/org/wavespark/admin/members");
-    const suspendForm = page.locator("form").filter({ hasText: memberEmail }).first();
-    await suspendForm.locator('select[name="status"]').selectOption("suspended");
-    await suspendForm.locator('input[name="approval_note"]').fill("Paused by lifecycle E2E.");
-    await suspendForm.getByRole("button", { name: "Save" }).click();
+    await updateMemberAccess(page, {
+      email: memberEmail,
+      note: "Paused by lifecycle E2E.",
+      status: "suspended",
+    });
 
     await signInWithLocalAuth(page, {
       email: memberEmail,
@@ -284,11 +377,11 @@ test.describe("authenticated admin flows", () => {
     await expect(page.getByRole("heading", { name: "Wavespark Forum" })).toBeVisible();
 
     await signInAdmin(page);
-    await page.goto("/org/wavespark/admin/members");
-    const restoreForm = page.locator("form").filter({ hasText: memberEmail }).first();
-    await restoreForm.locator('select[name="status"]').selectOption("approved");
-    await restoreForm.locator('input[name="approval_note"]').fill("Restored by lifecycle E2E.");
-    await restoreForm.getByRole("button", { name: "Save" }).click();
+    await updateMemberAccess(page, {
+      email: memberEmail,
+      note: "Restored by lifecycle E2E.",
+      status: "approved",
+    });
 
     await signInWithLocalAuth(page, {
       email: memberEmail,

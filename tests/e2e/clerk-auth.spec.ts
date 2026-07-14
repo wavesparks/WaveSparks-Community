@@ -88,8 +88,9 @@ test("switches a signed-in admin from another Clerk organization into Wavespark"
       await page.waitForLoadState("networkidle");
       await page.goto("/org/wavespark/admin/members");
       await expect(
-        page.getByRole("heading", { name: "Accounts and membership states" }),
+        page.getByRole("heading", { name: "Members", exact: true }),
       ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Invite people" })).toBeVisible();
     }
   } finally {
     await client.organizations.deleteOrganization(otherOrg.id);

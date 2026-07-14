@@ -40,8 +40,11 @@ Open `/org/wavespark/admin/members`. Each record brings together:
 - Local role and community status
 - Clerk membership connection
 - Clerk invitation status and last error
+- Optional cohort associations
 - Admin decision note
 - Available invitation and status actions
+
+Members is the only member and invitation center. Use its search, community-access, invitation-state, and cohort filters to work through the 25-person pages. Cohorts are optional groups and review contexts; they do not create a second member record or access state.
 
 ![Admin member records](assets/guides/admin-members.png)
 
@@ -51,22 +54,34 @@ The mobile layout keeps the same fields in a stacked record rather than compress
 
 ## 2. Invite one member
 
-1. Enter the member's name and exact email address.
-2. Select `Member` or `Admin`.
-3. Select the initial state. New regular members normally start as `pending`.
-4. Choose **Create and invite**.
-5. Treat the invitation as sent only after the success banner confirms Clerk accepted it.
+1. Choose **Invite people**, then **One person**.
+2. Enter the member's name and exact email address.
+3. Select `Member` or `Admin`, the initial access state, and an optional cohort.
+4. Confirm the elevated permissions when inviting an Admin. Admins are approved automatically.
+5. Choose **Create invitation**. Treat the result as “Invitation created,” not proof of email delivery.
 
 What happens next:
 
-- Existing Clerk user: Wavespark adds the user directly to the Wavespark Clerk organization.
+- Existing Clerk user: Wavespark adds the user directly to the Wavespark Clerk organization and sends a Wavespark sign-in notification through Resend.
 - No Clerk user: Clerk creates a targeted email invitation with the Wavespark acceptance URL.
 - Wavespark stores the Clerk membership or invitation identifiers and status.
-- A Clerk failure is saved on the member record and the UI reports failure rather than success.
+- A Clerk or notification-email failure is saved on the member record and the UI reports failure rather than success.
 
 Never send a generic Clerk Dashboard invitation. It may not contain the app-specific redirect and cannot establish the intended local review workflow.
 
-## 3. Read invitation states
+## 3. Upload and review a member list
+
+Choose **Invite people**, then **Upload list**. The supported path is:
+
+1. Upload a `.csv` or `.xlsx` file, or paste CSV-formatted rows.
+2. Map the required Email column and optional Name column.
+3. Choose `Pending review`, `Waitlist`, or `Approved` for newly created memberships and optionally choose a cohort.
+4. Review and edit row-level classifications before confirming.
+5. Choose **Invite N people**, then inspect the row results and retry only failures.
+
+Files are parsed in memory and are not retained. Each file is limited to 2 MB, the first worksheet, 20 columns, and 100 non-empty data rows. Invalid or duplicate rows do not block valid rows. Existing member data is never overwritten; a selected cohort only adds the missing association. Rejected or suspended members must be restored explicitly from their member details.
+
+## 4. Read invitation states
 
 | State | Meaning | Admin action |
 | --- | --- | --- |
@@ -79,7 +94,7 @@ Never send a generic Clerk Dashboard invitation. It may not contain the app-spec
 
 Use **Resend invite** to revoke the active ticket and create a new one. Use **Revoke invite** when the member should not be able to complete account creation.
 
-## 4. Manage roles and states
+## 5. Manage roles and states
 
 | Change | Local result | Clerk result |
 | --- | --- | --- |
@@ -91,7 +106,7 @@ Use **Resend invite** to revoke the active ticket and create a new one. Use **Re
 
 An Admin cannot demote or suspend their own active Admin membership from the same session.
 
-## 5. Approve without duplicate notifications
+## 6. Approve without duplicate notifications
 
 Approval email and in-app notification delivery occurs only when the status actually changes from a non-approved state to `approved`.
 
@@ -99,24 +114,28 @@ Saving an already-approved record again does not send another approval notificat
 
 Approval does not bypass profile readiness. An approved member with incomplete required fields is sent to onboarding before interaction unlocks.
 
-## 6. Run cohort imports
+## 7. Use cohorts for grouping and review
 
-Open `/org/wavespark/admin/cohorts` to create an event-specific pool.
+Open `/org/wavespark/admin/cohorts` to create, edit, archive, or review an optional member group.
 
 ![Admin cohort workspace](assets/guides/admin-cohorts.png)
+
+The cohort summary derives `Total`, `Needs decision`, `Active`, and `Needs attention` from membership and invitation state. The legacy cohort-member `invited/promoted` fields are not displayed and do not drive these counts.
+
+Choose **Add people** to reuse the same single-person and CSV/XLSX importer. The current cohort is preselected and new memberships default to `Waitlist`; the Admin can change the batch access setting before confirmation.
 
 Import rules:
 
 - Maximum 100 unique email addresses per import.
-- Input is one member per line as `email,name`; name is optional.
-- Clerk operations run in batches of 10.
+- CSV and XLSX input supports explicit Email/Name column mapping; Email is required and Name is optional.
+- New Clerk invitations run through the official bulk API in groups of no more than 10.
 - Every member receives an individual success or failure result.
 - Local records remain when Clerk fails so only failed rows need retrying.
 - The page reports partial success instead of claiming the entire import succeeded.
 
-Imported cohort members begin on the waitlist. Select intended members and use **Promote selected** to approve them. Notifications are sent only for real state transitions.
+Filter and select pending or waitlisted members, then use **Approve N for community**. Rejected and suspended members must be handled from Members. Notifications are sent only for real state transitions.
 
-## 7. Configure and review AI matching
+## 8. Configure and review AI matching
 
 Open `/org/wavespark/admin/matches` to review recommendations, matching runs, embedding health, and aggregate member feedback.
 
@@ -135,7 +154,7 @@ Member feedback is private. Admins see aggregate Helpful, Not relevant, matching
 
 See [AI matching engine](ai-matching-engine.md) for the scoring, post policy, embedding model, storage choice, and operating thresholds.
 
-## 8. Create a manual introduction
+## 9. Create a manual introduction
 
 Open `/org/wavespark/admin/requests`.
 
@@ -145,13 +164,13 @@ A valid manual introduction requires two different members, both `approved`, bot
 
 Select the requesting and receiving member separately, then add a concrete purpose and context. The receiving member must accept before either side sees private contact details.
 
-## 9. Moderate content and profiles
+## 10. Moderate content and profiles
 
 Use the Admin Posts and Profiles workspaces to hide or restore posts, lock comments, remove comments, feature profiles, mark stale profiles, and recompute matches after material changes.
 
 Public Feed and public post reading remain available to visitors and every membership state. Treat moderation as a public-reading decision, not only a member-area decision.
 
-## 10. Suspend, restore, reject, and delete
+## 11. Suspend, restore, reject, and delete
 
 ### Suspend
 
@@ -174,7 +193,7 @@ Clerk `user.deleted` triggers anonymization rather than destructive content dele
 - Clerk IDs, contacts, credentials, follows, saves, notifications, matching data, and pending intros are removed or terminated.
 - Posts and comments remain with the anonymized author.
 
-## 11. Understand webhook recovery
+## 12. Understand webhook recovery
 
 The Clerk webhook records an event as processed only after business handling succeeds. A failed handler returns an error so Clerk can retry the same event.
 
@@ -187,7 +206,7 @@ Important drift rules:
 - Clerk organization deletion only unlinks the local organization; it does not delete community data.
 - A suspended or rejected member is never silently re-added during login.
 
-## 12. Reconcile Clerk and Wavespark
+## 13. Reconcile Clerk and Wavespark
 
 Reconciliation is dry-run by default and requires an explicit environment.
 
@@ -195,17 +214,20 @@ Reconciliation is dry-run by default and requires an explicit environment.
 pnpm clerk:reconcile -- --environment=development
 pnpm clerk:reconcile -- --environment=development --apply
 pnpm clerk:reconcile -- --environment=production
+pnpm clerk:reconcile -- --environment=production --apply --confirm-production
 ```
 
-Production apply is intentionally blocked. The production command writes only:
+The production dry run writes:
 
 ```text
 /tmp/wavespark-clerk-reconcile-production.json
 ```
 
-Review organization-setting changes, extra organizations, member additions/removals, invitations, role differences, stale invitations, and untracked Clerk memberships. Do not execute production changes until the report is reviewed and write approval is explicit.
+Review organization-setting changes, extra organizations, member additions/removals, invitations, role differences, stale invitations, and untracked Clerk memberships. Production apply requires both write flags, refuses untracked memberships, and deletes an extra organization only after every account has been copied to the canonical organization and no pending invitation remains. Run the dry run again after apply.
 
-## 12. Run environment-safe commands
+`organizationCapacityConstraint` is an informational plan limit, not an actionable drift item. If the canonical organization needs more seats than that value, upgrade the Clerk subscription before sending more invitations.
+
+## 14. Run environment-safe commands
 
 Database writes are dry-run by default. Always specify the environment.
 

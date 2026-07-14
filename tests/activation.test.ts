@@ -245,7 +245,7 @@ describe("status banners", () => {
       title: "Notifications marked read",
     });
     expect(getStatusBannerCopy("member_invited")).toMatchObject({
-      title: "Invitation sent",
+      title: "Invitation created",
     });
     expect(getStatusBannerCopy("member_saved")).toMatchObject({
       title: "Member saved",

@@ -9,7 +9,7 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 - Structured onboarding and profile completion flow
 - Community feed, limited member directory, knowledge library, opportunities, post detail, comments, saved posts, and intro requests
 - Admin-configurable AI matching with separate seeking/offering intent, explainable scoring, and feedback
-- Admin console for cohort pools, approvals, moderation, manual intros, analytics, and org settings
+- Admin console with a unified member/invitation workspace, optional cohorts, approvals, moderation, manual intros, analytics, and org settings
 - Drizzle schema, generated SQL migration, seed script, and match recompute cron stub
 
 ## Stack
@@ -55,8 +55,9 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 - Authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`.
 - `CLERK_JWT_KEY` is optional but recommended so the OAuth handoff API can verify client session tokens directly during preview-domain sign-in flows.
 - If Clerk keys are missing, authenticated app areas are unavailable until `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are configured.
-- Admins can create event cohorts from `/org/wavespark/admin/cohorts`, import students into a waitlist pool, and promote selected students into the main community.
-- Admins invite or update members from `/org/wavespark/admin/members`. Wavespark confirms the Clerk membership or targeted invitation before reporting success and stores the Clerk state locally.
+- `/org/wavespark/admin/members` is the single member and invitation workspace. Admins can search and filter the paginated roster, invite one person, or upload/paste up to 100 CSV/XLSX rows for mapping, preview, confirmation, row-level results, and failed-row retry.
+- Cohorts are optional member groups and focused review queues. Adding people from a cohort preselects that cohort and `waitlist`; community access remains the membership status, not a separate cohort status.
+- Wavespark reports an invitation as created only after Clerk accepts the operation; this does not guarantee email delivery. Clerk failures are stored per member for retry.
 - Public registration and shared invitation codes are disabled. New accounts start at `/org/wavespark/accept-invitation` from a personal Clerk ticket.
 - Do not use Clerk Dashboard as the daily invitation surface. Dashboard invitations cannot establish the complete Wavespark review workflow.
 - Clerk owns identity, primary email, credentials, and sessions. Wavespark Admin actions own organization roles and membership; Wavespark stores approval, profiles, content, and matching.
@@ -76,6 +77,10 @@ Run migrations against Postgres:
 pnpm db:migrate -- --environment=development
 pnpm db:migrate -- --environment=development --apply
 ```
+
+The membership uniqueness migration deliberately aborts if production contains duplicate
+`(org_id, user_id)` rows. Resolve those records explicitly before rerunning it; the migration
+does not guess which production membership to keep.
 
 Seed the database when `DATABASE_URL` is configured:
 
@@ -101,10 +106,15 @@ Preview or reconcile Clerk Organizations:
 pnpm clerk:reconcile -- --environment=development
 pnpm clerk:reconcile -- --environment=development --apply
 pnpm clerk:reconcile -- --environment=production
+pnpm clerk:reconcile -- --environment=production --apply --confirm-production
 ```
 
-Reconciliation is dry-run by default. Production is preview-only and writes
-`/tmp/wavespark-clerk-reconcile-production.json`; production apply is blocked.
+Reconciliation is dry-run by default and writes an environment-specific report under
+`/tmp`. Production writes require both `--apply` and `--confirm-production`; the apply
+path refuses untracked memberships and will delete an extra organization only after all
+of its members are present in the canonical Wavespark organization and it has no pending
+invitations. `organizationCapacityConstraint` is informational: Clerk plans that fix the
+organization limit cannot be changed through reconciliation and must be upgraded in Clerk.
 
 ## Useful scripts
 
@@ -182,10 +192,12 @@ dedicated `/org/wavespark/accept-invitation` redirect.
 pnpm readiness:prod
 pnpm db:migrate -- --environment=production
 pnpm clerk:reconcile -- --environment=production
+pnpm clerk:reconcile -- --environment=production --apply --confirm-production
 ```
 
-Production database writes require both `--apply` and `--confirm-production`. This release
-does not apply Clerk reconciliation changes to production.
+Production database and Clerk writes require both `--apply` and
+`--confirm-production`. Always review the dry-run report before applying it and run a new
+dry-run afterward to confirm that no actionable differences remain.
 
 `pnpm readiness:prod` expects the real production environment to be present, as it is in
 Vercel/CI. It blocks localhost URLs, placeholder secrets, Clerk test keys, and partial

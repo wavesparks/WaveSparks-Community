@@ -33,7 +33,6 @@ const memberLinks = [
 
 const adminLinks = [
   { href: "admin", label: "Overview" },
-  { href: "admin/cohorts", label: "Cohorts" },
   { href: "admin/members", label: "Members" },
   { href: "admin/profiles", label: "Profiles" },
   { href: "admin/posts", label: "Posts" },
@@ -129,7 +128,10 @@ export function AppShell({
                 <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-1">
                   {adminLinks.map((link) => {
                     const href = `/org/${viewer.org.slug}/${link.href}`;
-                    const active = currentPath === href;
+                    const active =
+                      currentPath === href ||
+                      (link.href === "admin/members" &&
+                        currentPath.startsWith(`/org/${viewer.org.slug}/admin/cohorts`));
                     return (
                       <NavLink
                         active={active}

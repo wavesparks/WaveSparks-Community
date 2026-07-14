@@ -156,6 +156,10 @@ export const memberships = pgTable("memberships", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 }, (table) => ({
+  orgUserIdx: uniqueIndex("memberships_org_user_idx").on(
+    table.orgId,
+    table.userId,
+  ),
   clerkMembershipIdx: uniqueIndex("memberships_clerk_membership_id_idx").on(
     table.clerkMembershipId,
   ),

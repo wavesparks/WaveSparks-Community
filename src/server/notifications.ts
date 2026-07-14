@@ -29,12 +29,16 @@ export async function sendNotificationEmail(input: {
     return;
   }
 
-  await client.emails.send({
+  const result = await client.emails.send({
     from: env.resendFromEmail,
     to: input.to,
     subject: input.subject,
     html: input.html,
   });
+  if (result.error) {
+    throw new Error(`Resend email failed: ${result.error.message}`);
+  }
+  return result.data;
 }
 
 export function enqueueNotificationEmail(input: {

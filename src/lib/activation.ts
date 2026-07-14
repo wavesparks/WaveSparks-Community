@@ -215,28 +215,53 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       };
     case "member_invited":
       return {
-        title: "Invitation sent",
-        body: "Clerk has the account invitation, and the local membership state is ready for review.",
+        title: "Invitation created",
+        body: "The invitation request was accepted, or an existing account was connected. This does not guarantee email delivery.",
       };
     case "member_invite_failed":
       return {
         title: "Invitation failed",
-        body: "Clerk did not confirm the invitation. The member record keeps the error and can be retried.",
+        body: "Clerk or the email provider did not confirm delivery. The member record keeps the error and can be retried.",
       };
     case "member_invite_revoked":
       return {
         title: "Invitation revoked",
         body: "The pending Clerk invitation can no longer be used. You can send a new invitation later.",
       };
+    case "member_existing":
+      return {
+        title: "Member already exists",
+        body: "No profile, role, or community access was changed. Manage this person from their member details.",
+      };
+    case "member_added_to_cohort":
+      return {
+        title: "Member added to cohort",
+        body: "The existing member was linked to the selected cohort without changing their profile or access.",
+      };
+    case "member_inactive_conflict":
+      return {
+        title: "Inactive member needs explicit review",
+        body: "Rejected or suspended access cannot be restored from an invitation flow. Use the member details instead.",
+      };
     case "cohort_created":
       return {
         title: "Cohort created",
-        body: "The event cohort is ready for student imports.",
+        body: "The cohort is ready for member grouping and review.",
+      };
+    case "cohort_updated":
+      return {
+        title: "Cohort updated",
+        body: "The cohort name, event label, and notes are saved.",
+      };
+    case "cohort_archived":
+      return {
+        title: "Cohort archived",
+        body: "The group workflow is closed. Its members still belong to the community.",
       };
     case "cohort_students_imported":
       return {
-        title: "Students imported",
-        body: "Cohort records were created or refreshed, and Clerk confirmed each successful invitation.",
+        title: "Members imported",
+        body: "Cohort links were created or refreshed, and Clerk confirmed each successful invitation operation.",
       };
     case "cohort_students_partially_imported":
       return {
@@ -250,8 +275,8 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       };
     case "cohort_import_empty":
       return {
-        title: "No students to import",
-        body: "Paste at least one student email before importing the cohort roster.",
+        title: "No members to import",
+        body: "Add at least one member email before importing the cohort roster.",
       };
     case "cohort_import_invalid":
       return {
@@ -266,7 +291,7 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
     case "cohort_clerk_session_required":
       return {
         title: "Clerk organization required",
-        body: "Switch into the Clerk organization before importing students.",
+        body: "Switch into the Clerk organization before adding members.",
       };
     case "cohort_clerk_admin_required":
       return {
@@ -275,13 +300,13 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       };
     case "cohort_members_promoted":
       return {
-        title: "Students promoted",
-        body: "Selected students are approved for the main community.",
+        title: "Community access approved",
+        body: "The selected cohort members are now approved for the community.",
       };
     case "cohort_no_selection":
       return {
-        title: "No students selected",
-        body: "Select at least one waiting student before promoting.",
+        title: "No members selected",
+        body: "Select at least one cohort member before approving community access.",
       };
     case "member_saved":
       return {

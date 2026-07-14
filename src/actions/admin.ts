@@ -10,6 +10,11 @@ import { getViewerContextForAction } from "@/lib/auth";
 import { getE2ELocalClerkOrganizationContext } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
 import type { MembershipRole, MembershipStatus } from "@/lib/domain";
+import type {
+  MemberImportPreviewInput,
+  MemberImportResult,
+  MemberImportResultRow,
+} from "@/lib/member-import";
 import { getPostCommentRevalidationPaths } from "@/lib/post-action-routing";
 import { absoluteAppUrl } from "@/lib/urls";
 import {
@@ -28,13 +33,22 @@ import type { MatchFactorKey, MatchFactorWeights, MatchTypeConfig } from "@/lib/
 import {
   revokeMembershipInvitation,
   sendMembershipInvitation,
+  sendMembershipInvitationsBulk,
   syncMembershipClerkLifecycle,
 } from "@/server/clerk-membership-lifecycle";
-import { buildNotification, enqueueNotificationEmail } from "@/server/notifications";
 import {
+  buildNotification,
+  enqueueNotificationEmail,
+  sendNotificationEmail,
+} from "@/server/notifications";
+import {
+  addMembershipToCohort,
+  archiveCohort,
+  bulkImportMembersForOrg,
   createCohort,
   createManagedAccount,
   createIntroRequest,
+  getCohortRecordForOrg,
   getCommentRecordById,
   getMembershipRecordById,
   getPostById,
@@ -42,12 +56,16 @@ import {
   getProfileRecordById,
   getUserById,
   importCohortMembers,
+  listMemberImportCandidatesForOrg,
+  listMembershipRecordsByIds,
   listMatchTypeConfigsForOrg,
   promoteCohortMembers,
   recomputeMatchesForProfile,
   recomputeMatchesForOrg,
   saveMatchTypeConfig,
   updateCommentStatus,
+  updateCohort,
+  updateMembershipClerkState,
   updateMembershipStatus,
   updateMembershipRole,
   updateOrganizationSettings,
@@ -55,6 +73,7 @@ import {
   updateProfileFlags,
 } from "@/server/store";
 import { ensureClerkAdminOrganizationContext } from "@/server/clerk-sync";
+import { buildMemberImportPreview } from "@/server/member-import";
 
 async function requireAdminForAction(slug: string) {
   const viewer = await getViewerContextForAction(slug);
@@ -115,6 +134,73 @@ function membershipStatus(value: FormDataEntryValue | null): MembershipStatus {
   throw new Error("Invalid membership status.");
 }
 
+async function sendExplicitMembershipInvitation(
+  input: Parameters<typeof sendMembershipInvitation>[0],
+) {
+  const result = await sendMembershipInvitation(input);
+  if (result.kind !== "membership") {
+    return result;
+  }
+
+  const signInUrl = absoluteAppUrl(`/org/${input.org.slug}/signin`);
+  try {
+    await sendNotificationEmail({
+      to: input.user.email,
+      subject: "You’ve been invited to Wavespark",
+      html: `<p>You have been added to the Wavespark community.</p><p><a href="${signInUrl}">Sign in to continue</a>.</p>`,
+    });
+  } catch (error) {
+    await updateMembershipClerkState(input.membership.id, {
+      clerkInvitationError: `Invitation email failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`.slice(0, 1000),
+      clerkInvitationUpdatedAt: new Date().toISOString(),
+    });
+    throw error;
+  }
+  return result;
+}
+
+async function sendExplicitMembershipInvitationsBulk(
+  inputs: Parameters<typeof sendMembershipInvitationsBulk>[0],
+) {
+  const outcomes = await sendMembershipInvitationsBulk(inputs);
+  const inputsByMembershipId = new Map(
+    inputs.map((input) => [input.membership.id, input]),
+  );
+
+  for (const outcome of outcomes) {
+    if (outcome.error || outcome.result?.kind !== "membership") {
+      continue;
+    }
+    const input = inputsByMembershipId.get(outcome.membershipId);
+    if (!input) {
+      continue;
+    }
+
+    const signInUrl = absoluteAppUrl(`/org/${input.org.slug}/signin`);
+    try {
+      await sendNotificationEmail({
+        to: input.user.email,
+        subject: "You’ve been invited to Wavespark",
+        html: `<p>You have been added to the Wavespark community.</p><p><a href="${signInUrl}">Sign in to continue</a>.</p>`,
+      });
+    } catch (error) {
+      const message = `Invitation email failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`.slice(0, 1000);
+      await updateMembershipClerkState(input.membership.id, {
+        clerkInvitationError: message,
+        clerkInvitationUpdatedAt: new Date().toISOString(),
+      });
+      outcome.error = message;
+      outcome.result = undefined;
+    }
+  }
+
+  return outcomes;
+}
+
 function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: string) {
   after(async () => {
     try {
@@ -164,6 +250,375 @@ function parseCohortStudentLines(raw: string) {
   return { invalidLines, students: [...students.values()] };
 }
 
+function memberImportResult(
+  rows: MemberImportResultRow[],
+  cohortAdded = 0,
+): MemberImportResult {
+  return {
+    rows,
+    summary: {
+      invited: rows.filter((row) => row.status === "invited").length,
+      connected: rows.filter((row) => row.status === "connected").length,
+      cohortAdded,
+      skipped: rows.filter((row) => row.status === "skipped").length,
+      failed: rows.filter((row) => row.status === "failed").length,
+    },
+  };
+}
+
+async function validateImportCohort(
+  orgId: string,
+  cohortId?: string,
+) {
+  const normalizedCohortId = cohortId?.trim();
+  if (!normalizedCohortId) {
+    return undefined;
+  }
+  const record = await getCohortRecordForOrg(orgId, normalizedCohortId);
+  if (!record) {
+    throw new Error("Cohort not found.");
+  }
+  if (record.cohort.status !== "active") {
+    throw new Error("Archived cohorts cannot accept new members.");
+  }
+  return record.cohort;
+}
+
+export async function previewMemberImportAction(
+  slug: string,
+  input: MemberImportPreviewInput,
+) {
+  const { org } = await requireAdminForAction(slug);
+  await validateImportCohort(org.id, input.cohortId);
+  return buildMemberImportPreview(org, input);
+}
+
+export async function confirmMemberImportAction(
+  slug: string,
+  input: MemberImportPreviewInput,
+): Promise<MemberImportResult> {
+  const admin = await requireAdminForAction(slug);
+  const { org } = admin;
+  await validateImportCohort(org.id, input.cohortId);
+  const preview = await buildMemberImportPreview(org, input);
+  const actionableRows = preview.rows.filter(
+    (row) =>
+      row.classification === "ready" ||
+      row.classification === "retryable" ||
+      (row.cohortAction === "add" &&
+        (row.classification === "already_connected" ||
+          row.classification === "already_invited" ||
+          row.classification === "existing_member")),
+  );
+
+  if (!actionableRows.length) {
+    return memberImportResult(
+      preview.rows.map((row) => ({
+        rowNumber: row.rowNumber,
+        email: row.email,
+        name: row.name,
+        normalizedEmail: row.normalizedEmail,
+        status: "skipped",
+        membershipId: row.membershipId,
+        message: row.message,
+        retryable: false,
+      })),
+    );
+  }
+
+  const imported = await bulkImportMembersForOrg({
+    orgId: org.id,
+    cohortId: preview.cohortId,
+    members: actionableRows.map((row) => ({
+      email: row.normalizedEmail,
+      name: row.name,
+      rowNumber: row.rowNumber,
+    })),
+    status: preview.accessStatus,
+    invitedByUserId: admin.user.id,
+  });
+  const invitationInputs = imported.filter(
+    (result) => result.shouldInvite && result.classification !== "conflict",
+  );
+  const clerkContext = invitationInputs.length
+    ? await requireClerkAdminContextForAction(admin)
+    : undefined;
+  const invitationRequests = invitationInputs.map((result) => ({
+    forceNew: result.membership.clerkInvitationStatus === "failed",
+    inviterUserId: clerkContext!.userId,
+    membership: result.membership,
+    org,
+    user: result.user,
+  }));
+  const outcomes = invitationRequests.length
+    ? await sendExplicitMembershipInvitationsBulk(invitationRequests)
+    : [];
+  const outcomesByMembershipId = new Map(
+    outcomes.map((outcome) => [outcome.membershipId, outcome]),
+  );
+  const importedByEmail = new Map(
+    imported.map((result) => [result.input.email, result]),
+  );
+  const rows: MemberImportResultRow[] = preview.rows.map((row) => {
+    if (
+      row.classification === "invalid" ||
+      row.classification === "duplicate" ||
+      row.classification === "inactive_conflict"
+    ) {
+      return {
+        rowNumber: row.rowNumber,
+        email: row.email,
+        name: row.name,
+        normalizedEmail: row.normalizedEmail,
+        status: "skipped",
+        membershipId: row.membershipId,
+        message: row.message,
+        retryable: false,
+      };
+    }
+
+    const importResult = importedByEmail.get(row.normalizedEmail);
+    if (!importResult) {
+      return {
+        rowNumber: row.rowNumber,
+        email: row.email,
+        name: row.name,
+        normalizedEmail: row.normalizedEmail,
+        status: "skipped",
+        membershipId: row.membershipId,
+        message: row.message,
+        retryable: false,
+      };
+    }
+    if (importResult.classification === "conflict") {
+      return {
+        rowNumber: row.rowNumber,
+        email: row.email,
+        name: row.name,
+        normalizedEmail: row.normalizedEmail,
+        status: "skipped",
+        membershipId: importResult.membership.id,
+        message: `Member is ${importResult.conflictReason}; no changes were made.`,
+        retryable: false,
+      };
+    }
+
+    const outcome = outcomesByMembershipId.get(importResult.membership.id);
+    const cohortMessage = importResult.cohortMemberCreated
+      ? " Added to the selected cohort."
+      : "";
+    if (outcome?.error) {
+      return {
+        rowNumber: row.rowNumber,
+        email: row.email,
+        name: row.name,
+        normalizedEmail: row.normalizedEmail,
+        status: "failed",
+        membershipId: importResult.membership.id,
+        message: `${outcome.error}${cohortMessage}`,
+        retryable: true,
+      };
+    }
+    if (outcome?.result?.kind === "invitation") {
+      return {
+        rowNumber: row.rowNumber,
+        email: row.email,
+        name: row.name,
+        normalizedEmail: row.normalizedEmail,
+        status: "invited",
+        membershipId: importResult.membership.id,
+        message: `Invitation created.${cohortMessage}`,
+        retryable: false,
+      };
+    }
+    if (outcome?.result?.kind === "membership") {
+      return {
+        rowNumber: row.rowNumber,
+        email: row.email,
+        name: row.name,
+        normalizedEmail: row.normalizedEmail,
+        status: "connected",
+        membershipId: importResult.membership.id,
+        message: `Existing account connected.${cohortMessage}`,
+        retryable: false,
+      };
+    }
+    if (importResult.cohortMemberCreated) {
+      return {
+        rowNumber: row.rowNumber,
+        email: row.email,
+        name: row.name,
+        normalizedEmail: row.normalizedEmail,
+        status: "cohort_added",
+        membershipId: importResult.membership.id,
+        message: "Existing member added to the selected cohort.",
+        retryable: false,
+      };
+    }
+    return {
+      rowNumber: row.rowNumber,
+      email: row.email,
+      name: row.name,
+      normalizedEmail: row.normalizedEmail,
+      status: "skipped",
+      membershipId: importResult.membership.id,
+      message: row.message,
+      retryable: false,
+    };
+  });
+
+  revalidatePath(`/org/${slug}/admin/members`);
+  revalidatePath(`/org/${slug}/admin/cohorts`);
+  if (preview.cohortId) {
+    revalidatePath(`/org/${slug}/admin/cohorts/${preview.cohortId}`);
+  }
+  return memberImportResult(
+    rows,
+    imported.filter((result) => result.cohortMemberCreated).length,
+  );
+}
+
+export async function retryMemberInvitationsAction(
+  slug: string,
+  membershipIds: string[],
+): Promise<MemberImportResult> {
+  const admin = await requireAdminForAction(slug);
+  const ids = [...new Set(membershipIds.map(String).filter(Boolean))];
+  if (ids.length > 100) {
+    throw new Error("Retry no more than 100 invitations at a time.");
+  }
+  const records = await listMembershipRecordsByIds(ids, { orgId: admin.org.id });
+  const retryableInvitations = records.filter(
+    (record) =>
+      record.user &&
+      !record.membership.clerkMembershipId &&
+      (record.membership.clerkInvitationStatus === "failed" ||
+        record.membership.clerkInvitationStatus === "expired" ||
+        record.membership.clerkInvitationStatus === "revoked") &&
+      record.membership.status !== "rejected" &&
+      record.membership.status !== "suspended",
+  );
+  const retryableNotifications = records.filter(
+    (record) =>
+      record.user &&
+      Boolean(record.membership.clerkMembershipId) &&
+      record.membership.clerkInvitationError?.startsWith("Invitation email failed:") &&
+      record.membership.status !== "rejected" &&
+      record.membership.status !== "suspended",
+  );
+  const clerkContext = retryableInvitations.length
+    ? await requireClerkAdminContextForAction(admin)
+    : undefined;
+  const outcomes = retryableInvitations.length
+    ? await sendExplicitMembershipInvitationsBulk(
+        retryableInvitations.map((record) => ({
+          forceNew: true,
+          inviterUserId: clerkContext!.userId,
+          membership: record.membership,
+          org: admin.org,
+          user: record.user!,
+        })),
+      )
+    : [];
+  const outcomesByMembershipId = new Map(
+    outcomes.map((outcome) => [outcome.membershipId, outcome]),
+  );
+  const notificationOutcomes = new Map<
+    string,
+    { error?: string; sent: boolean }
+  >();
+  for (const record of retryableNotifications) {
+    try {
+      await sendNotificationEmail({
+        to: record.user!.email,
+        subject: "You’ve been invited to Wavespark",
+        html: `<p>You have been added to the Wavespark community.</p><p><a href="${absoluteAppUrl(`/org/${admin.org.slug}/signin`)}">Sign in to continue</a>.</p>`,
+      });
+      await updateMembershipClerkState(record.membership.id, {
+        clerkInvitationError: null,
+        clerkInvitationUpdatedAt: new Date().toISOString(),
+      });
+      notificationOutcomes.set(record.membership.id, { sent: true });
+    } catch (error) {
+      const message = `Invitation email failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`.slice(0, 1000);
+      await updateMembershipClerkState(record.membership.id, {
+        clerkInvitationError: message,
+        clerkInvitationUpdatedAt: new Date().toISOString(),
+      });
+      notificationOutcomes.set(record.membership.id, {
+        error: message,
+        sent: false,
+      });
+    }
+  }
+  const rows = records.map<MemberImportResultRow>((record, index) => {
+    const email = record.user?.email ?? "";
+    const base = {
+      rowNumber: index + 1,
+      email,
+      name: record.user?.name ?? "",
+      normalizedEmail: email.toLowerCase(),
+      membershipId: record.membership.id,
+    };
+    const notificationOutcome = notificationOutcomes.get(record.membership.id);
+    if (notificationOutcome?.error) {
+      return {
+        ...base,
+        status: "failed",
+        message: notificationOutcome.error,
+        retryable: true,
+      };
+    }
+    if (notificationOutcome?.sent) {
+      return {
+        ...base,
+        status: "connected",
+        message: "Sign-in notification sent to the connected account.",
+        retryable: false,
+      };
+    }
+    const outcome = outcomesByMembershipId.get(record.membership.id);
+    if (outcome?.error) {
+      return {
+        ...base,
+        status: "failed",
+        message: outcome.error,
+        retryable: true,
+      };
+    }
+    if (outcome?.result?.kind === "membership") {
+      return {
+        ...base,
+        status: "connected",
+        message: "Existing account connected.",
+        retryable: false,
+      };
+    }
+    if (outcome?.result?.kind === "invitation") {
+      return {
+        ...base,
+        status: "invited",
+        message: "Invitation created.",
+        retryable: false,
+      };
+    }
+    return {
+      ...base,
+      status: "skipped",
+      message: "This invitation is no longer retryable.",
+      retryable: false,
+    };
+  });
+
+  if (retryableInvitations.length || retryableNotifications.length) {
+    revalidatePath(`/org/${slug}/admin/members`);
+    revalidatePath(`/org/${slug}/admin/cohorts`);
+  }
+  return memberImportResult(rows);
+}
+
 export async function createCohortAction(slug: string, formData: FormData) {
   const { org, membership } = await requireAdminForAction(slug);
   const cohort = await createCohort({
@@ -176,6 +631,38 @@ export async function createCohortAction(slug: string, formData: FormData) {
 
   revalidatePath(`/org/${slug}/admin/cohorts`);
   redirect(`/org/${slug}/admin/cohorts/${cohort.id}?status=cohort_created`);
+}
+
+export async function updateCohortAction(
+  slug: string,
+  cohortId: string,
+  formData: FormData,
+) {
+  const { org } = await requireAdminForAction(slug);
+  const cohort = await updateCohort(org.id, cohortId, {
+    name: String(formData.get("name") ?? ""),
+    eventLabel: String(formData.get("event_label") ?? ""),
+    description: String(formData.get("description") ?? ""),
+  });
+  if (!cohort) {
+    throw new Error("Cohort not found.");
+  }
+
+  revalidatePath(`/org/${slug}/admin/cohorts`);
+  revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
+  redirect(`/org/${slug}/admin/cohorts/${cohortId}?status=cohort_updated`);
+}
+
+export async function archiveCohortAction(slug: string, cohortId: string) {
+  const { org } = await requireAdminForAction(slug);
+  const cohort = await archiveCohort(org.id, cohortId);
+  if (!cohort) {
+    throw new Error("Cohort not found.");
+  }
+
+  revalidatePath(`/org/${slug}/admin/cohorts`);
+  revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
+  redirect(`/org/${slug}/admin/cohorts?status=cohort_archived`);
 }
 
 export async function importCohortStudentsAction(
@@ -213,7 +700,9 @@ export async function importCohortStudentsAction(
     }
   }
 
-  const results = await importCohortMembers(org.id, cohortId, students);
+  const results = await importCohortMembers(org.id, cohortId, students, {
+    invitedByUserId: admin.user.id,
+  });
   const pendingInvitations = results.filter((result) => result.shouldInvite && result.user);
   let invitationFailures = 0;
   let invitationSuccesses = 0;
@@ -221,7 +710,7 @@ export async function importCohortStudentsAction(
     const batch = pendingInvitations.slice(index, index + 10);
     const settled = await Promise.allSettled(
       batch.map((result) =>
-        sendMembershipInvitation({
+        sendExplicitMembershipInvitation({
           forceNew: result.membership.clerkInvitationStatus === "failed",
           inviterUserId: clerkContext.userId,
           membership: result.membership,
@@ -260,10 +749,33 @@ export async function promoteCohortMembersAction(
     redirect(cohortDetailStatusPath(slug, cohortId, "cohort_no_selection"));
   }
 
+  const selectedRecords = await listMembershipRecordsByIds(membershipIds, {
+    orgId: org.id,
+  });
+  if (
+    selectedRecords.some(
+      ({ membership }) =>
+        membership.status === "rejected" || membership.status === "suspended",
+    )
+  ) {
+    throw new Error(
+      "Rejected or suspended members must be restored explicitly from their member details.",
+    );
+  }
+  const eligibleMembershipIds = selectedRecords
+    .filter(
+      ({ membership }) =>
+        membership.status === "pending" || membership.status === "waitlist",
+    )
+    .map(({ membership }) => membership.id);
+  if (!eligibleMembershipIds.length) {
+    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_no_selection"));
+  }
+
   const results = await promoteCohortMembers(
     org.id,
     cohortId,
-    membershipIds,
+    eligibleMembershipIds,
     String(formData.get("approval_note") ?? ""),
   );
 
@@ -312,22 +824,75 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   const email = String(formData.get("email") ?? "");
   const name = String(formData.get("name") ?? "");
   const role = membershipRole(formData.get("role") ?? "member");
+  if (role === "org_admin" && formData.get("confirm_admin_access") !== "on") {
+    throw new Error("Administrator access must be explicitly confirmed.");
+  }
   const requestedStatus = membershipStatus(formData.get("status") ?? "pending");
+  if (requestedStatus === "rejected" || requestedStatus === "suspended") {
+    throw new Error("New invitations require an active membership status.");
+  }
   const status = role === "org_admin" ? "approved" : requestedStatus;
+  const cohortId = String(formData.get("cohort_id") ?? "").trim() || undefined;
+  const requestedReturnCohortId = String(
+    formData.get("return_to_cohort_id") ?? "",
+  ).trim();
+  const returnCohortId =
+    cohortId && requestedReturnCohortId === cohortId ? cohortId : undefined;
+  const resultPath = returnCohortId
+    ? `/org/${slug}/admin/cohorts/${returnCohortId}`
+    : `/org/${slug}/admin/members`;
+  await validateImportCohort(org.id, cohortId);
+  const [existingCandidate] = await listMemberImportCandidatesForOrg(
+    org.id,
+    [email],
+    cohortId,
+  );
+  if (existingCandidate?.membership) {
+    if (
+      existingCandidate.membership.status === "rejected" ||
+      existingCandidate.membership.status === "suspended"
+    ) {
+      redirect(`${resultPath}?status=member_inactive_conflict`);
+    }
+    if (cohortId && !existingCandidate.inCohort && existingCandidate.user) {
+      await addMembershipToCohort(
+        org.id,
+        cohortId,
+        existingCandidate.membership,
+        {
+          email: existingCandidate.user.email,
+          name: existingCandidate.user.name,
+        },
+      );
+      revalidatePath(`/org/${slug}/admin/members`);
+      revalidatePath(`/org/${slug}/admin/cohorts`);
+      revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
+      redirect(`${resultPath}?status=member_added_to_cohort`);
+    }
+    redirect(`${resultPath}?status=member_existing`);
+  }
   const clerkContext = await requireClerkAdminContextForAction(admin);
 
   const { membership, user } = await createManagedAccount({
     orgId: org.id,
     email,
-    name,
+    name: existingCandidate?.user?.name ?? name,
     createPasswordCredential: false,
     role,
     status,
+    invitedByUserId: admin.user.id,
   });
+
+  if (cohortId) {
+    await addMembershipToCohort(org.id, cohortId, membership, {
+      email: user.email,
+      name: user.name,
+    });
+  }
 
   let failed = false;
   try {
-    await sendMembershipInvitation({
+    await sendExplicitMembershipInvitation({
       forceNew: membership.clerkInvitationStatus === "failed",
       inviterUserId: clerkContext.userId,
       membership,
@@ -339,9 +904,11 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   }
 
   revalidatePath(`/org/${slug}/admin/members`);
-  redirect(
-    `/org/${slug}/admin/members?status=${failed ? "member_invite_failed" : "member_invited"}`,
-  );
+  revalidatePath(`/org/${slug}/admin/cohorts`);
+  if (cohortId) {
+    revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
+  }
+  redirect(`${resultPath}?status=${failed ? "member_invite_failed" : "member_invited"}`);
 }
 
 export async function updateMembershipAction(slug: string, membershipId: string, formData: FormData) {
@@ -356,7 +923,8 @@ export async function updateMembershipAction(slug: string, membershipId: string,
     throw new Error("Unauthorized.");
   }
   const nextRole = membershipRole(formData.get("role") ?? targetMembership.role);
-  const nextStatus = membershipStatus(formData.get("status") ?? targetMembership.status);
+  const requestedStatus = membershipStatus(formData.get("status") ?? targetMembership.status);
+  const nextStatus = nextRole === "org_admin" ? "approved" : requestedStatus;
   const previousStatus = targetMembership.status;
   if (
     targetMembership.id === admin.membership.id &&
@@ -434,7 +1002,7 @@ export async function resendMembershipInvitationAction(slug: string, membershipI
   }
   let failed = false;
   try {
-    await sendMembershipInvitation({
+    await sendExplicitMembershipInvitation({
       forceNew: true,
       inviterUserId: clerkContext.userId,
       membership: record.membership,

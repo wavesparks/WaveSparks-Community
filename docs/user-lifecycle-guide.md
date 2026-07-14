@@ -46,9 +46,9 @@ Public reading does not include member interaction. Posting, commenting, followi
 Wavespark does not support public registration or shared invitation codes.
 
 1. An Admin enters your name, email, role, and initial community status.
-2. Clerk sends a personal invitation to that email address.
-3. The invitation link contains a private, expiring ticket.
-4. Open the latest invitation email. Forwarded, revoked, expired, or already-used links may not work.
+2. If that email is new to Clerk, Clerk sends a personal invitation containing a private, expiring ticket.
+3. If the email already has a Clerk account, Wavespark adds it directly and sends a sign-in notification instead.
+4. Open the latest email. Forwarded, revoked, expired, or already-used Clerk invitation links may not work.
 
 ![Invitation-only account page](assets/guides/user-invitation-required.png)
 
