@@ -670,21 +670,13 @@ export async function getKnowledgePostViewsForOrg(
   org: Organization,
   options: KnowledgeViewOptions,
 ) {
-  const [feedPosts, savedPostsById] = await Promise.all([
-    getFeedViewsForOrg(org, {
-      spaceId: options.spaceId,
-      viewerMembershipId: options.viewerMembershipId,
-      viewerProfileId: options.viewerProfileId,
-      filters: { q: options.q },
-      includeMatchedRecommendationSignals: false,
-    }),
-    options.spaceId
-      ? listSavedPostIdsForMembershipInSpace(
-          options.spaceId,
-          options.viewerMembershipId,
-        )
-      : listSavedPostIdsForMembership(options.viewerMembershipId),
-  ]);
+  const feedPosts = await getFeedViewsForOrg(org, {
+    spaceId: options.spaceId,
+    viewerMembershipId: options.viewerMembershipId,
+    viewerProfileId: options.viewerProfileId,
+    filters: { q: options.q },
+    includeMatchedRecommendationSignals: false,
+  });
 
   const posts = feedPosts
     .filter((post) => (options.mode === "saved" ? post.isSaved : Boolean(knowledgeReasonForPost(post))))
@@ -701,7 +693,7 @@ export async function getKnowledgePostViewsForOrg(
       ),
     )
     .map((post) => {
-      const savedAt = savedPostsById.get(post.id)?.createdAt;
+      const { savedAt } = post;
       return {
         ...post,
         knowledgeReason:
@@ -881,6 +873,7 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
       if (matchedIds.has(membership.id)) {
         recommendationReasons.push("Matched");
       }
+      const savedPost = savedPostsById.get(post.id);
 
       const view: FeedPostView = {
         id: post.id,
@@ -896,7 +889,8 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
         author: toLimitedProfileCard(profile, membership),
         commentCount: visibleCommentCountByPostId.get(post.id) ?? 0,
         isFollowingAuthor: followedIds.has(membership.id),
-        isSaved: savedPostsById.has(post.id),
+        isSaved: Boolean(savedPost),
+        ...(savedPost ? { savedAt: savedPost.createdAt } : {}),
         isRecommended: recommendationReasons.length > 0,
         recommendationReasons,
       };
