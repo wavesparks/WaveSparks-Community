@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:e2e": "E2E_AUTH_MODE=local playwright test",
     "test:e2e:clerk": "E2E_AUTH_MODE=clerk playwright test",
+    "test:e2e:preview": "playwright test --config=playwright.preview.config.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
@@ -21,7 +22,8 @@
     "clerk:reconcile": "tsx scripts/reconcile-clerk.ts",
     "env:audit": "tsx scripts/audit-environments.ts",
     "cron:matches": "tsx scripts/recompute-matches.ts",
-    "readiness:prod": "tsx scripts/check-production-readiness.ts"
+    "readiness:prod": "tsx scripts/check-production-readiness.ts",
+    "qa:prelaunch": "tsx scripts/prelaunch-qa.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.5.3",
