@@ -45,7 +45,7 @@ export async function POST(request: Request) {
     name: body.name?.trim() || email,
     orgId: body.orgId?.trim() || "org_e2e_wavespark",
     orgRole: body.orgRole?.trim() || "org:member",
-    orgSlug: body.orgSlug?.trim() || "wavespark",
+    orgSlug: body.orgSlug?.trim() || "wavesparks",
   });
   const response = NextResponse.json({ ok: true });
   response.cookies.set(e2eLocalAuthCookieName, token, {

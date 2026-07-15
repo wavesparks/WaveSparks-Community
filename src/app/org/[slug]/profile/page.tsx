@@ -23,7 +23,7 @@ export default async function ProfilePage({
   const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
-    requireApproved: true,
+    requireConnected: true,
     requireCompleteProfile: true,
   });
 
@@ -65,6 +65,15 @@ export default async function ProfilePage({
             Edit profile
           </LinkButton>
         </div>
+
+        <Card className="border-[var(--cyan)]/30 bg-[var(--cyan-soft)]">
+          <p className="font-semibold text-[var(--ink)]">One profile across all your spaces</p>
+          <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+            Changes to your name, bio, experience, and contact settings apply in Main Community and
+            every Event Space you can access. Your goals, offers, and AI matching preference are set
+            separately inside each space.
+          </p>
+        </Card>
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="space-y-6">
@@ -122,7 +131,7 @@ export default async function ProfilePage({
                 {formatPercent(viewer.profile.profileCompletionPercent)}
               </p>
               <p className="text-sm text-[var(--ink-soft)]">
-                Matching visibility: {viewer.profile.profileVisibleInMatching ? "on" : "off"}
+                AI matching is configured separately inside each Space.
               </p>
             </Card>
             <Card className="space-y-4">

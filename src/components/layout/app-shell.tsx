@@ -1,12 +1,8 @@
 import {
   Bell,
-  BookOpen,
-  Compass,
-  LayoutDashboard,
+  LayoutGrid,
   Shield,
-  Sparkles,
   UserCircle2,
-  UsersRound,
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import type { CSSProperties } from "react";
@@ -21,19 +17,10 @@ import { isClerkConfigured } from "@/lib/env";
 import { wavesparksBrand } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
-const memberLinks = [
-  { href: "feed", label: "Feed", icon: Compass },
-  { href: "people", label: "People", icon: UsersRound },
-  { href: "knowledge", label: "Knowledge", icon: BookOpen },
-  { href: "matches", label: "Matches", icon: Sparkles },
-  { href: "opportunities", label: "Opportunities", icon: LayoutDashboard },
-  { href: "requests", label: "Requests", icon: Bell },
-  { href: "profile", label: "My Profile", icon: UserCircle2 },
-];
-
 const adminLinks = [
   { href: "admin", label: "Overview" },
   { href: "admin/members", label: "Members" },
+  { href: "admin/spaces", label: "Spaces" },
   { href: "admin/profiles", label: "Profiles" },
   { href: "admin/posts", label: "Posts" },
   { href: "admin/requests", label: "Requests" },
@@ -51,9 +38,13 @@ export function AppShell({
   currentPath: string;
   children: React.ReactNode;
 }) {
-  const visibleMemberLinks = viewer.profile?.onboardingComplete
-    ? memberLinks
-    : [{ href: "onboarding", label: "Complete profile", icon: UserCircle2 }];
+  const accountLinks = [
+    { href: "", label: "My Spaces", icon: LayoutGrid },
+    { href: "requests", label: "Inbox", icon: Bell },
+    viewer.profile?.onboardingComplete
+      ? { href: "profile", label: "My Profile", icon: UserCircle2 }
+      : { href: "onboarding", label: "Complete profile", icon: UserCircle2 },
+  ];
   const theme = wavesparksBrand.theme;
   const clerkConfigured = isClerkConfigured();
 
@@ -94,10 +85,10 @@ export function AppShell({
             </div>
             <nav
               className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1"
-              aria-label="Member navigation"
+              aria-label="Account navigation"
             >
-              {visibleMemberLinks.map((link) => {
-                const href = `/org/${viewer.org.slug}/${link.href}`;
+              {accountLinks.map((link) => {
+                const href = `/org/${viewer.org.slug}${link.href ? `/${link.href}` : ""}`;
                 const active = currentPath === href;
                 const Icon = link.icon;
                 return (
@@ -130,8 +121,9 @@ export function AppShell({
                     const href = `/org/${viewer.org.slug}/${link.href}`;
                     const active =
                       currentPath === href ||
-                      (link.href === "admin/members" &&
-                        currentPath.startsWith(`/org/${viewer.org.slug}/admin/cohorts`));
+                      (link.href === "admin/spaces" &&
+                        (currentPath.startsWith(`${href}/`) ||
+                          currentPath.startsWith(`/org/${viewer.org.slug}/admin/cohorts`)));
                     return (
                       <NavLink
                         active={active}
@@ -164,7 +156,7 @@ export function AppShell({
                     {viewer.profile?.preferredName ?? viewer.user.name}
                   </p>
                   <p className="text-xs capitalize text-[var(--cyan-soft)]">
-                    {viewer.membership.status}
+                    {viewer.membership.accountStatus}
                   </p>
                 </div>
               </div>

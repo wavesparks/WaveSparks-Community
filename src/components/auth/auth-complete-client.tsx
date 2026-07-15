@@ -82,7 +82,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
 
           if (response.status === 403) {
             setError(
-              "This Clerk account does not have an active Wavespark invitation. Sign out and use the email address that was invited.",
+              "This Clerk account does not have an active Wavesparks invitation. Sign out and use the email address that was invited.",
             );
             return;
           }
@@ -97,7 +97,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
             state?: "ready" | "pending" | "inactive";
             target?: string;
           };
-          const target = payload.target ?? `/org/${slug}/feed`;
+          const target = payload.target ?? `/org/${slug}`;
           if (
             payload.clerkOrgId &&
             payload.state !== "inactive" &&
@@ -140,7 +140,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
           title="Completing your workspace handoff"
           description={
             error ??
-            "Keep this tab open while Wavespark connects your Clerk session to the community workspace."
+            "Keep this tab open while Wavesparks connects your Clerk session to the community workspace."
           }
         />
         {error ? (

@@ -58,7 +58,7 @@ export default async function AdminProfilesPage({
   const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
-    requireApproved: true,
+    requireConnected: true,
     requireAdmin: true,
   });
 

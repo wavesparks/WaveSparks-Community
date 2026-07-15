@@ -16,11 +16,11 @@ export default function ChooseOrganizationTaskPage() {
             title="Clerk is not configured"
             description="Organization selection is available after Clerk keys are configured."
           />
-          <LinkButton href="/org/wavespark/feed">Back to forum</LinkButton>
+          <LinkButton href="/org/wavesparks">Back to My Spaces</LinkButton>
         </Card>
       </main>
     );
   }
 
-  return <TaskChooseOrganization redirectUrlComplete="/org/wavespark/auth/complete" />;
+  return <TaskChooseOrganization redirectUrlComplete="/org/wavesparks/auth/complete" />;
 }

@@ -9,6 +9,9 @@ import { LOCAL_EMBEDDING_MODEL } from "@/server/embeddings";
 import { buildEmbedding, buildMatchingEmbeddingTexts } from "@/server/matching";
 import {
   createManagedAccount,
+  grantSpaceMembership,
+  listSpacesForOrg,
+  updateMembershipAccountStatus,
   upsertProfile,
 } from "@/server/store";
 
@@ -38,7 +41,7 @@ export const previewAccountSpecs = [
     role: "org_admin",
     affiliationType: "current participant",
     archetypes: ["operator", "mentor"],
-    programName: "Wavespark Preview",
+    programName: "Wavesparks Preview",
     cohortNameOrYear: "Admin",
     profileTemplateId: "pro_avery",
     headline: "Preview admin with full member and admin access",
@@ -52,7 +55,7 @@ export const previewAccountSpecs = [
     role: "member",
     affiliationType: "mentor",
     archetypes: ["mentor"],
-    programName: "Wavespark Preview",
+    programName: "Wavesparks Preview",
     cohortNameOrYear: "Mentor",
     profileTemplateId: "pro_marcus",
     headline: "Preview mentor with matching and intro access",
@@ -66,7 +69,7 @@ export const previewAccountSpecs = [
     role: "member",
     affiliationType: "current participant",
     archetypes: ["founder", "cofounder_seeker", "mentee"],
-    programName: "Wavespark Preview",
+    programName: "Wavesparks Preview",
     cohortNameOrYear: "Founder",
     profileTemplateId: "pro_jules",
     headline: "Preview founder building and searching for collaborators",
@@ -97,13 +100,13 @@ function buildPreviewProfile(spec: PreviewAccountSpec, membershipId: string) {
     headline: spec.headline,
     shortBio: spec.shortBio,
     longBio: `${spec.shortBio} This profile is reserved for product preview and QA validation.`,
-    schoolOrCompany: "Wavespark",
+    schoolOrCompany: "Wavesparks",
     currentStatus: spec.kind,
-    startupName: spec.kind === "founder" ? "Preview Startup" : "Wavespark",
+    startupName: spec.kind === "founder" ? "Preview Startup" : "Wavesparks",
     startupOneLiner:
       spec.kind === "founder"
         ? "A preview startup used to validate the founder journey."
-        : "Preview account used to validate Wavespark role permissions.",
+        : "Preview account used to validate Wavesparks role permissions.",
     startupDescription:
       spec.kind === "founder"
         ? "A test founder profile with complete onboarding, posting, matching, and intro access."
@@ -152,9 +155,13 @@ export async function provisionPreviewAccounts({
   orgId?: string;
 }) {
   const provisioned = [];
+  const mainSpace = (await listSpacesForOrg(orgId)).find((space) => space.kind === "main");
+  if (!mainSpace) {
+    throw new Error("Main Community Space is not configured.");
+  }
 
   for (const spec of previewAccountSpecs) {
-    const { user, membership } = await createManagedAccount({
+    const { user, membership: invitedMembership } = await createManagedAccount({
       orgId,
       email: spec.email,
       name: spec.name,
@@ -166,6 +173,18 @@ export async function provisionPreviewAccounts({
       programName: spec.programName,
       cohortNameOrYear: spec.cohortNameOrYear,
       approvalNote: "Provisioned preview test account.",
+    });
+    const membership =
+      (await updateMembershipAccountStatus(invitedMembership.id, "connected", {
+        existingMembership: invitedMembership,
+      })) ?? invitedMembership;
+    await grantSpaceMembership({
+      orgId,
+      spaceId: mainSpace.id,
+      membershipId: membership.id,
+      accessStatus: "active",
+      joinedVia: "direct",
+      decisionNote: "Explicit Main Community access for product preview.",
     });
     const profile = await upsertProfile(
       buildPreviewProfile(spec, membership.id),

@@ -9,13 +9,22 @@ import { nanoid } from "nanoid";
 import { getViewerContextForAction } from "@/lib/auth";
 import { getE2ELocalClerkOrganizationContext } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
-import type { MembershipRole, MembershipStatus } from "@/lib/domain";
 import type {
-  MemberImportPreviewInput,
+  AccountStatus,
+  MembershipRole,
+  SpaceAccessStatus,
+  SpaceLifecycle,
+} from "@/lib/domain";
+import { requireSpaceAccessForAction } from "@/lib/space-auth";
+import type {
+  MemberImportPreviewRequest,
   MemberImportResult,
   MemberImportResultRow,
 } from "@/lib/member-import";
-import { getPostCommentRevalidationPaths } from "@/lib/post-action-routing";
+import {
+  getPostCommentRevalidationPaths,
+  getSpacePostCommentRevalidationPaths,
+} from "@/lib/post-action-routing";
 import { absoluteAppUrl } from "@/lib/urls";
 import {
   enqueueAnalyticsEvent,
@@ -42,31 +51,37 @@ import {
   sendNotificationEmail,
 } from "@/server/notifications";
 import {
-  addMembershipToCohort,
+  addMembershipsToMainCommunity,
   archiveCohort,
+  archiveEventSpace,
   bulkImportMembersForOrg,
   createCohort,
+  createEventSpace,
   createManagedAccount,
-  createIntroRequest,
-  getCohortRecordForOrg,
+  createIntroRequestInSpace,
   getCommentRecordById,
   getMembershipRecordById,
   getPostById,
-  getProfileByMembershipId,
+  getSpaceById,
   getProfileRecordById,
-  getUserById,
   importCohortMembers,
+  grantSpaceMembership,
   listMemberImportCandidatesForOrg,
   listMembershipRecordsByIds,
+  listSpaceMembershipRecordsByMembershipIds,
+  listSpacesForOrg,
   listMatchTypeConfigsForOrg,
-  promoteCohortMembers,
   recomputeMatchesForProfile,
   recomputeMatchesForOrg,
+  recomputeMatchesForSpace,
   saveMatchTypeConfig,
+  restoreEventSpace,
+  setSpaceMembershipAccessStatus,
   updateCommentStatus,
   updateCohort,
+  updateEventSpace,
+  updateMembershipAccountStatus,
   updateMembershipClerkState,
-  updateMembershipStatus,
   updateMembershipRole,
   updateOrganizationSettings,
   updatePostModeration,
@@ -121,17 +136,36 @@ function membershipRole(value: FormDataEntryValue | null): MembershipRole {
   throw new Error("Invalid membership role.");
 }
 
-function membershipStatus(value: FormDataEntryValue | null): MembershipStatus {
+function importSpaceAccessStatus(
+  value: FormDataEntryValue | null,
+): Extract<SpaceAccessStatus, "active" | "waitlist"> {
+  if (value === "active" || value === "waitlist") return value;
+  throw new Error("Invalid Space access selection.");
+}
+
+function spaceAccessStatus(value: FormDataEntryValue | null): SpaceAccessStatus {
   if (
-    value === "pending" ||
+    value === "active" ||
     value === "waitlist" ||
-    value === "approved" ||
     value === "rejected" ||
-    value === "suspended"
+    value === "suspended" ||
+    value === "removed"
   ) {
     return value;
   }
-  throw new Error("Invalid membership status.");
+  throw new Error("Invalid Space access status.");
+}
+
+function accountStatus(value: FormDataEntryValue | null): AccountStatus {
+  if (
+    value === "invited" ||
+    value === "connected" ||
+    value === "suspended" ||
+    value === "deprovisioned"
+  ) {
+    return value;
+  }
+  throw new Error("Invalid account status.");
 }
 
 async function sendExplicitMembershipInvitation(
@@ -146,8 +180,8 @@ async function sendExplicitMembershipInvitation(
   try {
     await sendNotificationEmail({
       to: input.user.email,
-      subject: "You’ve been invited to Wavespark",
-      html: `<p>You have been added to the Wavespark community.</p><p><a href="${signInUrl}">Sign in to continue</a>.</p>`,
+      subject: "You’ve been invited to Wavesparks",
+      html: `<p>You have been added to the Wavesparks community.</p><p><a href="${signInUrl}">Sign in to continue</a>.</p>`,
     });
   } catch (error) {
     await updateMembershipClerkState(input.membership.id, {
@@ -182,8 +216,8 @@ async function sendExplicitMembershipInvitationsBulk(
     try {
       await sendNotificationEmail({
         to: input.user.email,
-        subject: "You’ve been invited to Wavespark",
-        html: `<p>You have been added to the Wavespark community.</p><p><a href="${signInUrl}">Sign in to continue</a>.</p>`,
+        subject: "You’ve been invited to Wavesparks",
+        html: `<p>You have been added to the Wavesparks community.</p><p><a href="${signInUrl}">Sign in to continue</a>.</p>`,
       });
     } catch (error) {
       const message = `Invitation email failed: ${
@@ -209,6 +243,17 @@ function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: st
       revalidatePath(`/org/${slug}/admin/matches`);
     } catch (error) {
       console.error("[wavesparks] profile match recompute failed", profileId, error);
+    }
+  });
+}
+
+function enqueueSpaceMatchRecompute(slug: string, spaceId: string) {
+  after(async () => {
+    try {
+      await recomputeMatchesForSpace(spaceId);
+      revalidatePath(`/org/${slug}/admin/spaces/${spaceId}`);
+    } catch (error) {
+      console.error("[wavesparks] Space match recompute failed", spaceId, error);
     }
   });
 }
@@ -252,60 +297,41 @@ function parseCohortStudentLines(raw: string) {
 
 function memberImportResult(
   rows: MemberImportResultRow[],
-  cohortAdded = 0,
+  spaceAdded = 0,
 ): MemberImportResult {
+  const summary = {
+    invited: rows.filter((row) => row.status === "invited").length,
+    connected: rows.filter((row) => row.status === "connected").length,
+    cohortAdded: spaceAdded,
+    skipped: rows.filter((row) => row.status === "skipped").length,
+    failed: rows.filter((row) => row.status === "failed").length,
+  };
   return {
     rows,
-    summary: {
-      invited: rows.filter((row) => row.status === "invited").length,
-      connected: rows.filter((row) => row.status === "connected").length,
-      cohortAdded,
-      skipped: rows.filter((row) => row.status === "skipped").length,
-      failed: rows.filter((row) => row.status === "failed").length,
-    },
+    summary: { ...summary, spaceAdded },
   };
-}
-
-async function validateImportCohort(
-  orgId: string,
-  cohortId?: string,
-) {
-  const normalizedCohortId = cohortId?.trim();
-  if (!normalizedCohortId) {
-    return undefined;
-  }
-  const record = await getCohortRecordForOrg(orgId, normalizedCohortId);
-  if (!record) {
-    throw new Error("Cohort not found.");
-  }
-  if (record.cohort.status !== "active") {
-    throw new Error("Archived cohorts cannot accept new members.");
-  }
-  return record.cohort;
 }
 
 export async function previewMemberImportAction(
   slug: string,
-  input: MemberImportPreviewInput,
+  input: MemberImportPreviewRequest,
 ) {
   const { org } = await requireAdminForAction(slug);
-  await validateImportCohort(org.id, input.cohortId);
   return buildMemberImportPreview(org, input);
 }
 
 export async function confirmMemberImportAction(
   slug: string,
-  input: MemberImportPreviewInput,
+  input: MemberImportPreviewRequest,
 ): Promise<MemberImportResult> {
   const admin = await requireAdminForAction(slug);
   const { org } = admin;
-  await validateImportCohort(org.id, input.cohortId);
   const preview = await buildMemberImportPreview(org, input);
   const actionableRows = preview.rows.filter(
     (row) =>
       row.classification === "ready" ||
       row.classification === "retryable" ||
-      (row.cohortAction === "add" &&
+      ((row.spaceAction === "grant" || row.spaceAction === "activate_waitlist") &&
         (row.classification === "already_connected" ||
           row.classification === "already_invited" ||
           row.classification === "existing_member")),
@@ -326,15 +352,16 @@ export async function confirmMemberImportAction(
     );
   }
 
+  const importMembers = actionableRows.map((row) => ({
+    email: row.normalizedEmail,
+    name: row.name,
+    rowNumber: row.rowNumber,
+  }));
   const imported = await bulkImportMembersForOrg({
     orgId: org.id,
-    cohortId: preview.cohortId,
-    members: actionableRows.map((row) => ({
-      email: row.normalizedEmail,
-      name: row.name,
-      rowNumber: row.rowNumber,
-    })),
-    status: preview.accessStatus,
+    destinationSpaceId: preview.destinationSpaceId,
+    members: importMembers,
+    accessStatus: preview.accessStatus,
     invitedByUserId: admin.user.id,
   });
   const invitationInputs = imported.filter(
@@ -404,8 +431,10 @@ export async function confirmMemberImportAction(
     }
 
     const outcome = outcomesByMembershipId.get(importResult.membership.id);
-    const cohortMessage = importResult.cohortMemberCreated
-      ? " Added to the selected cohort."
+    const spaceChanged =
+      importResult.spaceMembershipCreated || importResult.spaceMembershipUpdated;
+    const spaceMessage = spaceChanged
+      ? ` Access to ${preview.destinationSpaceName} granted.`
       : "";
     if (outcome?.error) {
       return {
@@ -415,7 +444,7 @@ export async function confirmMemberImportAction(
         normalizedEmail: row.normalizedEmail,
         status: "failed",
         membershipId: importResult.membership.id,
-        message: `${outcome.error}${cohortMessage}`,
+        message: `${outcome.error}${spaceMessage}`,
         retryable: true,
       };
     }
@@ -427,7 +456,7 @@ export async function confirmMemberImportAction(
         normalizedEmail: row.normalizedEmail,
         status: "invited",
         membershipId: importResult.membership.id,
-        message: `Invitation created.${cohortMessage}`,
+        message: `Invitation created.${spaceMessage}`,
         retryable: false,
       };
     }
@@ -439,19 +468,19 @@ export async function confirmMemberImportAction(
         normalizedEmail: row.normalizedEmail,
         status: "connected",
         membershipId: importResult.membership.id,
-        message: `Existing account connected.${cohortMessage}`,
+        message: `Existing account connected.${spaceMessage}`,
         retryable: false,
       };
     }
-    if (importResult.cohortMemberCreated) {
+    if (spaceChanged) {
       return {
         rowNumber: row.rowNumber,
         email: row.email,
         name: row.name,
         normalizedEmail: row.normalizedEmail,
-        status: "cohort_added",
+        status: "space_added",
         membershipId: importResult.membership.id,
-        message: "Existing member added to the selected cohort.",
+        message: `Existing account granted access to ${preview.destinationSpaceName}.`,
         retryable: false,
       };
     }
@@ -469,12 +498,15 @@ export async function confirmMemberImportAction(
 
   revalidatePath(`/org/${slug}/admin/members`);
   revalidatePath(`/org/${slug}/admin/cohorts`);
-  if (preview.cohortId) {
-    revalidatePath(`/org/${slug}/admin/cohorts/${preview.cohortId}`);
-  }
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  revalidatePath(`/org/${slug}/admin/spaces/${preview.destinationSpaceId}`);
+  if (preview.cohortId) revalidatePath(`/org/${slug}/admin/cohorts/${preview.cohortId}`);
+  enqueueSpaceMatchRecompute(slug, preview.destinationSpaceId);
   return memberImportResult(
     rows,
-    imported.filter((result) => result.cohortMemberCreated).length,
+    imported.filter(
+      (result) => result.spaceMembershipCreated || result.spaceMembershipUpdated,
+    ).length,
   );
 }
 
@@ -494,17 +526,17 @@ export async function retryMemberInvitationsAction(
       !record.membership.clerkMembershipId &&
       (record.membership.clerkInvitationStatus === "failed" ||
         record.membership.clerkInvitationStatus === "expired" ||
-        record.membership.clerkInvitationStatus === "revoked") &&
-      record.membership.status !== "rejected" &&
-      record.membership.status !== "suspended",
+      record.membership.clerkInvitationStatus === "revoked") &&
+      record.membership.accountStatus !== "suspended" &&
+      record.membership.accountStatus !== "deprovisioned",
   );
   const retryableNotifications = records.filter(
     (record) =>
       record.user &&
       Boolean(record.membership.clerkMembershipId) &&
       record.membership.clerkInvitationError?.startsWith("Invitation email failed:") &&
-      record.membership.status !== "rejected" &&
-      record.membership.status !== "suspended",
+      record.membership.accountStatus !== "suspended" &&
+      record.membership.accountStatus !== "deprovisioned",
   );
   const clerkContext = retryableInvitations.length
     ? await requireClerkAdminContextForAction(admin)
@@ -531,8 +563,8 @@ export async function retryMemberInvitationsAction(
     try {
       await sendNotificationEmail({
         to: record.user!.email,
-        subject: "You’ve been invited to Wavespark",
-        html: `<p>You have been added to the Wavespark community.</p><p><a href="${absoluteAppUrl(`/org/${admin.org.slug}/signin`)}">Sign in to continue</a>.</p>`,
+        subject: "You’ve been invited to Wavesparks",
+        html: `<p>You have been added to the Wavesparks community.</p><p><a href="${absoluteAppUrl(`/org/${admin.org.slug}/signin`)}">Sign in to continue</a>.</p>`,
       });
       await updateMembershipClerkState(record.membership.id, {
         clerkInvitationError: null,
@@ -617,6 +649,181 @@ export async function retryMemberInvitationsAction(
     revalidatePath(`/org/${slug}/admin/cohorts`);
   }
   return memberImportResult(rows);
+}
+
+function eventLifecycle(value: FormDataEntryValue | null) {
+  if (
+    value === "draft" ||
+    value === "upcoming" ||
+    value === "active" ||
+    value === "ended"
+  ) {
+    return value satisfies Extract<
+      SpaceLifecycle,
+      "draft" | "upcoming" | "active" | "ended"
+    >;
+  }
+  throw new Error("Invalid Event lifecycle.");
+}
+
+function optionalFormValue(value: FormDataEntryValue | null) {
+  const normalized = String(value ?? "").trim();
+  return normalized || undefined;
+}
+
+export async function createEventSpaceAction(slug: string, formData: FormData) {
+  const { org, membership } = await requireAdminForAction(slug);
+  const space = await createEventSpace({
+    orgId: org.id,
+    name: String(formData.get("name") ?? ""),
+    description: String(formData.get("description") ?? ""),
+    eventLabel: String(formData.get("event_label") ?? ""),
+    startsAt: optionalFormValue(formData.get("starts_at")),
+    endsAt: optionalFormValue(formData.get("ends_at")),
+    lifecycle: eventLifecycle(formData.get("lifecycle") ?? "draft"),
+    matchingEnabled: formData.get("matching_enabled") === "on",
+    createdByMembershipId: membership.id,
+  });
+
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  redirect(`/org/${slug}/admin/spaces/${space.id}?status=event_created`);
+}
+
+export async function updateEventSpaceAction(
+  slug: string,
+  spaceId: string,
+  formData: FormData,
+) {
+  const { org } = await requireAdminForAction(slug);
+  const space = await updateEventSpace(org.id, spaceId, {
+    name: String(formData.get("name") ?? ""),
+    description: String(formData.get("description") ?? ""),
+    eventLabel: String(formData.get("event_label") ?? ""),
+    startsAt: optionalFormValue(formData.get("starts_at")) ?? null,
+    endsAt: optionalFormValue(formData.get("ends_at")) ?? null,
+    lifecycle: eventLifecycle(formData.get("lifecycle")),
+    matchingEnabled: formData.get("matching_enabled") === "on",
+  });
+  if (!space) throw new Error("Event not found.");
+
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  revalidatePath(`/org/${slug}/admin/spaces/${spaceId}`);
+  enqueueSpaceMatchRecompute(slug, spaceId);
+  redirect(`/org/${slug}/admin/spaces/${spaceId}?status=event_updated`);
+}
+
+export async function archiveEventSpaceAction(slug: string, spaceId: string) {
+  const { org } = await requireAdminForAction(slug);
+  const space = await archiveEventSpace(org.id, spaceId);
+  if (!space) throw new Error("Event not found.");
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  revalidatePath(`/org/${slug}/admin/spaces/${spaceId}`);
+  enqueueSpaceMatchRecompute(slug, spaceId);
+  redirect(`/org/${slug}/admin/spaces?status=event_archived`);
+}
+
+export async function restoreEventSpaceAction(slug: string, spaceId: string) {
+  const { org } = await requireAdminForAction(slug);
+  const space = await restoreEventSpace(org.id, spaceId);
+  if (!space) throw new Error("Event not found.");
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  revalidatePath(`/org/${slug}/admin/spaces/${spaceId}`);
+  enqueueSpaceMatchRecompute(slug, spaceId);
+  redirect(`/org/${slug}/admin/spaces/${spaceId}?status=event_restored`);
+}
+
+export async function addMembersToMainCommunityAction(
+  slug: string,
+  sourceSpaceId: string,
+  membershipIds: string[],
+  decisionNote = "",
+) {
+  const admin = await requireAdminForAction(slug);
+  const sourceSpace = await getSpaceById(sourceSpaceId);
+  if (
+    !sourceSpace ||
+    sourceSpace.orgId !== admin.org.id ||
+    sourceSpace.kind !== "event"
+  ) {
+    throw new Error("Source Event not found.");
+  }
+  const spaces = await listSpacesForOrg(admin.org.id);
+  const mainSpace = spaces.find((space) => space.kind === "main");
+  if (!mainSpace) throw new Error("Main Community is not configured.");
+
+  const results = await addMembershipsToMainCommunity({
+    orgId: admin.org.id,
+    sourceSpaceId,
+    membershipIds,
+    actorMembershipId: admin.membership.id,
+    decisionNote,
+  });
+  const records = await listMembershipRecordsByIds(
+    results.map((result) => result.membershipId),
+    { orgId: admin.org.id },
+  );
+  const recordsById = new Map(
+    records.map((record) => [record.membership.id, record]),
+  );
+  const mainUrl = `/org/${slug}/s/${mainSpace.slug}`;
+  for (const result of results) {
+    if (result.status !== "added") continue;
+    const record = recordsById.get(result.membershipId);
+    if (!record) continue;
+    enqueueNotificationWrite(
+      buildNotification(
+        `ntf_${nanoid(8)}`,
+        admin.org.id,
+        result.membershipId,
+        "membership_approved",
+        "You’ve been added to Main Community",
+        `Your ${sourceSpace.name} access is unchanged. Main Community is now available as a separate Space.`,
+        mainUrl,
+        mainSpace.id,
+      ),
+    );
+    if (record.user?.email) {
+      enqueueNotificationEmail({
+        to: record.user.email,
+        subject: "You’ve been added to Main Community",
+        html: `<p>You now have access to Main Community.</p><p>Your ${sourceSpace.name} access is unchanged.</p><p><a href="${absoluteAppUrl(mainUrl)}">Open Main Community</a></p>`,
+        membershipId: result.membershipId,
+        spaceId: mainSpace.id,
+        allowInvited: true,
+      });
+    }
+  }
+
+  revalidatePath(`/org/${slug}/admin/members`);
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  revalidatePath(`/org/${slug}/admin/spaces/${sourceSpaceId}`);
+  revalidatePath(`/org/${slug}/admin/spaces/${mainSpace.id}`);
+  revalidatePath(`/org/${slug}/requests`);
+  revalidatePath(`/org/${slug}/s/${mainSpace.slug}/requests`);
+  if (results.some((result) => result.status === "added")) {
+    enqueueSpaceMatchRecompute(slug, mainSpace.id);
+  }
+
+  const rows = results.map((result) => {
+    const record = recordsById.get(result.membershipId);
+    return {
+      ...result,
+      email: record?.user?.email ?? "Email unavailable",
+      name:
+        record?.profile?.preferredName ||
+        record?.user?.name ||
+        "Unnamed member",
+    };
+  });
+  return {
+    rows,
+    summary: {
+      added: rows.filter((row) => row.status === "added").length,
+      alreadyInMain: rows.filter((row) => row.status === "already_in_main").length,
+      accountConflict: rows.filter((row) => row.status === "account_conflict").length,
+      failed: rows.filter((row) => row.status === "failed").length,
+    },
+  };
 }
 
 export async function createCohortAction(slug: string, formData: FormData) {
@@ -739,83 +946,12 @@ export async function promoteCohortMembersAction(
   cohortId: string,
   formData: FormData,
 ) {
-  const { org } = await requireAdminForAction(slug);
-  const membershipIds = formData
-    .getAll("membership_id")
-    .map((value) => String(value))
-    .filter(Boolean);
-
-  if (!membershipIds.length) {
-    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_no_selection"));
-  }
-
-  const selectedRecords = await listMembershipRecordsByIds(membershipIds, {
-    orgId: org.id,
-  });
-  if (
-    selectedRecords.some(
-      ({ membership }) =>
-        membership.status === "rejected" || membership.status === "suspended",
-    )
-  ) {
-    throw new Error(
-      "Rejected or suspended members must be restored explicitly from their member details.",
-    );
-  }
-  const eligibleMembershipIds = selectedRecords
-    .filter(
-      ({ membership }) =>
-        membership.status === "pending" || membership.status === "waitlist",
-    )
-    .map(({ membership }) => membership.id);
-  if (!eligibleMembershipIds.length) {
-    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_no_selection"));
-  }
-
-  const results = await promoteCohortMembers(
-    org.id,
-    cohortId,
-    eligibleMembershipIds,
-    String(formData.get("approval_note") ?? ""),
+  await requireAdminForAction(slug);
+  void cohortId;
+  void formData;
+  throw new Error(
+    "Legacy Cohort promotion is disabled. Use Add to Main Community from the Event Space.",
   );
-
-  for (const result of results) {
-    if (result.statusChanged) {
-      enqueueNotificationWrite(
-        buildNotification(
-          `ntf_${nanoid(8)}`,
-          org.id,
-          result.membership.id,
-          "membership_approved",
-          "You’re approved for Wavespark",
-          "Your membership request was approved. You can now access the feed and matches.",
-          `/org/${slug}/feed`,
-        ),
-      );
-
-      const emailRecipient =
-        result.profile?.emailForIntro.trim() ||
-        (await getUserById(result.membership.userId))?.email;
-      if (emailRecipient) {
-        const feedUrl = absoluteAppUrl(`/org/${slug}/feed`);
-        enqueueNotificationEmail({
-          to: emailRecipient,
-          subject: "Your Wavespark membership is approved",
-          html: `<p>You’re approved for Wavespark.</p><p>Visit <a href="${feedUrl}">the community feed</a> to get started.</p>`,
-        });
-      }
-    }
-
-    if (result.profile) {
-      enqueueProfileMatchRecompute(slug, org.id, result.profile.id);
-    }
-  }
-
-  revalidatePath(`/org/${slug}/admin/cohorts`);
-  revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
-  revalidatePath(`/org/${slug}/admin/members`);
-  revalidatePath(`/org/${slug}/pending`);
-  redirect(cohortDetailStatusPath(slug, cohortId, "cohort_members_promoted"));
 }
 
 export async function createManagedAccountAction(slug: string, formData: FormData) {
@@ -827,47 +963,67 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   if (role === "org_admin" && formData.get("confirm_admin_access") !== "on") {
     throw new Error("Administrator access must be explicitly confirmed.");
   }
-  const requestedStatus = membershipStatus(formData.get("status") ?? "pending");
-  if (requestedStatus === "rejected" || requestedStatus === "suspended") {
-    throw new Error("New invitations require an active membership status.");
+  if (!formData.has("destination_space_id")) {
+    throw new Error(
+      "Legacy member creation is disabled. Choose an explicit destination Space.",
+    );
   }
-  const status = role === "org_admin" ? "approved" : requestedStatus;
-  const cohortId = String(formData.get("cohort_id") ?? "").trim() || undefined;
-  const requestedReturnCohortId = String(
-    formData.get("return_to_cohort_id") ?? "",
+  const destinationSpaceId =
+    String(formData.get("destination_space_id") ?? "").trim() || undefined;
+  if (role === "member" && !destinationSpaceId) {
+    throw new Error("Choose a destination Space for this member.");
+  }
+  const accessStatus = destinationSpaceId
+    ? importSpaceAccessStatus(formData.get("space_access_status") ?? "active")
+    : undefined;
+  const destinationSpace = destinationSpaceId
+    ? await getSpaceById(destinationSpaceId)
+    : undefined;
+  if (destinationSpaceId && (!destinationSpace || destinationSpace.orgId !== org.id)) {
+    throw new Error("Destination Space not found.");
+  }
+  if (destinationSpace?.lifecycle === "archived") {
+    throw new Error("Archived Spaces cannot accept new members.");
+  }
+  const requestedReturnSpaceId = String(
+    formData.get("return_to_space_id") ?? "",
   ).trim();
-  const returnCohortId =
-    cohortId && requestedReturnCohortId === cohortId ? cohortId : undefined;
-  const resultPath = returnCohortId
-    ? `/org/${slug}/admin/cohorts/${returnCohortId}`
+  const returnSpaceId =
+    destinationSpaceId && requestedReturnSpaceId === destinationSpaceId
+      ? destinationSpaceId
+      : undefined;
+  const resultPath = returnSpaceId
+    ? `/org/${slug}/admin/spaces/${returnSpaceId}`
     : `/org/${slug}/admin/members`;
-  await validateImportCohort(org.id, cohortId);
   const [existingCandidate] = await listMemberImportCandidatesForOrg(
     org.id,
     [email],
-    cohortId,
+    destinationSpaceId,
   );
   if (existingCandidate?.membership) {
-    if (
-      existingCandidate.membership.status === "rejected" ||
-      existingCandidate.membership.status === "suspended"
-    ) {
-      redirect(`${resultPath}?status=member_inactive_conflict`);
+    const inactiveConflict =
+      existingCandidate.membership.accountStatus === "suspended" ||
+      existingCandidate.membership.accountStatus === "deprovisioned";
+    if (inactiveConflict) {
+      redirect(`${resultPath}?status=account_inactive_conflict`);
     }
-    if (cohortId && !existingCandidate.inCohort && existingCandidate.user) {
-      await addMembershipToCohort(
-        org.id,
-        cohortId,
-        existingCandidate.membership,
-        {
-          email: existingCandidate.user.email,
-          name: existingCandidate.user.name,
-        },
-      );
+    if (destinationSpaceId && accessStatus) {
+      const grant = await grantSpaceMembership({
+        orgId: org.id,
+        spaceId: destinationSpaceId,
+        membershipId: existingCandidate.membership.id,
+        accessStatus,
+        joinedVia: "direct",
+        invitedByMembershipId: admin.membership.id,
+      });
+      if (grant.outcome === "conflict") {
+        redirect(`${resultPath}?status=space_access_conflict`);
+      }
       revalidatePath(`/org/${slug}/admin/members`);
-      revalidatePath(`/org/${slug}/admin/cohorts`);
-      revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
-      redirect(`${resultPath}?status=member_added_to_cohort`);
+      revalidatePath(`/org/${slug}/admin/spaces`);
+      revalidatePath(`/org/${slug}/admin/spaces/${destinationSpaceId}`);
+      enqueueSpaceMatchRecompute(slug, destinationSpaceId);
+      redirect(`${resultPath}?status=member_added_to_space`);
     }
     redirect(`${resultPath}?status=member_existing`);
   }
@@ -879,15 +1035,23 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
     name: existingCandidate?.user?.name ?? name,
     createPasswordCredential: false,
     role,
-    status,
+    // Migration-era metadata only; role and Space entitlement are authoritative.
+    status: "pending",
     invitedByUserId: admin.user.id,
   });
 
-  if (cohortId) {
-    await addMembershipToCohort(org.id, cohortId, membership, {
-      email: user.email,
-      name: user.name,
+  if (destinationSpaceId && accessStatus) {
+    const grant = await grantSpaceMembership({
+      orgId: org.id,
+      spaceId: destinationSpaceId,
+      membershipId: membership.id,
+      accessStatus,
+      joinedVia: "direct",
+      invitedByMembershipId: admin.membership.id,
     });
+    if (grant.outcome === "conflict") {
+      throw new Error("Destination Space access requires an explicit conflict resolution.");
+    }
   }
 
   let failed = false;
@@ -904,9 +1068,10 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   }
 
   revalidatePath(`/org/${slug}/admin/members`);
-  revalidatePath(`/org/${slug}/admin/cohorts`);
-  if (cohortId) {
-    revalidatePath(`/org/${slug}/admin/cohorts/${cohortId}`);
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  if (destinationSpaceId) {
+    revalidatePath(`/org/${slug}/admin/spaces/${destinationSpaceId}`);
+    enqueueSpaceMatchRecompute(slug, destinationSpaceId);
   }
   redirect(`${resultPath}?status=${failed ? "member_invite_failed" : "member_invited"}`);
 }
@@ -914,43 +1079,52 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
 export async function updateMembershipAction(slug: string, membershipId: string, formData: FormData) {
   const admin = await requireAdminForAction(slug);
   const { org } = admin;
-  const clerkContext = await requireClerkAdminContextForAction(admin);
   const targetRecord = await getMembershipRecordById(membershipId);
   const targetMembership = targetRecord?.membership;
-  const targetProfile = targetRecord?.profile;
   const targetUser = targetRecord?.user;
   if (!targetMembership || !targetUser || targetMembership.orgId !== org.id) {
     throw new Error("Unauthorized.");
   }
+  if (!formData.has("account_status")) {
+    throw new Error(
+      "Legacy community status updates are disabled. Manage account safety and Space access separately.",
+    );
+  }
   const nextRole = membershipRole(formData.get("role") ?? targetMembership.role);
-  const requestedStatus = membershipStatus(formData.get("status") ?? targetMembership.status);
-  const nextStatus = nextRole === "org_admin" ? "approved" : requestedStatus;
-  const previousStatus = targetMembership.status;
+  const affectedAccountSpaceIds = [
+    ...new Set(
+      (await listSpaceMembershipRecordsByMembershipIds(org.id, [membershipId]))
+        .get(membershipId)
+        ?.map((record) => record.space.id) ?? [],
+    ),
+  ];
+  const nextAccountStatus = accountStatus(
+    formData.get("account_status") ?? targetMembership.accountStatus,
+  );
   if (
     targetMembership.id === admin.membership.id &&
-    (nextRole !== "org_admin" || nextStatus !== "approved")
+    (nextRole !== "org_admin" ||
+      nextAccountStatus === "suspended" ||
+      nextAccountStatus === "deprovisioned")
   ) {
     throw new Error("You cannot remove your own active admin access.");
   }
-
   const roleUpdated = await updateMembershipRole(membershipId, nextRole, {
     existingMembership: targetMembership,
   });
-  const membership = await updateMembershipStatus(
+  const membership = await updateMembershipAccountStatus(
     membershipId,
-    nextStatus,
-    String(formData.get("approval_note") ?? ""),
-    { existingMembership: roleUpdated ?? targetMembership, recomputeMatches: false },
+    nextAccountStatus,
+    {
+      adminNote: String(formData.get("approval_note") ?? ""),
+      existingMembership: roleUpdated ?? targetMembership,
+      recomputeMatches: false,
+    },
   );
 
-  if (!org || !membership) {
-    return;
-  }
+  if (!membership) return;
 
-  if (targetProfile) {
-    enqueueProfileMatchRecompute(slug, org.id, targetProfile.id);
-  }
-
+  const clerkContext = await requireClerkAdminContextForAction(admin);
   let clerkFailed = false;
   try {
     await syncMembershipClerkLifecycle({
@@ -963,34 +1137,51 @@ export async function updateMembershipAction(slug: string, membershipId: string,
     clerkFailed = true;
   }
 
-  if (previousStatus !== "approved" && membership.status === "approved") {
-    enqueueNotificationWrite(
-      buildNotification(
-        `ntf_${nanoid(8)}`,
-        org.id,
-        membership.id,
-        "membership_approved",
-        "You’re approved for Wavespark",
-        "Your membership request was approved. You can now access the feed and matches.",
-        `/org/${slug}/feed`,
-      ),
-    );
-
-    if (targetProfile) {
-      const feedUrl = absoluteAppUrl(`/org/${slug}/feed`);
-      enqueueNotificationEmail({
-        to: targetProfile.emailForIntro,
-        subject: "Your Wavespark membership is approved",
-        html: `<p>You’re approved for Wavespark.</p><p>Visit <a href="${feedUrl}">the community feed</a> to get started.</p>`,
-      });
-    }
-  }
-
   revalidatePath(`/org/${slug}/admin/members`);
-  revalidatePath(`/org/${slug}/pending`);
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  affectedAccountSpaceIds.forEach((spaceId) =>
+    enqueueSpaceMatchRecompute(slug, spaceId),
+  );
   redirect(
     `/org/${slug}/admin/members?status=${clerkFailed ? "membership_clerk_failed" : "membership_updated"}`,
   );
+}
+
+export async function updateMemberSpaceAccessAction(
+  slug: string,
+  membershipId: string,
+  formData: FormData,
+) {
+  const admin = await requireAdminForAction(slug);
+  const spaceId = String(formData.get("space_id") ?? "").trim();
+  const nextAccessStatus = spaceAccessStatus(formData.get("access_status"));
+  const [space, targetRecord] = await Promise.all([
+    getSpaceById(spaceId),
+    getMembershipRecordById(membershipId),
+  ]);
+  if (
+    !space ||
+    space.orgId !== admin.org.id ||
+    !targetRecord ||
+    targetRecord.membership.orgId !== admin.org.id
+  ) {
+    throw new Error("Unauthorized.");
+  }
+
+  await setSpaceMembershipAccessStatus({
+    orgId: admin.org.id,
+    spaceId,
+    membershipId,
+    accessStatus: nextAccessStatus,
+    actorMembershipId: admin.membership.id,
+    decisionNote: String(formData.get("decision_note") ?? ""),
+    joinedVia: "direct",
+  });
+
+  revalidatePath(`/org/${slug}/admin/members`);
+  revalidatePath(`/org/${slug}/admin/spaces`);
+  revalidatePath(`/org/${slug}/admin/spaces/${spaceId}`);
+  enqueueSpaceMatchRecompute(slug, spaceId);
 }
 
 export async function resendMembershipInvitationAction(slug: string, membershipId: string) {
@@ -1049,6 +1240,10 @@ export async function updatePostModerationAction(slug: string, postId: string, f
   if (!post || post.orgId !== org.id) {
     throw new Error("Unauthorized.");
   }
+  const space = post.spaceId ? await getSpaceById(post.spaceId) : undefined;
+  if (post.spaceId && (!space || space.orgId !== org.id)) {
+    throw new Error("Unauthorized.");
+  }
 
   await updatePostModeration(
     postId,
@@ -1062,14 +1257,28 @@ export async function updatePostModerationAction(slug: string, postId: string, f
     },
     { existingPost: post },
   );
-  if (["ask", "opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(post.type)) {
-    const profile = await getProfileByMembershipId(post.authorMembershipId);
-    if (profile) enqueueProfileMatchRecompute(slug, org.id, profile.id);
+  if (
+    space &&
+    ["ask", "opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(
+      post.type,
+    )
+  ) {
+    enqueueSpaceMatchRecompute(slug, space.id);
   }
 
   revalidatePath(`/org/${slug}/admin/posts`);
   for (const path of getPostCommentRevalidationPaths(slug, postId, post.type)) {
     revalidatePath(path);
+  }
+  if (space) {
+    for (const path of getSpacePostCommentRevalidationPaths(
+      slug,
+      space.slug,
+      postId,
+      post.type,
+    )) {
+      revalidatePath(path);
+    }
   }
   redirect(`/org/${slug}/admin/posts?status=post_moderation_updated`);
 }
@@ -1099,6 +1308,15 @@ export async function updateProfileFlagsAction(slug: string, profileId: string, 
 
 export async function createManualIntroAction(slug: string, formData: FormData) {
   const { org, membership: adminMembership } = await requireAdminForAction(slug);
+  const spaceId = String(formData.get("space_id") ?? "").trim();
+  if (!spaceId) {
+    throw new Error("Choose a Space for this introduction.");
+  }
+  const { space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId: adminMembership.id,
+  });
   const requesterMembershipId = String(formData.get("requester_membership_id") ?? "");
   const receiverMembershipId = String(formData.get("receiver_membership_id") ?? "");
   if (!requesterMembershipId || requesterMembershipId === receiverMembershipId) {
@@ -1115,16 +1333,21 @@ export async function createManualIntroAction(slug: string, formData: FormData) 
     !receiverMembership ||
     requesterMembership.orgId !== org.id ||
     receiverMembership.orgId !== org.id ||
-    requesterMembership.status !== "approved" ||
-    receiverMembership.status !== "approved" ||
+    requesterMembership.accountStatus !== "connected" ||
+    receiverMembership.accountStatus !== "connected" ||
+    !requesterRecord.profile?.onboardingComplete ||
+    !receiverRecord.profile?.onboardingComplete ||
     !requesterRecord.profile?.introOptIn ||
     !receiverRecord.profile?.introOptIn
   ) {
-    throw new Error("Both members must be approved and available for introductions.");
+    throw new Error(
+      "Both people must have connected accounts, complete profiles, and intro availability.",
+    );
   }
 
-  const intro = await createIntroRequest({
+  const intro = await createIntroRequestInSpace({
     orgId: org.id,
+    spaceId: space.id,
     requesterMembershipId: requesterMembership.id,
     receiverMembershipId: receiverMembership.id,
     sourceType: "admin_manual",
@@ -1140,17 +1363,19 @@ export async function createManualIntroAction(slug: string, formData: FormData) 
   enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
-    org.id,
+      org.id,
       receiverMembership.id,
       "manual_intro",
-      "An admin created an introduction for you",
-      "A Wavespark admin surfaced a connection that looks worth exploring.",
-      `/org/${slug}/requests`,
+      `An admin created an introduction in ${space.name}`,
+      `A Wavesparks admin surfaced a connection inside ${space.name}.`,
+      `/org/${slug}/s/${space.slug}/requests`,
+      space.id,
     ),
   );
   enqueueAnalyticsEvent({
     id: `evt_${nanoid(8)}`,
     orgId: org.id,
+    spaceId: space.id,
     membershipId: adminMembership.id,
     eventName: "intro_requested",
     payload: {
@@ -1161,16 +1386,21 @@ export async function createManualIntroAction(slug: string, formData: FormData) 
     createdAt: intro.createdAt,
   });
 
-  const requestsUrl = absoluteAppUrl(`/org/${slug}/requests`);
+  const requestsPath = `/org/${slug}/s/${space.slug}/requests`;
+  const requestsUrl = absoluteAppUrl(requestsPath);
   enqueueMembershipEmail({
     membershipId: receiverMembership.id,
-    subject: "A Wavespark admin created an intro for you",
-    html: `<p>An admin made a curated intro for you inside Wavespark.</p><p>Open <a href="${requestsUrl}">your requests inbox</a> to respond.</p>`,
+    spaceId: space.id,
+    subject: `A Wavesparks admin created an intro in ${space.name}`,
+    html: `<p>An admin made a curated intro for you inside ${space.name}.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
   });
 
   revalidatePath(`/org/${slug}/admin/requests`);
   revalidatePath(`/org/${slug}/requests`);
-  redirect(`/org/${slug}/admin/requests?status=manual_intro_created`);
+  revalidatePath(requestsPath);
+  redirect(
+    `/org/${slug}/admin/requests?space_id=${encodeURIComponent(space.id)}&status=manual_intro_created`,
+  );
 }
 
 export async function recomputeMatchesAction(slug: string) {
@@ -1287,6 +1517,15 @@ export async function moderateCommentAction(slug: string, commentId: string, sta
   if (!commentRecord?.post || commentRecord.post.orgId !== org.id) {
     throw new Error("Unauthorized.");
   }
+  const space = commentRecord.post.spaceId
+    ? await getSpaceById(commentRecord.post.spaceId)
+    : undefined;
+  if (
+    commentRecord.post.spaceId &&
+    (!space || space.orgId !== org.id)
+  ) {
+    throw new Error("Unauthorized.");
+  }
 
   await updateCommentStatus(commentId, status, {
     existingComment: commentRecord.comment,
@@ -1298,6 +1537,16 @@ export async function moderateCommentAction(slug: string, commentId: string, sta
     commentRecord.post.type,
   )) {
     revalidatePath(path);
+  }
+  if (space) {
+    for (const path of getSpacePostCommentRevalidationPaths(
+      slug,
+      space.slug,
+      commentRecord.post.id,
+      commentRecord.post.type,
+    )) {
+      revalidatePath(path);
+    }
   }
   redirect(`/org/${slug}/admin/posts?status=comment_moderation_updated`);
 }

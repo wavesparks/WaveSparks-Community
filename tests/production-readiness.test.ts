@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { checkProductionReadiness } from "../scripts/check-production-readiness";
+import {
+  checkProductionReadiness,
+  evaluateSpaceRolloutAuditRows,
+} from "../scripts/check-production-readiness";
 
 const baseProductionEnv: NodeJS.ProcessEnv = {
   NODE_ENV: "production",
@@ -12,13 +15,14 @@ const baseProductionEnv: NodeJS.ProcessEnv = {
   OPENAI_API_KEY: "sk-production-embedding-key",
   CRON_SECRET: "cron-secret-with-enough-production-entropy",
   WAVESPARK_ADMIN_EMAILS: "letsbuild@wavesparks.co",
+  SPACE_SCOPED_READS_ENABLED: "true",
   BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_production_token_with_enough_entropy",
-  NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/org/wavespark/signin",
-  NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/org/wavespark/sign-up",
-  NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "/org/wavespark",
-  NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: "/org/wavespark",
+  NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/org/wavesparks/signin",
+  NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/org/wavesparks/sign-up",
+  NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "/org/wavesparks",
+  NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: "/org/wavesparks",
   RESEND_API_KEY: "resend-production-key",
-  RESEND_FROM_EMAIL: "hello@wavesparks.co",
+  RESEND_FROM_EMAIL: "Wavesparks <notification@wavesparks.co>",
 };
 
 describe("production readiness checks", () => {
@@ -92,6 +96,25 @@ describe("production readiness checks", () => {
     );
   });
 
+  it("rejects legacy singular Clerk organization routes", () => {
+    const result = checkProductionReadiness({
+      ...baseProductionEnv,
+      NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/org/wavespark/signin",
+      NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/org/wavespark/sign-up",
+      NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "/org/wavespark",
+      NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL: "/org/wavespark",
+    });
+
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        "NEXT_PUBLIC_CLERK_SIGN_IN_URL must use the canonical /org/wavesparks route.",
+        "NEXT_PUBLIC_CLERK_SIGN_UP_URL must use the canonical /org/wavesparks route.",
+        "NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL must use the canonical /org/wavesparks route.",
+        "NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL must use the canonical /org/wavesparks route.",
+      ]),
+    );
+  });
+
   it("rejects partial production integrations", () => {
     const result = checkProductionReadiness({
       ...baseProductionEnv,
@@ -141,5 +164,51 @@ describe("production readiness checks", () => {
         "E2E_LOCAL_AUTH_SECRET must not be set in production.",
       ]),
     );
+  });
+
+  it("requires Space-scoped reads to be explicitly enabled", () => {
+    const missing = checkProductionReadiness({
+      ...baseProductionEnv,
+      SPACE_SCOPED_READS_ENABLED: undefined,
+    });
+    const disabled = checkProductionReadiness({
+      ...baseProductionEnv,
+      SPACE_SCOPED_READS_ENABLED: "false",
+    });
+
+    expect(missing.errors).toContain("SPACE_SCOPED_READS_ENABLED is required.");
+    expect(disabled.errors).toContain(
+      "SPACE_SCOPED_READS_ENABLED must be explicitly true in production; false or invalid values fail closed.",
+    );
+  });
+
+  it("fails the rollout audit for missing Main spaces and null scoped resources", () => {
+    expect(
+      evaluateSpaceRolloutAuditRows([
+        { check: "organizations_without_exactly_one_main", count: "1" },
+        { check: "null_posts_space_id", count: 2 },
+        { check: "null_content_notifications_space_id", count: "0" },
+      ]),
+    ).toEqual({
+      errors: [
+        "Space rollout audit: 1 organization(s) do not have exactly one active Main Community.",
+        "Space rollout audit: 2 post(s) have null space_id.",
+      ],
+      warnings: [],
+    });
+  });
+
+  it("allows null account notifications when all content notifications are Space-scoped", () => {
+    expect(
+      evaluateSpaceRolloutAuditRows([
+        { check: "organizations_without_exactly_one_main", count: 0 },
+        { check: "duplicate_space_memberships", count: "0" },
+        { check: "invalid_space_relationships", count: 0 },
+        { check: "null_posts_space_id", count: 0 },
+        { check: "null_follows_space_id", count: 0 },
+        { check: "null_intro_requests_space_id", count: 0 },
+        { check: "null_content_notifications_space_id", count: 0 },
+      ]),
+    ).toEqual({ errors: [], warnings: [] });
   });
 });

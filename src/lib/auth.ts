@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { getCurrentAuthIdentity, type AuthIdentity } from "@/lib/auth-identity";
-import { canAdminOrganization, canAccessFeed } from "@/server/permissions";
+import { canAdminOrganization } from "@/server/permissions";
 import {
   getOrganizationBySlug,
   getViewerRecordByClerkUserIdAndOrgId,
@@ -13,7 +13,7 @@ import { syncViewerClerkOrganization } from "@/server/clerk-sync";
 
 interface ViewerOptions {
   requireAuth?: boolean;
-  requireApproved?: boolean;
+  requireConnected?: boolean;
   requireCompleteProfile?: boolean;
   requireAdmin?: boolean;
 }
@@ -155,20 +155,20 @@ export async function getViewerContext(
   }
 
   if (options.requireAdmin && !viewer.canAdmin) {
-    redirect(`/org/${slug}/feed`);
+    redirect(`/org/${slug}`);
   }
 
   if (
-    options.requireApproved &&
-    viewer.membership.status !== "approved"
+    options.requireConnected &&
+    viewer.membership.accountStatus !== "connected"
   ) {
     redirect(`/org/${slug}/pending`);
   }
 
   if (
     options.requireCompleteProfile &&
-    viewer.membership.status === "approved" &&
-    !canAccessFeed(viewer.membership, viewer.profile)
+    viewer.membership.accountStatus === "connected" &&
+    !viewer.profile?.onboardingComplete
   ) {
     redirect(`/org/${slug}/onboarding`);
   }
@@ -206,7 +206,10 @@ export async function getAuthCompletionViewerContext(
     return { status: "forbidden" as const, viewer: null };
   }
 
-  if (viewer.membership.status === "rejected" || viewer.membership.status === "suspended") {
+  if (
+    viewer.membership.accountStatus === "suspended" ||
+    viewer.membership.accountStatus === "deprovisioned"
+  ) {
     return {
       status: "authenticated" as const,
       state: "inactive" as const,
@@ -223,7 +226,7 @@ export async function getAuthCompletionViewerContext(
 
   return {
     clerkOrgId: syncResult?.clerkOrgId ?? viewer.org.clerkOrgId,
-    state: canAccessFeed(viewer.membership, viewer.profile)
+    state: viewer.membership.accountStatus === "connected"
       ? ("ready" as const)
       : ("pending" as const),
     status: "authenticated" as const,

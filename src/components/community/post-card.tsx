@@ -3,9 +3,13 @@ import { ArrowUpRight, Bookmark, MessageCircle } from "lucide-react";
 
 import {
   followMembershipAction,
+  followMembershipInSpaceAction,
   savePostAction,
+  savePostInSpaceAction,
   unsavePostAction,
+  unsavePostInSpaceAction,
   unfollowMembershipAction,
+  unfollowMembershipInSpaceAction,
 } from "@/actions/member";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -26,20 +30,72 @@ export function PostCard({
   post,
   returnPath,
   slug,
+  spaceId,
+  spaceSlug,
   viewerMembershipId,
 }: {
   post: FeedPostView;
   returnPath?: string;
   slug: string;
+  spaceId?: string;
+  spaceSlug?: string;
   viewerMembershipId?: string;
 }) {
-  const canFollow = Boolean(viewerMembershipId && viewerMembershipId !== post.author.membershipId);
-  const followAction = post.isFollowingAuthor
-    ? unfollowMembershipAction.bind(null, slug, viewerMembershipId ?? "", post.author.membershipId)
-    : followMembershipAction.bind(null, slug, viewerMembershipId ?? "", post.author.membershipId);
-  const saveAction = post.isSaved
-    ? unsavePostAction.bind(null, slug, viewerMembershipId ?? "", post.id)
-    : savePostAction.bind(null, slug, viewerMembershipId ?? "", post.id);
+  const hasSpaceScope = Boolean(spaceId && spaceSlug);
+  const canFollow = Boolean(
+    viewerMembershipId && viewerMembershipId !== post.author.membershipId,
+  );
+  const followAction = hasSpaceScope
+    ? post.isFollowingAuthor
+      ? unfollowMembershipInSpaceAction.bind(
+          null,
+          slug,
+          spaceId ?? "",
+          viewerMembershipId ?? "",
+          post.author.membershipId,
+        )
+      : followMembershipInSpaceAction.bind(
+          null,
+          slug,
+          spaceId ?? "",
+          viewerMembershipId ?? "",
+          post.author.membershipId,
+        )
+    : post.isFollowingAuthor
+      ? unfollowMembershipAction.bind(
+          null,
+          slug,
+          viewerMembershipId ?? "",
+          post.author.membershipId,
+        )
+      : followMembershipAction.bind(
+          null,
+          slug,
+          viewerMembershipId ?? "",
+          post.author.membershipId,
+        );
+  const saveAction = hasSpaceScope
+    ? post.isSaved
+      ? unsavePostInSpaceAction.bind(
+          null,
+          slug,
+          spaceId ?? "",
+          viewerMembershipId ?? "",
+          post.id,
+        )
+      : savePostInSpaceAction.bind(
+          null,
+          slug,
+          spaceId ?? "",
+          viewerMembershipId ?? "",
+          post.id,
+        )
+    : post.isSaved
+      ? unsavePostAction.bind(null, slug, viewerMembershipId ?? "", post.id)
+      : savePostAction.bind(null, slug, viewerMembershipId ?? "", post.id);
+  const postPath = spaceSlug
+    ? `/org/${slug}/s/${spaceSlug}/posts/${post.id}`
+    : `/org/${slug}/posts/${post.id}`;
   const typeLabel = post.type.replaceAll("_", " ");
   const authorSignals = [
     post.author.affiliationLabel,
@@ -69,7 +125,7 @@ export function PostCard({
           <h3 className="text-lg font-semibold leading-snug text-[var(--ink)] sm:text-xl">
             <Link
               className="transition hover:text-[var(--accent)]"
-              href={`/org/${slug}/posts/${post.id}`}
+              href={postPath}
             >
               {post.title}
             </Link>
@@ -80,7 +136,7 @@ export function PostCard({
         </div>
         <Link
           className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-xs font-semibold text-[var(--ink-soft)] transition duration-150 ease-out hover:border-[var(--accent)]/40 hover:bg-[var(--surface)] hover:text-[var(--ink)] active:translate-y-px active:scale-[0.99]"
-          href={`/org/${slug}/posts/${post.id}`}
+          href={postPath}
         >
           Open
           <ArrowUpRight className="size-3.5" />
@@ -146,7 +202,7 @@ export function PostCard({
               </SubmitButton>
             </form>
           ) : null}
-          <LinkButton href={`/org/${slug}/posts/${post.id}`} size="sm" variant="secondary">
+          <LinkButton href={postPath} size="sm" variant="secondary">
             Open thread
           </LinkButton>
         </div>

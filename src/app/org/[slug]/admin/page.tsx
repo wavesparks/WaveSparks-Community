@@ -2,9 +2,14 @@ import { AppShell } from "@/components/layout/app-shell";
 import { AnalyticsBars } from "@/components/community/analytics-bars";
 import { MetricCard } from "@/components/community/metric-card";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getViewerContext } from "@/lib/auth";
-import { getAdminOverviewData } from "@/server/store";
+import {
+  getAdminOverviewData,
+  listMembershipsForOrg,
+  listSpacesForOrg,
+} from "@/server/store";
 
 export default async function AdminOverviewPage({
   params,
@@ -14,7 +19,7 @@ export default async function AdminOverviewPage({
   const { slug } = await params;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
-    requireApproved: true,
+    requireConnected: true,
     requireAdmin: true,
   });
 
@@ -22,7 +27,16 @@ export default async function AdminOverviewPage({
     return null;
   }
 
-  const { analytics, recentPosts, recentRequests } = await getAdminOverviewData(viewer.org.id);
+  const [{ analytics, recentPosts, recentRequests }, memberships, spaces] =
+    await Promise.all([
+      getAdminOverviewData(viewer.org.id),
+      listMembershipsForOrg(viewer.org.id),
+      listSpacesForOrg(viewer.org.id),
+    ]);
+  const connectedAccounts = memberships.filter(
+    (membership) => membership.accountStatus === "connected",
+  ).length;
+  const spaceNameById = new Map(spaces.map((space) => [space.id, space.name]));
 
   return (
     <AppShell currentPath={`/org/${slug}/admin`} viewer={viewer}>
@@ -31,11 +45,11 @@ export default async function AdminOverviewPage({
           eyebrow="Admin"
           level={1}
           title="Community command center"
-          description="See approvals, content health, intro flow, and activation without breaking the product’s privacy model."
+          description="Audit account health and activity across all Spaces. Every content and intro item keeps its source Space label."
         />
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="Approved members" value={analytics.approvedMembers} />
+          <MetricCard label="Connected accounts" value={connectedAccounts} />
           <MetricCard label="Completed profiles" value={analytics.completedProfiles} />
           <MetricCard label="Intro accepts" value={analytics.introRequestsAccepted} />
           <MetricCard label="Weekly posters" value={analytics.activeWeeklyPosters} />
@@ -57,7 +71,14 @@ export default async function AdminOverviewPage({
                   key={request.id}
                 >
                   <p className="font-semibold text-[var(--ink)]">{request.introPurpose}</p>
-                  <p className="mt-1 text-sm text-[var(--ink-soft)]">{request.status}</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Badge variant="muted">
+                      {request.spaceId
+                        ? spaceNameById.get(request.spaceId) ?? "Unknown Space"
+                        : "Account"}
+                    </Badge>
+                    <Badge>{request.status}</Badge>
+                  </div>
                 </div>
               ))}
             </div>
@@ -73,7 +94,14 @@ export default async function AdminOverviewPage({
                 key={post.id}
               >
                 <p className="font-semibold text-[var(--ink)]">{post.title}</p>
-                <p className="mt-2 text-sm text-[var(--ink-soft)]">{post.type.replaceAll("_", " ")}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Badge variant="muted">
+                    {post.spaceId
+                      ? spaceNameById.get(post.spaceId) ?? "Unknown Space"
+                      : "Unscoped legacy content"}
+                  </Badge>
+                  <Badge>{post.type.replaceAll("_", " ")}</Badge>
+                </div>
               </div>
             ))}
           </div>

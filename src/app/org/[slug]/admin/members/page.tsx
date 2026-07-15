@@ -13,24 +13,23 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { Select } from "@/components/ui/select";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
-import type { MembershipStatus } from "@/lib/domain";
+import type { AccountStatus } from "@/lib/domain";
 import { isE2ELocalAuthEnabled } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { cn } from "@/lib/utils";
 import {
-  listCohortRecordsForOrg,
   listMemberWorkspaceForOrg,
+  listSpacesForOrg,
   type MemberWorkspaceInvitationStatus,
 } from "@/server/store";
 
 const accessOptions = [
-  ["", "All access states"],
-  ["pending", "Pending review"],
-  ["waitlist", "Waitlist"],
-  ["approved", "Approved"],
-  ["rejected", "Rejected"],
-  ["suspended", "Suspended"],
+  ["", "All account states"],
+  ["invited", "Invited"],
+  ["connected", "Connected"],
+  ["suspended", "Suspended globally"],
+  ["deprovisioned", "Deprovisioned"],
 ] as const;
 
 const invitationOptions = [
@@ -59,8 +58,8 @@ function positivePage(value?: string) {
 function memberListHref(
   slug: string,
   values: {
-    access?: string;
-    cohort?: string;
+    account?: string;
+    space?: string;
     invitation?: string;
     page?: number;
     search?: string;
@@ -68,16 +67,18 @@ function memberListHref(
 ) {
   const query = new URLSearchParams();
   if (values.search) query.set("search", values.search);
-  if (values.access) query.set("access", values.access);
+  if (values.account) query.set("account", values.account);
   if (values.invitation) query.set("invitation", values.invitation);
-  if (values.cohort) query.set("cohort", values.cohort);
+  if (values.space) query.set("space", values.space);
   if (values.page && values.page > 1) query.set("page", String(values.page));
   const suffix = query.toString();
   return `/org/${slug}/admin/members${suffix ? `?${suffix}` : ""}`;
 }
 
-function accessLabel(status: MembershipStatus) {
-  return status === "pending" ? "Pending review" : status[0].toUpperCase() + status.slice(1);
+function accessLabel(status: AccountStatus) {
+  return status === "deprovisioned"
+    ? "Deprovisioned"
+    : status[0].toUpperCase() + status.slice(1);
 }
 
 function invitationLabel(membership: {
@@ -100,39 +101,39 @@ export default async function AdminMembersPage({
   const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
-    requireApproved: true,
+    requireConnected: true,
     requireAdmin: true,
   });
 
   if (!viewer) return null;
 
   const search = singleQueryValue(query.search)?.trim() ?? "";
-  const access = optionValue<MembershipStatus>(
-    singleQueryValue(query.access) ?? singleQueryValue(query.member_status),
+  const account = optionValue<AccountStatus>(
+    singleQueryValue(query.account),
     accessOptions,
   );
   const invitation = optionValue<MemberWorkspaceInvitationStatus>(
     singleQueryValue(query.invitation),
     invitationOptions,
   );
-  const requestedCohort = singleQueryValue(query.cohort)?.trim() || undefined;
+  const requestedSpace = singleQueryValue(query.space)?.trim() || undefined;
   const requestedPage = positivePage(singleQueryValue(query.page));
-  const cohortRecords = await listCohortRecordsForOrg(viewer.org.id);
-  const cohorts = cohortRecords.map(({ cohort }) => cohort);
-  const activeCohorts = cohorts.filter((cohort) => cohort.status === "active");
-  const selectedCohort = cohorts.some((cohort) => cohort.id === requestedCohort)
-    ? requestedCohort
+  const spaces = await listSpacesForOrg(viewer.org.id);
+  const assignableSpaces = spaces.filter((space) => space.lifecycle !== "archived");
+  const mainSpace = spaces.find((space) => space.kind === "main");
+  const selectedSpace = spaces.some((space) => space.id === requestedSpace)
+    ? requestedSpace
     : undefined;
   const memberPage = await listMemberWorkspaceForOrg(viewer.org.id, {
     query: search,
-    status: access,
+    accountStatus: account,
     invitationStatus: invitation,
-    cohortId: selectedCohort,
+    spaceId: selectedSpace,
     page: requestedPage,
     pageSize: 25,
   });
   const invitationsEnabled = isClerkConfigured() || isE2ELocalAuthEnabled();
-  const listValues = { search, access, invitation, cohort: selectedCohort };
+  const listValues = { search, account, invitation, space: selectedSpace };
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/members`} viewer={viewer}>
@@ -140,15 +141,21 @@ export default async function AdminMembersPage({
         <MemberManagementNav active="members" slug={slug} />
         <div className="flex flex-wrap items-start justify-between gap-4">
           <SectionHeading
-            description="Search, review, invite, and manage everyone in this community from one place."
+            description="Search, invite, and manage account records alongside each person’s assigned Spaces."
             eyebrow="Admin · Member management"
             level={1}
             title="Members"
           />
           <InvitePeopleDialog
-            cohorts={activeCohorts.map(({ id, name }) => ({ id, name }))}
+            defaultDestinationSpaceId={mainSpace?.id}
             invitationsEnabled={invitationsEnabled}
             slug={slug}
+            spaces={assignableSpaces.map(({ id, kind, lifecycle, name }) => ({
+              id,
+              kind,
+              lifecycle,
+              name,
+            }))}
           />
         </div>
         <StatusBanner status={singleQueryValue(query.status)} />
@@ -172,8 +179,8 @@ export default async function AdminMembersPage({
               />
             </div>
             <div>
-              <Label htmlFor="member-access">Community access</Label>
-              <Select defaultValue={access ?? ""} id="member-access" name="access">
+              <Label htmlFor="member-access">Account status</Label>
+              <Select defaultValue={account ?? ""} id="member-access" name="account">
                 {accessOptions.map(([value, label]) => (
                   <option key={label} value={value}>{label}</option>
                 ))}
@@ -188,12 +195,12 @@ export default async function AdminMembersPage({
               </Select>
             </div>
             <div>
-              <Label htmlFor="member-cohort">Cohort</Label>
-              <Select defaultValue={selectedCohort ?? ""} id="member-cohort" name="cohort">
-                <option value="">All cohorts</option>
-                {cohorts.map((cohort) => (
-                  <option key={cohort.id} value={cohort.id}>
-                    {cohort.name}{cohort.status === "archived" ? " (archived)" : ""}
+              <Label htmlFor="member-space">Space</Label>
+              <Select defaultValue={selectedSpace ?? ""} id="member-space" name="space">
+                <option value="">All Spaces</option>
+                {spaces.map((space) => (
+                  <option key={space.id} value={space.id}>
+                    {space.name}{space.lifecycle === "archived" ? " (archived)" : ""}
                   </option>
                 ))}
               </Select>
@@ -217,7 +224,7 @@ export default async function AdminMembersPage({
                 {memberPage.total} {memberPage.total === 1 ? "member" : "members"}
               </h2>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                Invitation and community access are tracked separately.
+                Account connection and Space access are tracked separately.
               </p>
             </div>
             {memberPage.pageCount > 1 ? (
@@ -228,7 +235,7 @@ export default async function AdminMembersPage({
           </div>
 
           <div className="space-y-3">
-            {memberPage.records.map(({ cohorts: memberCohorts, membership, profile, user }) => {
+            {memberPage.records.map(({ spaces: memberSpaces, membership, profile, user }) => {
               const connected = Boolean(membership.clerkMembershipId);
               const invitation = invitationLabel(membership);
               return (
@@ -251,9 +258,9 @@ export default async function AdminMembersPage({
                       ) : null}
                     </div>
                     <div>
-                      <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Community access</p>
-                      <Badge className="mt-2" variant={membership.status === "approved" ? "accent" : "default"}>
-                        {accessLabel(membership.status)}
+                      <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Account status</p>
+                      <Badge className="mt-2" variant={membership.accountStatus === "connected" ? "accent" : "default"}>
+                        {accessLabel(membership.accountStatus)}
                       </Badge>
                     </div>
                     <div className="min-w-0">
@@ -270,10 +277,12 @@ export default async function AdminMembersPage({
                   </div>
 
                   <div className="flex flex-wrap gap-2 border-t border-[var(--line)] pt-3">
-                    <span className="mr-1 text-xs font-semibold uppercase text-[var(--ink-soft)]">Cohorts</span>
-                    {memberCohorts.length ? memberCohorts.map((cohort) => (
-                      <Link key={cohort.id} href={`/org/${slug}/admin/cohorts/${cohort.id}`}>
-                        <Badge variant="muted">{cohort.name}</Badge>
+                    <span className="mr-1 text-xs font-semibold uppercase text-[var(--ink-soft)]">Space access</span>
+                    {memberSpaces.length ? memberSpaces.map(({ space, spaceMembership }) => (
+                      <Link key={space.id} href={`/org/${slug}/admin/spaces/${space.id}`}>
+                        <Badge variant={spaceMembership.accessStatus === "active" ? "accent" : "muted"}>
+                          {space.name} · {spaceMembership.accessStatus}
+                        </Badge>
                       </Link>
                     )) : <span className="text-xs text-[var(--ink-soft)]">None</span>}
                   </div>
@@ -286,14 +295,23 @@ export default async function AdminMembersPage({
                       name: profile?.preferredName || user?.name || "Unnamed member",
                     }}
                     membership={{
+                      accountStatus: membership.accountStatus,
                       id: membership.id,
                       role: membership.role,
-                      status: membership.status,
                       approvalNote: membership.approvalNote,
                       clerkMembershipId: membership.clerkMembershipId,
                       clerkInvitationStatus: membership.clerkInvitationStatus,
                       clerkInvitationError: membership.clerkInvitationError,
                     }}
+                    spaces={spaces.map((space) => ({
+                      id: space.id,
+                      kind: space.kind,
+                      lifecycle: space.lifecycle,
+                      name: space.name,
+                      accessStatus: memberSpaces.find(
+                        (record) => record.space.id === space.id,
+                      )?.spaceMembership.accessStatus,
+                    }))}
                     slug={slug}
                   />
                 </Card>

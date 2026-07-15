@@ -6,6 +6,7 @@ import { after } from "next/server";
 import { nanoid } from "nanoid";
 
 import { getViewerContextForAction } from "@/lib/auth";
+import { requireSpaceAccessForAction } from "@/lib/space-auth";
 import { buildNotification, enqueueNotificationEmail } from "@/server/notifications";
 import { opportunitySourceForPost } from "@/lib/opportunities";
 import {
@@ -25,31 +26,39 @@ import {
 } from "@/server/action-side-effects";
 import { canAccessFeed } from "@/server/permissions";
 import {
-  createComment,
-  createIntroRequest,
-  getIntroRequestById,
-  createPost,
-  followMembership,
+  createCommentInSpace,
+  createIntroRequestInSpace,
+  getIntroRequestByIdInSpace,
+  createPostInSpace,
+  followMembershipInSpace,
   getMembershipById,
-  getPostById,
+  getPostByIdInSpace,
   getProfileByMembershipId,
-  savePostForMembership,
+  getSpaceIntent,
+  getSpaceMembership,
+  savePostForMembershipInSpace,
   listMatchTypeConfigsForOrg,
-  listActiveIntroRequestStatusesForRequester,
-  markNotificationsReadForMembership,
+  listMatchesForProfile,
+  listSpacesForOrg,
+  listVisibleSpacesForMembership,
+  getPendingIntroRequestBetweenMembershipsInOrg,
+  markNotificationsReadForMembershipInSpace,
+  markNotificationsReadForMembershipWithSpaceAccess,
   recomputeMatchesForProfile,
+  recomputeMatchesForSpace,
   recordMatchFeedback,
-  respondToIntroRequest,
-  unsavePostForMembership,
-  unfollowMembership,
+  respondToIntroRequestInSpace,
+  unsavePostForMembershipInSpace,
+  unfollowMembershipInSpace,
   upsertProfile,
+  upsertSpaceIntent,
 } from "@/server/store";
 import type {
   IntroSourceType,
   IntroStatus,
   MatchFeedbackValue,
-  Membership,
   PostType,
+  SpaceIntent,
 } from "@/lib/domain";
 
 async function requireMemberForAction(
@@ -61,6 +70,10 @@ async function requireMemberForAction(
 
   if (!viewer) {
     throw new Error("Unauthorized.");
+  }
+
+  if (viewer.membership.accountStatus !== "connected") {
+    throw new Error("Connected account required.");
   }
 
   if (expectedMembershipId && viewer.membership.id !== expectedMembershipId) {
@@ -80,13 +93,6 @@ async function requireMemberForAction(
     membership: viewer.membership,
     profile: viewer.profile,
   };
-}
-
-function requireSameOrg(membership: Membership | undefined, orgId: string) {
-  if (!membership || membership.orgId !== orgId) {
-    throw new Error("Unauthorized.");
-  }
-  return membership;
 }
 
 function safeReturnPath(slug: string, formData: FormData | undefined, fallback: string) {
@@ -111,6 +117,33 @@ function safeReturnPath(slug: string, formData: FormData | undefined, fallback: 
   }
 }
 
+function spaceRoot(slug: string, spaceSlug: string) {
+  return `/org/${slug}/s/${spaceSlug}`;
+}
+
+function safeSpaceReturnPath(
+  slug: string,
+  spaceSlug: string,
+  formData: FormData | undefined,
+  fallback: string,
+) {
+  const raw = String(formData?.get("return_to") ?? "");
+  if (!raw) return fallback;
+  try {
+    const url = new URL(raw, "https://wavespark.local");
+    const root = spaceRoot(slug, spaceSlug);
+    if (
+      url.origin !== "https://wavespark.local" ||
+      (url.pathname !== root && !url.pathname.startsWith(`${root}/`))
+    ) {
+      return fallback;
+    }
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return fallback;
+  }
+}
+
 function withStatus(path: string, status: string) {
   const url = new URL(path, "https://wavespark.local");
   url.searchParams.set("status", status);
@@ -128,6 +161,109 @@ function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: st
   });
 }
 
+function enqueueSpaceMatchRecompute(slug: string, spaceId: string, spaceSlug: string) {
+  after(async () => {
+    try {
+      await recomputeMatchesForSpace(spaceId);
+      revalidatePath(`${spaceRoot(slug, spaceSlug)}/matches`);
+    } catch (error) {
+      console.error("[wavesparks] space match recompute failed", spaceId, error);
+    }
+  });
+}
+
+function revalidateSpaceDiscoveryPaths(slug: string, spaceSlug: string) {
+  const root = spaceRoot(slug, spaceSlug);
+  revalidatePath(`${root}/feed`);
+  revalidatePath(`${root}/people`);
+  revalidatePath(`${root}/opportunities`);
+  revalidatePath(`${root}/knowledge`);
+  revalidatePath(`${root}/matches`);
+  revalidatePath(`${root}/requests`);
+}
+
+function revalidateSpacePostPaths(
+  slug: string,
+  spaceSlug: string,
+  postId: string,
+) {
+  revalidateSpaceDiscoveryPaths(slug, spaceSlug);
+  revalidatePath(`${spaceRoot(slug, spaceSlug)}/posts/${postId}`);
+}
+
+async function requireActiveTargetInSpace(
+  spaceId: string,
+  membershipId: string,
+  orgId: string,
+) {
+  const [membership, spaceMembership] = await Promise.all([
+    getMembershipById(membershipId),
+    getSpaceMembership(spaceId, membershipId),
+  ]);
+  if (
+    !membership ||
+    membership.orgId !== orgId ||
+    membership.accountStatus !== "connected" ||
+    spaceMembership?.accessStatus !== "active"
+  ) {
+    throw new Error("This member is not active in the selected Space.");
+  }
+  return membership;
+}
+
+async function requireLegacyMainSpace(orgId: string, membershipId: string) {
+  const main = (await listSpacesForOrg(orgId)).find((space) => space.kind === "main");
+  if (!main) throw new Error("Main Community is not configured.");
+  const spaceMembership = await getSpaceMembership(main.id, membershipId);
+  if (spaceMembership?.accessStatus !== "active") {
+    throw new Error("Main Community access required.");
+  }
+  return main;
+}
+
+async function requireIntroSourceInSpace(input: {
+  spaceId: string;
+  sourceType: IntroSourceType;
+  sourceId: string;
+  requesterProfileId: string;
+  receiverMembershipId: string;
+  receiverProfileId: string;
+}) {
+  if (input.sourceType === "profile") {
+    if (input.sourceId !== input.receiverProfileId) {
+      throw new Error("Profile source does not belong to the selected member.");
+    }
+    return;
+  }
+
+  if (input.sourceType === "post") {
+    const sourcePost = await getPostByIdInSpace(input.spaceId, input.sourceId);
+    if (
+      !sourcePost ||
+      sourcePost.authorMembershipId !== input.receiverMembershipId
+    ) {
+      throw new Error(
+        "Post source does not belong to the selected member in this Space.",
+      );
+    }
+    return;
+  }
+
+  const matches = await listMatchesForProfile(input.requesterProfileId, {
+    spaceId: input.spaceId,
+    limit: 1000,
+  });
+  const sourceMatch = matches.find((match) => match.id === input.sourceId);
+  if (
+    !sourceMatch ||
+    sourceMatch.spaceId !== input.spaceId ||
+    sourceMatch.sourceProfileId !== input.requesterProfileId ||
+    sourceMatch.targetProfileId !== input.receiverProfileId
+  ) {
+    throw new Error("Match source does not belong to this Space pair.");
+  }
+}
+
 function revalidateMemberDiscoveryPaths(slug: string) {
   revalidatePath(`/org/${slug}/feed`);
   revalidatePath(`/org/${slug}/opportunities`);
@@ -140,12 +276,22 @@ function revalidateMemberActivationPaths(slug: string) {
   revalidatePath(`/org/${slug}/profile`);
 }
 
-function revalidatePostSavePaths(slug: string, postId: string, postType: PostType) {
+function revalidatePostSavePaths(
+  slug: string,
+  spaceSlug: string,
+  postId: string,
+  postType: PostType,
+) {
+  const legacyRoot = `/org/${slug}`;
+  const canonicalRoot = spaceRoot(slug, spaceSlug);
   for (const path of getPostListRevalidationPaths(slug, postType)) {
     revalidatePath(path);
+    revalidatePath(path.replace(legacyRoot, canonicalRoot));
   }
   revalidatePath(`/org/${slug}/knowledge`);
   revalidatePath(`/org/${slug}/posts/${postId}`);
+  revalidatePath(`${canonicalRoot}/knowledge`);
+  revalidatePath(`${canonicalRoot}/posts/${postId}`);
 }
 
 export async function saveOnboardingAction(slug: string, membershipId: string, formData: FormData) {
@@ -199,10 +345,117 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
     );
   }
   redirect(
-    membership.status === "approved"
-      ? `/org/${slug}/profile?status=profile_saved`
-      : `/org/${slug}/pending?status=profile_saved`,
+    withStatus(
+      safeReturnPath(slug, formData, `/org/${slug}/profile`),
+      "profile_saved",
+    ),
   );
+}
+
+function formList(formData: FormData, key: string) {
+  return [
+    ...new Set(
+      formData
+        .getAll(key)
+        .flatMap((value) => parseTags(value))
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+export async function saveSpaceIntentAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  formData: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId,
+    requireProfile: true,
+  });
+  const existing = await getSpaceIntent(spaceId, viewer.membership.id);
+  const currentGoal = String(formData.get("current_goal") ?? "").trim();
+  const lookingFor = formList(formData, "looking_for");
+  const offers = formList(formData, "offers");
+  const matchingOptIn = formData
+    .getAll("matching_opt_in")
+    .map(String)
+    .some((value) => ["1", "true", "yes", "on"].includes(value.toLowerCase()));
+  const intentComplete = Boolean(currentGoal && (lookingFor.length || offers.length));
+  const now = new Date().toISOString();
+  const intent: SpaceIntent = {
+    id: existing?.id ?? `intent_${spaceId}_${viewer.membership.id}`,
+    orgId: viewer.org.id,
+    spaceId,
+    membershipId: viewer.membership.id,
+    currentGoal,
+    lookingFor,
+    offers,
+    matchingOptIn,
+    intentComplete,
+    seekingText: [
+      currentGoal ? `Current goal: ${currentGoal}` : "",
+      lookingFor.length ? `Looking for in this space: ${lookingFor.join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    offeringText: offers.length
+      ? `Can offer in this space: ${offers.join(", ")}`
+      : "",
+    embeddingStatus: "pending",
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  await upsertSpaceIntent(intent);
+  enqueueSpaceMatchRecompute(slug, spaceId, space.slug);
+  revalidatePath(`${spaceRoot(slug, space.slug)}/matches`);
+  redirect(
+    `${spaceRoot(slug, space.slug)}/matches?status=${
+      intentComplete ? "space_intent_saved" : "space_intent_incomplete"
+    }`,
+  );
+}
+
+export async function saveMatchFeedbackInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  matchId: string,
+  formData: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId,
+    requireProfile: true,
+  });
+  if (!viewer.profile) throw new Error("A complete profile is required.");
+  const rawValue = String(formData.get("value") ?? "");
+  if (rawValue !== "helpful" && rawValue !== "not_relevant") {
+    throw new Error("Invalid match feedback.");
+  }
+  const value: MatchFeedbackValue = rawValue;
+  const reasons =
+    value === "not_relevant"
+      ? sanitizeMatchFeedbackReasons(formData.getAll("reason").map(String))
+      : [];
+  if (value === "not_relevant" && !reasons.length) {
+    throw new Error("Select a reason for dismissing this match.");
+  }
+  const feedback = await recordMatchFeedback({
+    orgId: viewer.org.id,
+    spaceId,
+    matchId,
+    sourceProfileId: viewer.profile.id,
+    value,
+    reasons,
+  });
+  if (!feedback) throw new Error("Match not found in this Space.");
+  revalidatePath(`${spaceRoot(slug, space.slug)}/matches`);
+  redirect(`${spaceRoot(slug, space.slug)}/matches?status=match_feedback_saved`);
 }
 
 export async function saveMatchFeedbackAction(
@@ -215,6 +468,7 @@ export async function saveMatchFeedbackAction(
     requireFeedAccess: true,
   });
   if (!profile) throw new Error("A complete profile is required.");
+  const mainSpace = await requireLegacyMainSpace(org.id, membershipId);
   const rawValue = String(formData.get("value") ?? "");
   if (rawValue !== "helpful" && rawValue !== "not_relevant") {
     throw new Error("Invalid match feedback.");
@@ -229,6 +483,7 @@ export async function saveMatchFeedbackAction(
   }
   const feedback = await recordMatchFeedback({
     orgId: org.id,
+    spaceId: mainSpace.id,
     matchId,
     sourceProfileId: profile.id,
     value,
@@ -239,15 +494,82 @@ export async function saveMatchFeedbackAction(
   redirect(`/org/${slug}/matches?status=match_feedback_saved`);
 }
 
+export async function createPostInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  formData: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId,
+    requireProfile: true,
+  });
+  const type = String(formData.get("type") ?? "general_update") as PostType;
+  const post = await createPostInSpace(
+    {
+      orgId: viewer.org.id,
+      spaceId,
+      authorMembershipId: viewer.membership.id,
+      type,
+      opportunitySource: opportunitySourceForPost(
+        type,
+        viewer.membership,
+        formData.get("opportunity_source"),
+      ),
+      title: String(formData.get("title") ?? "").trim(),
+      body: String(formData.get("body") ?? "").trim(),
+      tags: parseTags(formData.get("tags")),
+      relatedStartupName: String(formData.get("related_startup_name") ?? ""),
+      relatedRolesNeeded: parseTags(formData.get("related_roles_needed")),
+      status: "active",
+      featured: false,
+      hidden: false,
+      commentsLocked: false,
+    },
+    { recordAnalytics: false },
+  );
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: viewer.org.id,
+    spaceId,
+    membershipId: viewer.membership.id,
+    eventName: "post_created",
+    payload: { postId: post.id, type: post.type },
+    createdAt: post.createdAt,
+  });
+  if (
+    ["ask", "opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(
+      post.type,
+    )
+  ) {
+    enqueueSpaceMatchRecompute(slug, spaceId, space.slug);
+  }
+  revalidateSpacePostPaths(slug, space.slug, post.id);
+  const destination = [
+    "opportunity",
+    "looking_for_cofounder",
+    "looking_for_mentor",
+  ].includes(post.type)
+    ? "opportunities"
+    : post.type === "resource"
+      ? "knowledge"
+      : "feed";
+  redirect(`${spaceRoot(slug, space.slug)}/${destination}?status=post_created`);
+}
+
 export async function createPostAction(slug: string, membershipId: string, formData: FormData) {
-  const { org, membership, profile } = await requireMemberForAction(slug, membershipId, {
+  const { org, membership } = await requireMemberForAction(slug, membershipId, {
     requireFeedAccess: true,
   });
 
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
   const type = String(formData.get("type") ?? "general_update") as PostType;
-  const post = await createPost(
+  const post = await createPostInSpace(
     {
       orgId: org.id,
+      spaceId: mainSpace.id,
       authorMembershipId: membershipId,
       type,
       opportunitySource: opportunitySourceForPost(
@@ -260,7 +582,6 @@ export async function createPostAction(slug: string, membershipId: string, formD
       tags: parseTags(formData.get("tags")),
       relatedStartupName: String(formData.get("related_startup_name") ?? ""),
       relatedRolesNeeded: parseTags(formData.get("related_roles_needed")),
-      visibility: "org_only",
       status: "active",
       featured: false,
       hidden: false,
@@ -271,23 +592,97 @@ export async function createPostAction(slug: string, membershipId: string, formD
   enqueueAnalyticsEvent({
     id: `evt_${nanoid(8)}`,
     orgId: org.id,
+    spaceId: mainSpace.id,
     membershipId: membership.id,
     eventName: "post_created",
     payload: { postId: post.id, type: post.type },
     createdAt: post.createdAt,
   });
   if (
-    profile &&
-    ["ask", "opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(post.type)
+    ["ask", "opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(
+      post.type,
+    )
   ) {
-    enqueueProfileMatchRecompute(slug, org.id, profile.id);
+    enqueueSpaceMatchRecompute(slug, mainSpace.id, mainSpace.slug);
   }
 
   for (const path of getPostListRevalidationPaths(slug, post.type)) {
     revalidatePath(path);
   }
+  revalidateSpacePostPaths(slug, mainSpace.slug, post.id);
   revalidatePath(`/org/${slug}/profile`);
   redirect(`${getPostListPathForType(slug, post.type)}?status=post_created`);
+}
+
+export async function followMembershipInSpaceAction(
+  slug: string,
+  spaceId: string,
+  followerMembershipId: string,
+  followedMembershipId: string,
+  formData?: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId: followerMembershipId,
+    requireProfile: true,
+  });
+  const followed = await requireActiveTargetInSpace(
+    spaceId,
+    followedMembershipId,
+    viewer.org.id,
+  );
+  await followMembershipInSpace({
+    orgId: viewer.org.id,
+    spaceId,
+    followerMembershipId: viewer.membership.id,
+    followedMembershipId: followed.id,
+  });
+  revalidateSpaceDiscoveryPaths(slug, space.slug);
+  redirect(
+    withStatus(
+      safeSpaceReturnPath(
+        slug,
+        space.slug,
+        formData,
+        `${spaceRoot(slug, space.slug)}/people`,
+      ),
+      "member_followed",
+    ),
+  );
+}
+
+export async function unfollowMembershipInSpaceAction(
+  slug: string,
+  spaceId: string,
+  followerMembershipId: string,
+  followedMembershipId: string,
+  formData?: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId: followerMembershipId,
+    requireProfile: true,
+  });
+  await requireActiveTargetInSpace(spaceId, followedMembershipId, viewer.org.id);
+  await unfollowMembershipInSpace(
+    spaceId,
+    viewer.membership.id,
+    followedMembershipId,
+  );
+  revalidateSpaceDiscoveryPaths(slug, space.slug);
+  redirect(
+    withStatus(
+      safeSpaceReturnPath(
+        slug,
+        space.slug,
+        formData,
+        `${spaceRoot(slug, space.slug)}/people`,
+      ),
+      "member_unfollowed",
+    ),
+  );
 }
 
 export async function followMembershipAction(
@@ -299,16 +694,18 @@ export async function followMembershipAction(
   const { org, membership } = await requireMemberForAction(slug, followerMembershipId, {
     requireFeedAccess: true,
   });
-  const followedMembership = requireSameOrg(
-    await getMembershipById(followedMembershipId),
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
+  const followedMembership = await requireActiveTargetInSpace(
+    mainSpace.id,
+    followedMembershipId,
     org.id,
   );
-
-  if (followedMembership.status !== "approved") {
-    throw new Error("Unauthorized.");
-  }
-
-  await followMembership(org.id, membership.id, followedMembership.id);
+  await followMembershipInSpace({
+    orgId: org.id,
+    spaceId: mainSpace.id,
+    followerMembershipId: membership.id,
+    followedMembershipId: followedMembership.id,
+  });
   revalidateMemberDiscoveryPaths(slug);
   redirect(
     withStatus(
@@ -327,17 +724,91 @@ export async function unfollowMembershipAction(
   const { org, membership } = await requireMemberForAction(slug, followerMembershipId, {
     requireFeedAccess: true,
   });
-  const followedMembership = requireSameOrg(
-    await getMembershipById(followedMembershipId),
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
+  const followedMembership = await requireActiveTargetInSpace(
+    mainSpace.id,
+    followedMembershipId,
     org.id,
   );
-
-  await unfollowMembership(membership.id, followedMembership.id);
+  await unfollowMembershipInSpace(
+    mainSpace.id,
+    membership.id,
+    followedMembership.id,
+  );
   revalidateMemberDiscoveryPaths(slug);
   redirect(
     withStatus(
       safeReturnPath(slug, formData, `/org/${slug}/matches`),
       "member_unfollowed",
+    ),
+  );
+}
+
+export async function savePostInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  postId: string,
+  formData?: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId,
+    requireProfile: true,
+  });
+  const post = await getPostByIdInSpace(spaceId, postId);
+  if (!post || post.orgId !== viewer.org.id || post.hidden) {
+    throw new Error("Post not found in this Space.");
+  }
+  await savePostForMembershipInSpace(
+    viewer.org.id,
+    spaceId,
+    viewer.membership.id,
+    post.id,
+  );
+  revalidateSpacePostPaths(slug, space.slug, post.id);
+  redirect(
+    withStatus(
+      safeSpaceReturnPath(
+        slug,
+        space.slug,
+        formData,
+        `${spaceRoot(slug, space.slug)}/posts/${post.id}`,
+      ),
+      "post_saved",
+    ),
+  );
+}
+
+export async function unsavePostInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  postId: string,
+  formData?: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId,
+    requireProfile: true,
+  });
+  const post = await getPostByIdInSpace(spaceId, postId);
+  if (!post || post.orgId !== viewer.org.id || post.hidden) {
+    throw new Error("Post not found in this Space.");
+  }
+  await unsavePostForMembershipInSpace(spaceId, viewer.membership.id, post.id);
+  revalidateSpacePostPaths(slug, space.slug, post.id);
+  redirect(
+    withStatus(
+      safeSpaceReturnPath(
+        slug,
+        space.slug,
+        formData,
+        `${spaceRoot(slug, space.slug)}/posts/${post.id}`,
+      ),
+      "post_unsaved",
     ),
   );
 }
@@ -351,13 +822,19 @@ export async function savePostAction(
   const { org, membership } = await requireMemberForAction(slug, membershipId, {
     requireFeedAccess: true,
   });
-  const post = await getPostById(postId);
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
+  const post = await getPostByIdInSpace(mainSpace.id, postId);
   if (!post || post.orgId !== org.id || post.hidden) {
     throw new Error("Unauthorized.");
   }
 
-  await savePostForMembership(org.id, membership.id, post.id);
-  revalidatePostSavePaths(slug, post.id, post.type);
+  await savePostForMembershipInSpace(
+    org.id,
+    mainSpace.id,
+    membership.id,
+    post.id,
+  );
+  revalidatePostSavePaths(slug, mainSpace.slug, post.id, post.type);
   redirect(
     withStatus(
       safeReturnPath(slug, formData, `/org/${slug}/posts/${post.id}`),
@@ -375,13 +852,14 @@ export async function unsavePostAction(
   const { org, membership } = await requireMemberForAction(slug, membershipId, {
     requireFeedAccess: true,
   });
-  const post = await getPostById(postId);
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
+  const post = await getPostByIdInSpace(mainSpace.id, postId);
   if (!post || post.orgId !== org.id || post.hidden) {
     throw new Error("Unauthorized.");
   }
 
-  await unsavePostForMembership(membership.id, post.id);
-  revalidatePostSavePaths(slug, post.id, post.type);
+  await unsavePostForMembershipInSpace(mainSpace.id, membership.id, post.id);
+  revalidatePostSavePaths(slug, mainSpace.slug, post.id, post.type);
   redirect(
     withStatus(
       safeReturnPath(slug, formData, `/org/${slug}/posts/${post.id}`),
@@ -390,11 +868,57 @@ export async function unsavePostAction(
   );
 }
 
+export async function addCommentInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  postId: string,
+  formData: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId,
+    requireProfile: true,
+  });
+  const post = await getPostByIdInSpace(spaceId, postId);
+  if (
+    !post ||
+    post.orgId !== viewer.org.id ||
+    post.hidden ||
+    post.commentsLocked ||
+    post.status !== "active"
+  ) {
+    throw new Error("Post is not available for comments in this Space.");
+  }
+  const comment = await createCommentInSpace(
+    spaceId,
+    {
+      postId,
+      authorMembershipId: viewer.membership.id,
+      body: String(formData.get("body") ?? "").trim(),
+    },
+    { recordAnalytics: false },
+  );
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: viewer.org.id,
+    spaceId,
+    membershipId: viewer.membership.id,
+    eventName: "comment_created",
+    payload: { postId: comment.postId },
+    createdAt: comment.createdAt,
+  });
+  revalidateSpacePostPaths(slug, space.slug, post.id);
+  redirect(`${spaceRoot(slug, space.slug)}/posts/${postId}?status=comment_added`);
+}
+
 export async function addCommentAction(slug: string, membershipId: string, postId: string, formData: FormData) {
   const { org, membership } = await requireMemberForAction(slug, membershipId, {
     requireFeedAccess: true,
   });
-  const post = await getPostById(postId);
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
+  const post = await getPostByIdInSpace(mainSpace.id, postId);
   if (
     !post ||
     post.orgId !== org.id ||
@@ -405,17 +929,19 @@ export async function addCommentAction(slug: string, membershipId: string, postI
     throw new Error("Unauthorized.");
   }
 
-  const comment = await createComment(
+  const comment = await createCommentInSpace(
+    mainSpace.id,
     {
       postId,
       authorMembershipId: membership.id,
       body: String(formData.get("body") ?? ""),
     },
-    { orgId: org.id, recordAnalytics: false },
+    { recordAnalytics: false },
   );
   enqueueAnalyticsEvent({
     id: `evt_${nanoid(8)}`,
     orgId: org.id,
+    spaceId: mainSpace.id,
     membershipId: membership.id,
     eventName: "comment_created",
     payload: { postId: comment.postId },
@@ -425,28 +951,138 @@ export async function addCommentAction(slug: string, membershipId: string, postI
   for (const path of getPostCommentRevalidationPaths(slug, postId, post.type)) {
     revalidatePath(path);
   }
+  revalidateSpacePostPaths(slug, mainSpace.slug, post.id);
   redirect(`/org/${slug}/posts/${postId}?status=comment_added`);
 }
 
-export async function requestIntroAction(slug: string, requesterMembershipId: string, formData: FormData) {
-  const { org, membership } = await requireMemberForAction(slug, requesterMembershipId, {
-    requireFeedAccess: true,
+export async function requestIntroInSpaceAction(
+  slug: string,
+  spaceId: string,
+  requesterMembershipId: string,
+  formData: FormData,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId: requesterMembershipId,
+    requireProfile: true,
+  });
+  if (!viewer.profile) throw new Error("A complete profile is required.");
+
+  const receiverMembershipId = String(
+    formData.get("receiver_membership_id") ?? "",
+  );
+  const [receiverMembership, receiverProfile, pending] = await Promise.all([
+    requireActiveTargetInSpace(spaceId, receiverMembershipId, viewer.org.id),
+    getProfileByMembershipId(receiverMembershipId),
+    getPendingIntroRequestBetweenMembershipsInOrg(
+      viewer.org.id,
+      viewer.membership.id,
+      receiverMembershipId,
+    ),
+  ]);
+  if (
+    receiverMembership.id === viewer.membership.id ||
+    !receiverProfile?.onboardingComplete ||
+    !receiverProfile.introOptIn
+  ) {
+    throw new Error("This member is not available for introductions.");
+  }
+  if (pending) {
+    redirect(`${spaceRoot(slug, space.slug)}/requests?status=intro_existing`);
+  }
+
+  const rawSourceType = String(formData.get("source_type") ?? "match");
+  if (rawSourceType !== "match" && rawSourceType !== "post" && rawSourceType !== "profile") {
+    throw new Error("Invalid intro source.");
+  }
+  const sourceType = rawSourceType as IntroSourceType;
+  const sourceId =
+    String(formData.get("source_id") ?? "") ||
+    (sourceType === "profile" ? receiverProfile.id : "");
+  await requireIntroSourceInSpace({
+    spaceId,
+    sourceType,
+    sourceId,
+    requesterProfileId: viewer.profile.id,
+    receiverMembershipId: receiverMembership.id,
+    receiverProfileId: receiverProfile.id,
   });
 
+  const intro = await createIntroRequestInSpace(
+    {
+      orgId: viewer.org.id,
+      spaceId,
+      requesterMembershipId: viewer.membership.id,
+      receiverMembershipId: receiverMembership.id,
+      sourceType,
+      sourceId,
+      introPurpose: String(
+        formData.get("intro_purpose") ?? "general connection",
+      ),
+      note: String(formData.get("note") ?? ""),
+      status: "pending",
+      suggestedFirstMessage:
+        String(formData.get("suggested_first_message") ?? "") ||
+        "Excited to connect and learn more about what you’re building.",
+    },
+    { recordAnalytics: false },
+  );
+  const requestsPath = `${spaceRoot(slug, space.slug)}/requests`;
+  enqueueNotificationWrite(
+    buildNotification(
+      `ntf_${nanoid(8)}`,
+      viewer.org.id,
+      receiverMembership.id,
+      "intro_requested",
+      `A new intro request in ${space.name}`,
+      "Someone in this space wants to connect with context.",
+      requestsPath,
+      spaceId,
+    ),
+  );
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: viewer.org.id,
+    spaceId,
+    membershipId: viewer.membership.id,
+    eventName: "intro_requested",
+    payload: {
+      receiverMembershipId: intro.receiverMembershipId,
+      sourceType: intro.sourceType,
+    },
+    createdAt: intro.createdAt,
+  });
+  enqueueNotificationEmail({
+    to: receiverProfile.emailForIntro,
+    subject: `You have a new ${space.name} intro request`,
+    html: `<p>You have a new intro request inside ${space.name}.</p><p>Open <a href="${absoluteAppUrl(requestsPath)}">your requests</a> to respond.</p>`,
+    membershipId: receiverMembership.id,
+    spaceId,
+  });
+  revalidateSpaceDiscoveryPaths(slug, space.slug);
+  revalidatePath(`/org/${slug}/requests`);
+  redirect(`${requestsPath}?status=intro_requested`);
+}
+
+export async function requestIntroAction(slug: string, requesterMembershipId: string, formData: FormData) {
+  const { org, membership, profile } = await requireMemberForAction(slug, requesterMembershipId, {
+    requireFeedAccess: true,
+  });
+  if (!profile) throw new Error("Unauthorized.");
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
+
   const receiverMembershipId = String(formData.get("receiver_membership_id") ?? "");
-  const [
-    receiverMembershipCandidate,
-    receiverProfile,
-    activeIntroStatuses,
-  ] = await Promise.all([
-    getMembershipById(receiverMembershipId),
+  const [receiverMembership, receiverProfile, pendingIntro] = await Promise.all([
+    requireActiveTargetInSpace(mainSpace.id, receiverMembershipId, org.id),
     getProfileByMembershipId(receiverMembershipId),
-    listActiveIntroRequestStatusesForRequester(membership.id, [
+    getPendingIntroRequestBetweenMembershipsInOrg(
+      org.id,
+      membership.id,
       receiverMembershipId,
-    ]),
+    ),
   ]);
-  const receiverMembership = requireSameOrg(receiverMembershipCandidate, org.id);
-  if (receiverMembership.id === membership.id || receiverMembership.status !== "approved") {
+  if (receiverMembership.id === membership.id) {
     throw new Error("Unauthorized.");
   }
 
@@ -462,17 +1098,23 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
   const sourceId =
     String(formData.get("source_id") ?? "") ||
     (sourceType === "profile" ? receiverProfile.id : "");
-  if (sourceType === "profile" && sourceId !== receiverProfile.id) {
-    throw new Error("Unauthorized.");
-  }
 
-  const existingIntroStatus = activeIntroStatuses.get(receiverMembership.id);
-  if (existingIntroStatus) {
+  await requireIntroSourceInSpace({
+    spaceId: mainSpace.id,
+    sourceType,
+    sourceId,
+    requesterProfileId: profile.id,
+    receiverMembershipId: receiverMembership.id,
+    receiverProfileId: receiverProfile.id,
+  });
+
+  if (pendingIntro) {
     redirect(`/org/${slug}/requests?status=intro_existing`);
   }
 
-  const intro = await createIntroRequest({
+  const intro = await createIntroRequestInSpace({
     orgId: org.id,
+    spaceId: mainSpace.id,
     requesterMembershipId: membership.id,
     receiverMembershipId: receiverMembership.id,
     sourceType,
@@ -484,6 +1126,7 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
       String(formData.get("suggested_first_message") ?? "") ||
       "Excited to connect and learn more about what you’re building.",
   }, { recordAnalytics: false });
+  const mainRequestsPath = `${spaceRoot(slug, mainSpace.slug)}/requests`;
   enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
@@ -492,12 +1135,14 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
       "intro_requested",
       "A new intro request is waiting",
       "Someone in the community wants to connect with context.",
-      `/org/${slug}/requests`,
+      mainRequestsPath,
+      mainSpace.id,
     ),
   );
   enqueueAnalyticsEvent({
     id: `evt_${nanoid(8)}`,
     orgId: org.id,
+    spaceId: mainSpace.id,
     membershipId: membership.id,
     eventName: "intro_requested",
     payload: {
@@ -508,15 +1153,18 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
   });
 
   if (receiverProfile) {
-    const requestsUrl = absoluteAppUrl(`/org/${slug}/requests`);
+    const requestsUrl = absoluteAppUrl(mainRequestsPath);
     enqueueNotificationEmail({
       to: receiverProfile.emailForIntro,
-      subject: "You have a new Wavespark intro request",
-      html: `<p>You have a new intro request inside Wavespark.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
+      subject: "You have a new Wavesparks intro request",
+      html: `<p>You have a new intro request inside Wavesparks.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
+      membershipId: receiverMembership.id,
+      spaceId: mainSpace.id,
     });
   }
 
   revalidatePath(`/org/${slug}/requests`);
+  revalidatePath(mainRequestsPath);
   revalidatePath(`/org/${slug}/matches`);
   revalidatePath(`/org/${slug}/people`);
   revalidatePath(`/org/${slug}/people/${receiverMembership.id}`);
@@ -524,15 +1172,99 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
   redirect(`/org/${slug}/requests?status=intro_requested`);
 }
 
+export async function respondIntroInSpaceAction(
+  slug: string,
+  spaceId: string,
+  introRequestId: string,
+  responderMembershipId: string,
+  status: IntroStatus,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId: responderMembershipId,
+    requireProfile: true,
+  });
+  if (status !== "accepted" && status !== "declined") {
+    throw new Error("Invalid intro response.");
+  }
+  const intro = await getIntroRequestByIdInSpace(spaceId, introRequestId);
+  if (
+    !intro ||
+    intro.orgId !== viewer.org.id ||
+    intro.receiverMembershipId !== viewer.membership.id ||
+    intro.status !== "pending"
+  ) {
+    throw new Error("Intro request not found in this Space.");
+  }
+  const updated = await respondToIntroRequestInSpace(
+    spaceId,
+    introRequestId,
+    status,
+    { recordAnalytics: false },
+  );
+  if (!updated) throw new Error("Intro request not found in this Space.");
+  enqueueAnalyticsEvent({
+    id: `evt_${nanoid(8)}`,
+    orgId: viewer.org.id,
+    spaceId,
+    membershipId: updated.receiverMembershipId,
+    eventName: status === "accepted" ? "intro_accepted" : "intro_declined",
+    payload: { introRequestId: updated.id },
+    createdAt: updated.respondedAt ?? updated.updatedAt,
+  });
+
+  const requesterSpaceMembership = await getSpaceMembership(
+    spaceId,
+    updated.requesterMembershipId,
+  );
+  const requestsPath = `${spaceRoot(slug, space.slug)}/requests`;
+  if (requesterSpaceMembership?.accessStatus === "active") {
+    enqueueNotificationWrite(
+      buildNotification(
+        `ntf_${nanoid(8)}`,
+        viewer.org.id,
+        updated.requesterMembershipId,
+        status === "accepted" ? "intro_accepted" : "intro_declined",
+        status === "accepted"
+          ? `Your ${space.name} intro was accepted`
+          : `Your ${space.name} intro was declined`,
+        status === "accepted"
+          ? "Contact details are now available inside this Space’s requests."
+          : "The receiver passed for now. No contact details were revealed.",
+        requestsPath,
+        spaceId,
+      ),
+    );
+  }
+  enqueueMembershipEmail({
+    membershipId: updated.requesterMembershipId,
+    spaceId,
+    subject:
+      status === "accepted"
+        ? `Your ${space.name} intro was accepted`
+        : `Your ${space.name} intro was declined`,
+    html: `<p>Your request status is now <strong>${status}</strong>.</p><p>Visit <a href="${absoluteAppUrl(requestsPath)}">your ${space.name} requests</a> for the latest details.</p>`,
+  });
+  revalidatePath(requestsPath);
+  revalidatePath(`/org/${slug}/requests`);
+  redirect(
+    `${requestsPath}?status=${
+      status === "accepted" ? "intro_accepted" : "intro_declined"
+    }`,
+  );
+}
+
 export async function respondIntroAction(slug: string, introRequestId: string, responderMembershipId: string, status: IntroStatus) {
   const { org, membership } = await requireMemberForAction(slug, responderMembershipId, {
     requireFeedAccess: true,
   });
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
   if (status !== "accepted" && status !== "declined") {
     throw new Error("Unauthorized.");
   }
 
-  const intro = await getIntroRequestById(introRequestId);
+  const intro = await getIntroRequestByIdInSpace(mainSpace.id, introRequestId);
   if (
     !intro ||
     intro.orgId !== org.id ||
@@ -542,21 +1274,26 @@ export async function respondIntroAction(slug: string, introRequestId: string, r
     throw new Error("Unauthorized.");
   }
 
-  const updated = await respondToIntroRequest(introRequestId, status, {
-    recordAnalytics: false,
-  });
+  const updated = await respondToIntroRequestInSpace(
+    mainSpace.id,
+    introRequestId,
+    status,
+    { recordAnalytics: false },
+  );
   if (!updated) {
     return;
   }
   enqueueAnalyticsEvent({
     id: `evt_${nanoid(8)}`,
     orgId: org.id,
+    spaceId: mainSpace.id,
     membershipId: updated.receiverMembershipId,
     eventName: status === "accepted" ? "intro_accepted" : "intro_declined",
     payload: { introRequestId: updated.id },
     createdAt: updated.respondedAt ?? updated.updatedAt,
   });
 
+  const mainRequestsPath = `${spaceRoot(slug, mainSpace.slug)}/requests`;
   enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
@@ -567,21 +1304,24 @@ export async function respondIntroAction(slug: string, introRequestId: string, r
       status === "accepted"
         ? "Contact details are now available inside your requests inbox."
         : "The receiver passed for now. No contact details were revealed.",
-      `/org/${slug}/requests`,
+      mainRequestsPath,
+      mainSpace.id,
     ),
   );
 
-  const requestsUrl = absoluteAppUrl(`/org/${slug}/requests`);
+  const requestsUrl = absoluteAppUrl(mainRequestsPath);
   enqueueMembershipEmail({
     membershipId: updated.requesterMembershipId,
+    spaceId: mainSpace.id,
     subject:
       status === "accepted"
-        ? "Your Wavespark intro was accepted"
-        : "Your Wavespark intro was declined",
-    html: `<p>Your request status is now <strong>${status}</strong>.</p><p>Visit <a href="${requestsUrl}">your Wavespark requests inbox</a> for the latest details.</p>`,
+        ? "Your Wavesparks intro was accepted"
+        : "Your Wavesparks intro was declined",
+    html: `<p>Your request status is now <strong>${status}</strong>.</p><p>Visit <a href="${requestsUrl}">your Wavesparks requests inbox</a> for the latest details.</p>`,
   });
 
   revalidatePath(`/org/${slug}/requests`);
+  revalidatePath(mainRequestsPath);
   redirect(
     `/org/${slug}/requests?status=${
       status === "accepted" ? "intro_accepted" : "intro_declined"
@@ -590,11 +1330,45 @@ export async function respondIntroAction(slug: string, introRequestId: string, r
 }
 
 export async function markNotificationsReadAction(slug: string, membershipId: string) {
-  const { membership } = await requireMemberForAction(slug, membershipId, {
+  const { org, membership } = await requireMemberForAction(slug, membershipId, {
     requireFeedAccess: true,
   });
+  const mainSpace = await requireLegacyMainSpace(org.id, membership.id);
+  await markNotificationsReadForMembershipInSpace(mainSpace.id, membership.id);
+  revalidatePath(`/org/${slug}/requests`);
+  revalidatePath(`${spaceRoot(slug, mainSpace.slug)}/requests`);
+  redirect(`/org/${slug}/requests?status=notifications_read`);
+}
 
-  await markNotificationsReadForMembership(membership.id);
+export async function markAccountNotificationsReadAction(
+  slug: string,
+  membershipId: string,
+) {
+  const { membership } = await requireMemberForAction(slug, membershipId);
+  if (membership.accountStatus !== "connected") {
+    throw new Error("Connected account required.");
+  }
+  const accessibleSpaces = await listVisibleSpacesForMembership(membership.id);
+  await markNotificationsReadForMembershipWithSpaceAccess(
+    membership.id,
+    accessibleSpaces.map(({ space }) => space.id),
+  );
   revalidatePath(`/org/${slug}/requests`);
   redirect(`/org/${slug}/requests?status=notifications_read`);
+}
+
+export async function markNotificationsReadInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+) {
+  const { viewer, space } = await requireSpaceAccessForAction({
+    slug,
+    spaceId,
+    membershipId,
+  });
+  await markNotificationsReadForMembershipInSpace(spaceId, viewer.membership.id);
+  const requestsPath = `${spaceRoot(slug, space.slug)}/requests`;
+  revalidatePath(requestsPath);
+  redirect(`${requestsPath}?status=notifications_read`);
 }

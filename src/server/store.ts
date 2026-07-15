@@ -30,10 +30,14 @@ import {
   dailySeriesStartDate,
 } from "@/server/analytics";
 import {
-  blendEmbeddings,
   buildMatchingEmbeddingTexts,
-  recomputeMatchesForProfiles,
+  buildSpaceIntentEmbeddingTexts,
+  isSpaceMatchingMemberEligible,
+  recomputeMatchesForSpaceMembers,
+  spaceAllowsMatching,
+  type SpaceMatchingMember,
 } from "@/server/matching";
+import { spaceLifecycleAllowsMemberAccess } from "@/server/space-permissions";
 import {
   buildLocalEmbedding,
   generateEmbeddingVectors,
@@ -43,6 +47,7 @@ import {
   MATCHING_EMBEDDING_MODEL,
 } from "@/server/embeddings";
 import type {
+  AccountStatus,
   AnalyticsEvent,
   Cohort,
   CohortMember,
@@ -72,6 +77,12 @@ import type {
   PostType,
   Profile,
   ProfileLink,
+  Space,
+  SpaceAccessStatus,
+  SpaceIntent,
+  SpaceJoinSource,
+  SpaceLifecycle,
+  SpaceMembership,
   User,
 } from "@/lib/domain";
 
@@ -99,6 +110,9 @@ export interface StoreState {
   cohorts: Cohort[];
   cohortMembers: CohortMember[];
   memberships: Membership[];
+  spaces: Space[];
+  spaceMemberships: SpaceMembership[];
+  spaceIntents: SpaceIntent[];
   profiles: Profile[];
   profileLinks: ProfileLink[];
   posts: Post[];
@@ -114,6 +128,13 @@ export interface StoreState {
   analyticsEvents: AnalyticsEvent[];
 }
 
+const spaceScopedNotificationTypes = new Set<Notification["type"]>([
+  "intro_requested",
+  "intro_accepted",
+  "intro_declined",
+  "manual_intro",
+]);
+
 export interface AdminOverviewData {
   analytics: OrgAnalyticsSnapshot;
   recentPosts: Post[];
@@ -123,6 +144,18 @@ export interface AdminOverviewData {
 export interface PublicOrgStats {
   approvedMembers: number;
   introRequestsAccepted: number;
+}
+
+export interface SpaceAuditMetrics {
+  posts: number;
+  visibleComments: number;
+  follows: number;
+  savedPosts: number;
+  notifications: number;
+  introRequests: number;
+  pendingIntroRequests: number;
+  matches: number;
+  visibleMatches: number;
 }
 
 export interface CohortRecord {
@@ -172,19 +205,38 @@ export interface MembershipRecord {
   profile?: Profile;
 }
 
+export interface SpaceMembershipRecord {
+  space: Space;
+  spaceMembership: SpaceMembership;
+}
+
+export interface ActiveSpaceMemberRecord {
+  spaceMembership: SpaceMembership;
+  membership: Membership;
+  user?: User;
+  profile?: Profile;
+  intent?: SpaceIntent;
+}
+
 export type MemberWorkspaceInvitationStatus =
   | ClerkInvitationStatus
   | "connected"
   | "not_invited";
 
 export interface MemberWorkspaceRecord extends MembershipRecord {
+  spaces: SpaceMembershipRecord[];
+  /** @deprecated Read Space access from `spaces`. */
   cohorts: Cohort[];
 }
 
 export interface MemberWorkspaceOptions {
   query?: string;
+  accountStatus?: AccountStatus;
+  spaceId?: string;
+  /** @deprecated Membership status is retained only during the Space rollout. */
   status?: MembershipStatus;
   invitationStatus?: MemberWorkspaceInvitationStatus;
+  /** @deprecated Use `spaceId`. Legacy Event Space ids equal cohort ids. */
   cohortId?: string;
   page?: number;
   pageSize?: number;
@@ -208,7 +260,12 @@ export interface MemberImportCandidateRecord {
   email: string;
   user?: User;
   membership?: Membership;
+  space?: Space;
+  spaceMembership?: SpaceMembership;
+  inSpace?: boolean;
+  /** @deprecated Read `spaceMembership`. */
   cohortMember?: CohortMember;
+  /** @deprecated Read `inSpace`. */
   inCohort: boolean;
 }
 
@@ -220,12 +277,38 @@ export interface BulkMemberImportResult {
   };
   user: User;
   membership: Membership;
+  spaceMembership?: SpaceMembership;
+  spaceMembershipCreated: boolean;
+  spaceMembershipUpdated: boolean;
   cohortMember?: CohortMember;
   membershipCreated: boolean;
   cohortMemberCreated: boolean;
   classification: "created" | "existing" | "conflict";
-  conflictReason?: "rejected" | "suspended";
+  conflictReason?: "account_suspended" | "deprovisioned" | "rejected" | "suspended" | "removed";
   shouldInvite: boolean;
+}
+
+export type SpaceMembershipGrantOutcome =
+  | "added"
+  | "activated_waitlist"
+  | "already_active"
+  | "already_waitlisted"
+  | "conflict";
+
+export interface SpaceMembershipGrantResult {
+  space: Space;
+  spaceMembership: SpaceMembership;
+  created: boolean;
+  updated: boolean;
+  outcome: SpaceMembershipGrantOutcome;
+  conflictStatus?: Extract<SpaceAccessStatus, "rejected" | "suspended" | "removed">;
+}
+
+export interface AddToMainCommunityResult {
+  membershipId: string;
+  status: "added" | "already_in_main" | "account_conflict" | "failed";
+  message: string;
+  spaceMembership?: SpaceMembership;
 }
 
 export interface ProfileRecord {
@@ -279,6 +362,7 @@ export interface MatchTargetRecord {
 }
 
 interface TimeOrderedListOptions {
+  spaceId?: string;
   limit?: number;
   orderBy?: "created_desc" | "none";
 }
@@ -304,11 +388,13 @@ interface IntroRequestListOptions extends TimeOrderedListOptions {
 }
 
 interface OrgIntroRequestListOptions extends TimeOrderedListOptions {
+  spaceId?: string;
   status?: IntroStatus;
   sourceType?: IntroRequest["sourceType"];
 }
 
 interface MatchProfileRecordListOptions {
+  spaceId?: string;
   limit?: number;
   matchType?: MatchType;
   scoreBand?: MatchRecord["scoreBand"];
@@ -321,6 +407,7 @@ interface PostListOptions extends TimeOrderedListOptions {
 }
 
 interface VisibleCommentCountOptions {
+  spaceId?: string;
   postIds?: string[];
 }
 
@@ -338,7 +425,118 @@ declare global {
 
 const usesDatabase = Boolean(env.databaseUrl);
 
+export function defaultMainSpaceIdForOrg(orgId: string) {
+  return `spc_main_${createHash("md5").update(orgId).digest("hex")}`;
+}
+
+function defaultMainSpaceForOrg(organization: Organization): Space {
+  const createdAt = organization.createdAt;
+  return {
+    id: defaultMainSpaceIdForOrg(organization.id),
+    orgId: organization.id,
+    slug: "main",
+    kind: "main",
+    lifecycle: "active",
+    name: "Main Community",
+    description: organization.description,
+    eventLabel: "Permanent community",
+    matchingEnabled: true,
+    createdAt,
+    updatedAt: createdAt,
+  };
+}
+
+function defaultIntentForProfile(
+  space: Space,
+  membership: Membership,
+  profile: Profile,
+): SpaceIntent {
+  const lookingFor = [...new Set([...profile.desiredRoles, ...profile.helpNeededTags])];
+  const offers = [
+    ...new Set([
+      ...profile.skillTags,
+      ...profile.topStrengths,
+      ...profile.canContribute,
+      ...profile.mentorOffers,
+    ]),
+  ];
+  const base: SpaceIntent = {
+    id: `intent_${space.id}_${membership.id}`,
+    orgId: space.orgId,
+    spaceId: space.id,
+    membershipId: membership.id,
+    currentGoal: profile.idealMatchDescription || profile.startupOneLiner,
+    lookingFor,
+    offers,
+    matchingOptIn: profile.profileVisibleInMatching,
+    intentComplete: Boolean(
+      profile.onboardingComplete &&
+        (profile.seekingMatchTypes.length || profile.offeringMatchTypes.length),
+    ),
+    seekingText: "",
+    offeringText: "",
+    seekingEmbedding: profile.seekingEmbedding,
+    offeringEmbedding: profile.offeringEmbedding,
+    embeddingModel: profile.embeddingModel,
+    embeddingSourceHash: profile.embeddingSourceHash,
+    embeddingStatus: profile.embeddingStatus,
+    embeddingError: profile.embeddingError,
+    embeddingUpdatedAt: profile.embeddingUpdatedAt,
+    createdAt: membership.createdAt,
+    updatedAt: profile.updatedAt,
+  };
+  const texts = buildSpaceIntentEmbeddingTexts(profile, base);
+  base.seekingText = texts.seekingText;
+  base.offeringText = texts.offeringText;
+  return base;
+}
+
+function defaultSpaceState(
+  organization: Organization,
+  memberships: Membership[],
+  profiles: Profile[],
+) {
+  const mainSpace = defaultMainSpaceForOrg(organization);
+  const eligibleMemberships = memberships.filter(
+    (membership) =>
+      membership.orgId === organization.id &&
+      membership.accountStatus === "connected" &&
+      membership.status === "approved",
+  );
+  const activeMembershipIds = new Set(
+    eligibleMemberships.map((membership) => membership.id),
+  );
+  const spaceMemberships = eligibleMemberships.map<SpaceMembership>((membership) => ({
+    id: `space_member_${mainSpace.id}_${membership.id}`,
+    orgId: organization.id,
+    spaceId: mainSpace.id,
+    membershipId: membership.id,
+    accessStatus: "active",
+    joinedVia: "migration",
+    grantedAt: membership.approvedAt ?? membership.createdAt,
+    createdAt: membership.createdAt,
+    updatedAt: membership.updatedAt,
+  }));
+  const membershipById = new Map(
+    eligibleMemberships.map((membership) => [membership.id, membership]),
+  );
+  const spaceIntents = profiles
+    .filter((profile) => activeMembershipIds.has(profile.membershipId))
+    .map((profile) =>
+      defaultIntentForProfile(mainSpace, membershipById.get(profile.membershipId)!, profile),
+    );
+
+  return { mainSpace, spaceMemberships, spaceIntents };
+}
+
 function initializeStore(): StoreState {
+  const memberships = structuredClone(seedMemberships);
+  const profiles = structuredClone(seedProfiles);
+  const { mainSpace, spaceMemberships, spaceIntents } = defaultSpaceState(
+    seedOrganization,
+    memberships,
+    profiles,
+  );
   const base: StoreState = {
     organizations: structuredClone([seedOrganization]),
     users: structuredClone(seedUsers),
@@ -346,26 +544,62 @@ function initializeStore(): StoreState {
     clerkWebhookEvents: [],
     cohorts: [],
     cohortMembers: [],
-    memberships: structuredClone(seedMemberships),
-    profiles: structuredClone(seedProfiles),
+    memberships,
+    spaces: [mainSpace],
+    spaceMemberships,
+    spaceIntents,
+    profiles,
     profileLinks: structuredClone(seedProfileLinks),
-    posts: structuredClone(seedPosts),
+    posts: structuredClone(seedPosts).map((post) => ({ ...post, spaceId: mainSpace.id })),
     comments: structuredClone(seedComments),
-    follows: structuredClone(seedFollows),
+    follows: structuredClone(seedFollows).map((follow) => ({
+      ...follow,
+      spaceId: mainSpace.id,
+    })),
     postSaves: structuredClone(seedPostSaves),
     matchTypeConfigs: structuredClone(seedMatchTypeConfigs),
     matches: [],
     matchRuns: [],
     matchFeedback: [],
-    introRequests: structuredClone(seedIntroRequests),
-    notifications: structuredClone(seedNotifications),
-    analyticsEvents: structuredClone(seedAnalyticsEvents),
+    introRequests: structuredClone(seedIntroRequests).map((request) => ({
+      ...request,
+      spaceId: mainSpace.id,
+    })),
+    notifications: structuredClone(seedNotifications).map((notification) => ({
+      ...notification,
+      ...(
+        notification.type === "membership_approved" || notification.type === "admin_note"
+          ? {}
+          : { spaceId: mainSpace.id }
+      ),
+    })),
+    analyticsEvents: structuredClone(seedAnalyticsEvents).map((event) => ({
+      ...event,
+      spaceId: mainSpace.id,
+    })),
   };
 
-  base.matches = recomputeMatchesForProfiles(
+  const intentByMembershipId = new Map(
+    spaceIntents.map((intent) => [intent.membershipId, intent]),
+  );
+  const spaceMembershipByMembershipId = new Map(
+    spaceMemberships.map((spaceMembership) => [
+      spaceMembership.membershipId,
+      spaceMembership,
+    ]),
+  );
+  const membershipById = new Map(memberships.map((membership) => [membership.id, membership]));
+  base.matches = recomputeMatchesForSpaceMembers(
     seedOrganization,
-    base.memberships,
-    base.profiles,
+    mainSpace,
+    profiles.flatMap((profile) => {
+      const membership = membershipById.get(profile.membershipId);
+      const spaceMembership = spaceMembershipByMembershipId.get(profile.membershipId);
+      const intent = intentByMembershipId.get(profile.membershipId);
+      return membership && spaceMembership && intent
+        ? [{ membership, profile, spaceMembership, intent }]
+        : [];
+    }),
     base.matchTypeConfigs,
   );
 
@@ -379,6 +613,35 @@ function ensureStoreShape(store: StoreState) {
   store.clerkWebhookEvents ??= [];
   store.cohorts ??= [];
   store.cohortMembers ??= [];
+  if (!store.spaces || !store.spaceMemberships || !store.spaceIntents) {
+    const organization = store.organizations[0] ?? seedOrganization;
+    const fallback = defaultSpaceState(
+      organization,
+      store.memberships,
+      store.profiles,
+    );
+    store.spaces ??= [fallback.mainSpace];
+    store.spaceMemberships ??= fallback.spaceMemberships;
+    store.spaceIntents ??= fallback.spaceIntents;
+  }
+  const mainSpace = store.spaces.find((space) => space.kind === "main");
+  if (mainSpace) {
+    for (const post of store.posts) post.spaceId ??= mainSpace.id;
+    for (const follow of store.follows) follow.spaceId ??= mainSpace.id;
+    for (const match of store.matches) match.spaceId ??= mainSpace.id;
+    for (const run of store.matchRuns) run.spaceId ??= mainSpace.id;
+    for (const feedback of store.matchFeedback) feedback.spaceId ??= mainSpace.id;
+    for (const request of store.introRequests) request.spaceId ??= mainSpace.id;
+    for (const notification of store.notifications) {
+      if (
+        notification.type !== "membership_approved" &&
+        notification.type !== "admin_note"
+      ) {
+        notification.spaceId ??= mainSpace.id;
+      }
+    }
+    for (const event of store.analyticsEvents) event.spaceId ??= mainSpace.id;
+  }
   store.matchTypeConfigs ??= structuredClone(seedMatchTypeConfigs);
   store.matchRuns ??= [];
   store.matchFeedback ??= [];
@@ -411,7 +674,7 @@ function maybeDate(value?: string) {
 }
 
 function organizationFromRow(row: typeof dbSchema.organizations.$inferSelect): Organization {
-  return {
+  const organization = {
     id: row.id,
     clerkOrgId: row.clerkOrgId ?? undefined,
     name: row.name,
@@ -426,6 +689,23 @@ function organizationFromRow(row: typeof dbSchema.organizations.$inferSelect): O
     status: row.status as Organization["status"],
     createdAt: requiredIso(row.createdAt),
   };
+
+  return organization.id === seedOrganization.id
+    ? {
+        ...organization,
+        allowedDomains: organization.allowedDomains.map((domain) =>
+          domain === "wavespark.co" ? "wavesparks.co" : domain,
+        ),
+        name: seedOrganization.name,
+        slug: seedOrganization.slug,
+      }
+    : organization;
+}
+
+function organizationSlugCandidates(slug: string) {
+  return slug === seedOrganization.slug || slug === "wavespark"
+    ? [seedOrganization.slug, "wavespark"]
+    : [slug];
 }
 
 function userFromRow(row: typeof dbSchema.users.$inferSelect): User {
@@ -455,6 +735,7 @@ function membershipFromRow(row: typeof dbSchema.memberships.$inferSelect): Membe
     orgId: row.orgId,
     userId: row.userId,
     role: row.role,
+    accountStatus: row.accountStatus,
     affiliationType: row.affiliationType as Membership["affiliationType"],
     status: row.status,
     archetypes: row.archetypes,
@@ -493,6 +774,72 @@ function cohortMemberFromRow(row: typeof dbSchema.cohortMembers.$inferSelect): C
     status: row.status as CohortMemberStatus,
     invitedAt: requiredIso(row.invitedAt),
     promotedAt: maybeIso(row.promotedAt),
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function spaceFromRow(row: typeof dbSchema.spaces.$inferSelect): Space {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    slug: row.slug,
+    kind: row.kind,
+    lifecycle: row.lifecycle,
+    name: row.name,
+    description: row.description,
+    eventLabel: row.eventLabel,
+    startsAt: maybeIso(row.startsAt),
+    endsAt: maybeIso(row.endsAt),
+    endedAt: maybeIso(row.endedAt),
+    archivedAt: maybeIso(row.archivedAt),
+    matchingEnabled: row.matchingEnabled,
+    createdByMembershipId: row.createdByMembershipId ?? undefined,
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function spaceMembershipFromRow(
+  row: typeof dbSchema.spaceMemberships.$inferSelect,
+): SpaceMembership {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    membershipId: row.membershipId,
+    accessStatus: row.accessStatus,
+    joinedVia: row.joinedVia,
+    invitedByMembershipId: row.invitedByMembershipId ?? undefined,
+    sourceSpaceId: row.sourceSpaceId ?? undefined,
+    decisionNote: row.decisionNote ?? undefined,
+    grantedAt: maybeIso(row.grantedAt),
+    removedAt: maybeIso(row.removedAt),
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function spaceIntentFromRow(row: typeof dbSchema.spaceIntents.$inferSelect): SpaceIntent {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    membershipId: row.membershipId,
+    currentGoal: row.currentGoal,
+    lookingFor: row.lookingFor,
+    offers: row.offers,
+    matchingOptIn: row.matchingOptIn,
+    intentComplete: row.intentComplete,
+    seekingText: row.seekingText,
+    offeringText: row.offeringText,
+    seekingEmbedding: row.seekingEmbedding ?? undefined,
+    offeringEmbedding: row.offeringEmbedding ?? undefined,
+    embeddingModel: row.embeddingModel ?? undefined,
+    embeddingSourceHash: row.embeddingSourceHash ?? undefined,
+    embeddingStatus: row.embeddingStatus as SpaceIntent["embeddingStatus"],
+    embeddingError: row.embeddingError ?? undefined,
+    embeddingUpdatedAt: maybeIso(row.embeddingUpdatedAt),
     createdAt: requiredIso(row.createdAt),
     updatedAt: requiredIso(row.updatedAt),
   };
@@ -596,6 +943,7 @@ function postFromRow(row: typeof dbSchema.posts.$inferSelect): Post {
   return {
     id: row.id,
     orgId: row.orgId,
+    spaceId: row.spaceId ?? undefined,
     authorMembershipId: row.authorMembershipId,
     type: row.type,
     opportunitySource: row.opportunitySource ?? undefined,
@@ -618,6 +966,7 @@ function followFromRow(row: typeof dbSchema.follows.$inferSelect): Follow {
   return {
     id: row.id,
     orgId: row.orgId,
+    spaceId: row.spaceId ?? undefined,
     followerMembershipId: row.followerMembershipId,
     followedMembershipId: row.followedMembershipId,
     createdAt: requiredIso(row.createdAt),
@@ -671,6 +1020,7 @@ function matchFromRow(row: typeof dbSchema.matches.$inferSelect): MatchRecord {
   return {
     id: row.id,
     orgId: row.orgId,
+    spaceId: row.spaceId ?? undefined,
     sourceProfileId: row.sourceProfileId,
     targetProfileId: row.targetProfileId,
     matchType: row.matchType,
@@ -694,6 +1044,7 @@ function matchRunFromRow(row: typeof dbSchema.matchRuns.$inferSelect): MatchRun 
   return {
     id: row.id,
     orgId: row.orgId,
+    spaceId: row.spaceId ?? undefined,
     startedAt: requiredIso(row.startedAt),
     completedAt: maybeIso(row.completedAt),
     status: row.status as MatchRun["status"],
@@ -707,6 +1058,7 @@ function matchFeedbackFromRow(
   return {
     id: row.id,
     orgId: row.orgId,
+    spaceId: row.spaceId ?? undefined,
     matchId: row.matchId,
     sourceProfileId: row.sourceProfileId,
     matchType: row.matchType,
@@ -723,6 +1075,7 @@ function introRequestFromRow(row: typeof dbSchema.introRequests.$inferSelect): I
   return {
     id: row.id,
     orgId: row.orgId,
+    spaceId: row.spaceId ?? undefined,
     requesterMembershipId: row.requesterMembershipId,
     receiverMembershipId: row.receiverMembershipId,
     sourceType: row.sourceType,
@@ -742,6 +1095,7 @@ function notificationFromRow(row: typeof dbSchema.notifications.$inferSelect): N
   return {
     id: row.id,
     orgId: row.orgId,
+    spaceId: row.spaceId ?? undefined,
     membershipId: row.membershipId,
     type: row.type,
     title: row.title,
@@ -788,6 +1142,39 @@ function cohortMemberInsert(
     promotedAt: maybeDate(cohortMember.promotedAt),
     createdAt: new Date(cohortMember.createdAt),
     updatedAt: new Date(cohortMember.updatedAt),
+  };
+}
+
+function spaceInsert(space: Space): typeof dbSchema.spaces.$inferInsert {
+  return {
+    ...space,
+    startsAt: maybeDate(space.startsAt),
+    endsAt: maybeDate(space.endsAt),
+    endedAt: maybeDate(space.endedAt),
+    archivedAt: maybeDate(space.archivedAt),
+    createdAt: new Date(space.createdAt),
+    updatedAt: new Date(space.updatedAt),
+  };
+}
+
+function spaceMembershipInsert(
+  membership: SpaceMembership,
+): typeof dbSchema.spaceMemberships.$inferInsert {
+  return {
+    ...membership,
+    grantedAt: maybeDate(membership.grantedAt),
+    removedAt: maybeDate(membership.removedAt),
+    createdAt: new Date(membership.createdAt),
+    updatedAt: new Date(membership.updatedAt),
+  };
+}
+
+function spaceIntentInsert(intent: SpaceIntent): typeof dbSchema.spaceIntents.$inferInsert {
+  return {
+    ...intent,
+    embeddingUpdatedAt: maybeDate(intent.embeddingUpdatedAt),
+    createdAt: new Date(intent.createdAt),
+    updatedAt: new Date(intent.updatedAt),
   };
 }
 
@@ -851,6 +1238,7 @@ function matchInsert(match: MatchRecord): typeof dbSchema.matches.$inferInsert {
   return {
     id: match.id,
     orgId: match.orgId,
+    spaceId: match.spaceId,
     sourceProfileId: match.sourceProfileId,
     targetProfileId: match.targetProfileId,
     matchType: match.matchType,
@@ -874,6 +1262,7 @@ function matchRunInsert(run: MatchRun): typeof dbSchema.matchRuns.$inferInsert {
   return {
     id: run.id,
     orgId: run.orgId,
+    spaceId: run.spaceId,
     startedAt: new Date(run.startedAt),
     completedAt: maybeDate(run.completedAt),
     status: run.status,
@@ -913,6 +1302,7 @@ function analyticsEventInsert(event: AnalyticsEvent): typeof dbSchema.analyticsE
   return {
     id: event.id,
     orgId: event.orgId,
+    spaceId: event.spaceId,
     membershipId: event.membershipId,
     eventName: event.eventName,
     payloadJson: event.payload,
@@ -959,15 +1349,24 @@ export async function hasClerkWebhookEvent(id: string) {
 }
 
 export async function getOrganizationBySlug(slug: string) {
+  const candidates = organizationSlugCandidates(slug);
+
   if (!usesDatabase) {
-    return getStore().organizations.find((organization) => organization.slug === slug);
+    const organization = getStore().organizations.find((candidate) =>
+      candidates.includes(candidate.slug),
+    );
+    return organization?.id === seedOrganization.id
+      ? { ...organization, name: seedOrganization.name, slug: seedOrganization.slug }
+      : organization;
   }
 
-  const [row] = await getDb()
+  const rows = await getDb()
     .select()
     .from(dbSchema.organizations)
-    .where(eq(dbSchema.organizations.slug, slug))
-    .limit(1);
+    .where(inArray(dbSchema.organizations.slug, candidates))
+    .limit(candidates.length);
+  const row =
+    rows.find((candidate) => candidate.slug === seedOrganization.slug) ?? rows[0];
   return row ? organizationFromRow(row) : undefined;
 }
 
@@ -1022,10 +1421,17 @@ export async function unlinkOrganizationFromClerkOrg(orgId: string) {
 
 export async function getViewerRecordByEmailAndSlug(slug: string, email: string) {
   const normalizedEmail = normalizeEmailAddress(email);
+  const candidates = organizationSlugCandidates(slug);
 
   if (!usesDatabase) {
     const store = getStore();
-    const org = store.organizations.find((organization) => organization.slug === slug);
+    const storedOrg = store.organizations.find((organization) =>
+      candidates.includes(organization.slug),
+    );
+    const org =
+      storedOrg?.id === seedOrganization.id
+        ? { ...storedOrg, name: seedOrganization.name, slug: seedOrganization.slug }
+        : storedOrg;
     const user = store.users.find((candidate) => candidate.email.toLowerCase() === normalizedEmail);
     const membership =
       org && user
@@ -1040,7 +1446,7 @@ export async function getViewerRecordByEmailAndSlug(slug: string, email: string)
     return { org, user, membership, profile };
   }
 
-  const [row] = await getDb()
+  const rows = await getDb()
     .select({
       org: dbSchema.organizations,
       user: dbSchema.users,
@@ -1057,8 +1463,10 @@ export async function getViewerRecordByEmailAndSlug(slug: string, email: string)
       ),
     )
     .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
-    .where(eq(dbSchema.organizations.slug, slug))
-    .limit(1);
+    .where(inArray(dbSchema.organizations.slug, candidates))
+    .limit(candidates.length);
+  const row =
+    rows.find((candidate) => candidate.org.slug === seedOrganization.slug) ?? rows[0];
 
   return row
     ? {
@@ -1521,9 +1929,10 @@ export async function ensureMembership(
         clerkInvitationError: existing.clerkInvitationError,
         clerkInvitationUpdatedAt: existing.clerkInvitationUpdatedAt,
         role: "org_admin",
+        accountStatus: "connected",
         status: "approved",
         approvedAt: existing.approvedAt ?? now,
-        approvalNote: existing.approvalNote ?? "Approved by WAVESPARK_ADMIN_EMAILS bootstrap.",
+        approvalNote: existing.approvalNote ?? "Approved by bootstrap admin configuration.",
         updatedAt: now,
       };
 
@@ -1538,6 +1947,7 @@ export async function ensureMembership(
           clerkMembershipId: promoted.clerkMembershipId,
           clerkRole: promoted.clerkRole,
           role: promoted.role,
+          accountStatus: promoted.accountStatus,
           status: promoted.status,
           approvedAt: maybeDate(promoted.approvedAt),
           approvalNote: promoted.approvalNote,
@@ -1550,6 +1960,7 @@ export async function ensureMembership(
 
     if (
       (options.clerkMembershipId && existing.clerkMembershipId !== options.clerkMembershipId) ||
+      (options.clerkMembershipId && existing.accountStatus !== "connected") ||
       (clerkRole && existing.clerkRole !== clerkRole) ||
       (roleFromClerk && existing.role !== roleFromClerk)
     ) {
@@ -1560,6 +1971,7 @@ export async function ensureMembership(
         existing.clerkMembershipId = options.clerkMembershipId ?? existing.clerkMembershipId;
         existing.clerkRole = (clerkRole as ClerkOrgRole | undefined) ?? existing.clerkRole;
         existing.role = nextRole;
+        if (options.clerkMembershipId) existing.accountStatus = "connected";
         existing.updatedAt = now;
         return existing;
       }
@@ -1570,6 +1982,7 @@ export async function ensureMembership(
           clerkMembershipId: options.clerkMembershipId ?? existing.clerkMembershipId,
           clerkRole: clerkRole ?? existing.clerkRole,
           role: nextRole,
+          ...(options.clerkMembershipId ? { accountStatus: "connected" as const } : {}),
           updatedAt: new Date(now),
         })
         .where(eq(dbSchema.memberships.id, existing.id))
@@ -1587,10 +2000,11 @@ export async function ensureMembership(
     orgId,
     userId,
     role: roleFromClerk ?? (adminBootstrap ? "org_admin" : "member"),
+    accountStatus: options.clerkMembershipId || adminBootstrap ? "connected" : "invited",
     affiliationType: adminBootstrap ? "current participant" : "invited outsider",
     status: adminBootstrap ? "approved" : "pending",
     archetypes: adminBootstrap ? ["mentor"] : ["invited_outsider"],
-    programName: adminBootstrap ? "Wavespark Admin" : "Guest Network",
+    programName: adminBootstrap ? "Wavesparks Admin" : "Guest Network",
     cohortNameOrYear: adminBootstrap ? "Core" : "Rolling",
     approvedAt: adminBootstrap ? now : undefined,
     createdAt: now,
@@ -1653,8 +2067,14 @@ export async function createManagedAccount(input: {
   const affiliationType =
     input.affiliationType ?? (role === "org_admin" ? "current participant" : "invited outsider");
   const archetypes = input.archetypes ?? (role === "org_admin" ? ["operator"] : ["invited_outsider"]);
-  const programName = input.programName ?? (role === "org_admin" ? "Wavespark Admin" : "Guest Network");
+  const programName = input.programName ?? (role === "org_admin" ? "Wavesparks Admin" : "Guest Network");
   const cohortNameOrYear = input.cohortNameOrYear ?? (role === "org_admin" ? "Core" : "Rolling");
+  const accountStatus: AccountStatus =
+    existing?.accountStatus === "suspended" || existing?.accountStatus === "deprovisioned"
+      ? existing.accountStatus
+      : input.clerkMembershipId || input.clerkUserId || existing?.clerkMembershipId
+        ? "connected"
+        : existing?.accountStatus ?? "invited";
   const managedMembership: Membership = {
     id: existing?.id ?? `mem_${nanoid(8)}`,
     clerkMembershipId: input.clerkMembershipId ?? existing?.clerkMembershipId,
@@ -1666,6 +2086,7 @@ export async function createManagedAccount(input: {
     orgId: input.orgId,
     userId: user.id,
     role,
+    accountStatus,
     affiliationType,
     status,
     archetypes,
@@ -1703,6 +2124,7 @@ export async function createManagedAccount(input: {
         clerkInvitationError: managedMembership.clerkInvitationError,
         clerkInvitationUpdatedAt: maybeDate(managedMembership.clerkInvitationUpdatedAt),
         role: managedMembership.role,
+        accountStatus: managedMembership.accountStatus,
         affiliationType: managedMembership.affiliationType,
         status: managedMembership.status,
         archetypes: managedMembership.archetypes,
@@ -1906,6 +2328,7 @@ export async function anonymizeUserByClerkUserId(clerkUserId: string) {
         cohortNameOrYear: "",
         programName: "Former member",
         role: "member",
+        accountStatus: "deprovisioned",
         status: "suspended",
         updatedAt: now,
       } satisfies Partial<Membership>);
@@ -1999,6 +2422,7 @@ export async function anonymizeUserByClerkUserId(clerkUserId: string) {
           cohortNameOrYear: "",
           programName: "Former member",
           role: "member",
+          accountStatus: "deprovisioned",
           status: "suspended",
           updatedAt: new Date(now),
         })
@@ -2045,6 +2469,1029 @@ export async function getProfileByMembershipId(membershipId: string) {
     .where(eq(dbSchema.profiles.membershipId, membershipId))
     .limit(1);
   return row ? profileFromRow(row) : undefined;
+}
+
+function sortSpaces(left: Space, right: Space) {
+  if (left.kind !== right.kind) return left.kind === "main" ? -1 : 1;
+  const leftStart = left.startsAt ?? left.createdAt;
+  const rightStart = right.startsAt ?? right.createdAt;
+  return rightStart.localeCompare(leftStart) || left.name.localeCompare(right.name);
+}
+
+export async function listSpacesForOrg(orgId: string): Promise<Space[]> {
+  if (!usesDatabase) {
+    return getStore().spaces
+      .filter((space) => space.orgId === orgId)
+      .slice()
+      .sort(sortSpaces);
+  }
+
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.spaces)
+    .where(eq(dbSchema.spaces.orgId, orgId));
+  return rows.map(spaceFromRow).sort(sortSpaces);
+}
+
+export async function getSpaceBySlug(orgId: string, slug: string) {
+  if (!usesDatabase) {
+    return getStore().spaces.find(
+      (space) => space.orgId === orgId && space.slug === slug,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.spaces)
+    .where(and(eq(dbSchema.spaces.orgId, orgId), eq(dbSchema.spaces.slug, slug)))
+    .limit(1);
+  return row ? spaceFromRow(row) : undefined;
+}
+
+export async function getSpaceById(spaceId: string) {
+  if (!usesDatabase) {
+    return getStore().spaces.find((space) => space.id === spaceId);
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.spaces)
+    .where(eq(dbSchema.spaces.id, spaceId))
+    .limit(1);
+  return row ? spaceFromRow(row) : undefined;
+}
+
+function eventSlugBase(name: string) {
+  const normalized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return normalized || "event";
+}
+
+function eventDate(value: string | undefined, label: string) {
+  if (!value?.trim()) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} must be a valid date.`);
+  }
+  return date.toISOString();
+}
+
+function validateEventDates(startsAt?: string, endsAt?: string) {
+  if (startsAt && endsAt && new Date(endsAt).getTime() < new Date(startsAt).getTime()) {
+    throw new Error("Event end date must be on or after its start date.");
+  }
+}
+
+function legacyCohortForSpace(space: Space): Cohort {
+  return {
+    id: space.id,
+    orgId: space.orgId,
+    name: space.name,
+    description: space.description,
+    eventLabel: space.eventLabel,
+    status: space.lifecycle === "archived" ? "archived" : "active",
+    createdByMembershipId: space.createdByMembershipId,
+    createdAt: space.createdAt,
+    updatedAt: space.updatedAt,
+  };
+}
+
+export async function createEventSpace(input: {
+  /** Internal compatibility override for migrated Cohort ids. */
+  id?: string;
+  orgId: string;
+  name: string;
+  description?: string;
+  eventLabel?: string;
+  startsAt?: string;
+  endsAt?: string;
+  lifecycle?: Extract<SpaceLifecycle, "draft" | "upcoming" | "active" | "ended">;
+  matchingEnabled?: boolean;
+  createdByMembershipId?: string;
+}) {
+  const name = input.name.trim();
+  if (!name) throw new Error("Event name is required.");
+  if (input.createdByMembershipId) {
+    const creator = await getMembershipById(input.createdByMembershipId);
+    if (!creator || creator.orgId !== input.orgId) {
+      throw new Error("Event creator must belong to this organization.");
+    }
+  }
+
+  const startsAt = eventDate(input.startsAt, "Event start date");
+  const endsAt = eventDate(input.endsAt, "Event end date");
+  validateEventDates(startsAt, endsAt);
+  const lifecycle = input.lifecycle ?? "draft";
+  const now = new Date().toISOString();
+  const id = input.id?.trim() || `spc_evt_${nanoid(10)}`;
+  const space: Space = {
+    id,
+    orgId: input.orgId,
+    slug: `${eventSlugBase(name)}-${nanoid(6).toLowerCase()}`,
+    kind: "event",
+    lifecycle,
+    name,
+    description: input.description?.trim() ?? "",
+    eventLabel: input.eventLabel?.trim() ?? "",
+    startsAt,
+    endsAt,
+    endedAt: lifecycle === "ended" ? now : undefined,
+    matchingEnabled: input.matchingEnabled ?? true,
+    createdByMembershipId: input.createdByMembershipId,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const cohort = legacyCohortForSpace(space);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    store.spaces.unshift(space);
+    store.cohorts.unshift(cohort);
+    return space;
+  }
+
+  const [row] = await getDb()
+    .insert(dbSchema.spaces)
+    .values(spaceInsert(space))
+    .returning();
+  await getDb()
+    .insert(dbSchema.cohorts)
+    .values(cohortInsert(cohort))
+    .onConflictDoNothing({ target: dbSchema.cohorts.id });
+  return spaceFromRow(row);
+}
+
+export async function updateEventSpace(
+  orgId: string,
+  spaceId: string,
+  input: {
+    name?: string;
+    description?: string;
+    eventLabel?: string;
+    startsAt?: string | null;
+    endsAt?: string | null;
+    lifecycle?: Extract<SpaceLifecycle, "draft" | "upcoming" | "active" | "ended">;
+    matchingEnabled?: boolean;
+  },
+) {
+  const existing = await getSpaceById(spaceId);
+  if (!existing || existing.orgId !== orgId) return undefined;
+  if (existing.kind !== "event") {
+    throw new Error("Main Community settings cannot be changed as an Event.");
+  }
+  if (existing.lifecycle === "archived") {
+    throw new Error("Restore an archived Event before editing it.");
+  }
+
+  const name = input.name === undefined ? existing.name : input.name.trim();
+  if (!name) throw new Error("Event name is required.");
+  const startsAt = input.startsAt === undefined
+    ? existing.startsAt
+    : eventDate(input.startsAt ?? undefined, "Event start date");
+  const endsAt = input.endsAt === undefined
+    ? existing.endsAt
+    : eventDate(input.endsAt ?? undefined, "Event end date");
+  validateEventDates(startsAt, endsAt);
+  const lifecycle = input.lifecycle ?? existing.lifecycle;
+  if (existing.lifecycle !== "draft" && lifecycle === "draft") {
+    throw new Error(
+      "A published Event cannot return to draft. Archive it explicitly to close member access.",
+    );
+  }
+  const now = new Date().toISOString();
+  const next: Space = {
+    ...existing,
+    name,
+    description: input.description === undefined
+      ? existing.description
+      : input.description.trim(),
+    eventLabel: input.eventLabel === undefined
+      ? existing.eventLabel
+      : input.eventLabel.trim(),
+    startsAt,
+    endsAt,
+    lifecycle,
+    endedAt: lifecycle === "ended" ? existing.endedAt ?? now : undefined,
+    matchingEnabled: input.matchingEnabled ?? existing.matchingEnabled,
+    updatedAt: now,
+  };
+  const cohort = legacyCohortForSpace(next);
+
+  if (!usesDatabase) {
+    Object.assign(existing, next);
+    const storedCohort = getStore().cohorts.find((candidate) => candidate.id === spaceId);
+    if (storedCohort) Object.assign(storedCohort, cohort);
+    else getStore().cohorts.unshift(cohort);
+    return existing;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.spaces)
+    .set({
+      name: next.name,
+      description: next.description,
+      eventLabel: next.eventLabel,
+      startsAt: next.startsAt ? new Date(next.startsAt) : null,
+      endsAt: next.endsAt ? new Date(next.endsAt) : null,
+      lifecycle: next.lifecycle,
+      endedAt: next.endedAt ? new Date(next.endedAt) : null,
+      matchingEnabled: next.matchingEnabled,
+      updatedAt: new Date(now),
+    })
+    .where(and(eq(dbSchema.spaces.id, spaceId), eq(dbSchema.spaces.orgId, orgId)))
+    .returning();
+  if (!row) return undefined;
+  await getDb()
+    .insert(dbSchema.cohorts)
+    .values(cohortInsert(cohort))
+    .onConflictDoUpdate({
+      target: dbSchema.cohorts.id,
+      set: {
+        name: cohort.name,
+        description: cohort.description,
+        eventLabel: cohort.eventLabel,
+        status: cohort.status,
+        updatedAt: new Date(cohort.updatedAt),
+      },
+    });
+  return spaceFromRow(row);
+}
+
+export async function archiveEventSpace(orgId: string, spaceId: string) {
+  const existing = await getSpaceById(spaceId);
+  if (!existing || existing.orgId !== orgId) return undefined;
+  if (existing.kind === "main") {
+    throw new Error("Main Community cannot be archived.");
+  }
+  if (existing.lifecycle === "archived") return existing;
+
+  const now = new Date().toISOString();
+  if (!usesDatabase) {
+    existing.lifecycle = "archived";
+    existing.archivedAt = now;
+    existing.updatedAt = now;
+    const cohort = getStore().cohorts.find((candidate) => candidate.id === spaceId);
+    if (cohort) {
+      cohort.status = "archived";
+      cohort.updatedAt = now;
+    }
+    return existing;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.spaces)
+    .set({ lifecycle: "archived", archivedAt: new Date(now), updatedAt: new Date(now) })
+    .where(and(eq(dbSchema.spaces.id, spaceId), eq(dbSchema.spaces.orgId, orgId)))
+    .returning();
+  await getDb()
+    .update(dbSchema.cohorts)
+    .set({ status: "archived", updatedAt: new Date(now) })
+    .where(and(eq(dbSchema.cohorts.id, spaceId), eq(dbSchema.cohorts.orgId, orgId)));
+  return row ? spaceFromRow(row) : undefined;
+}
+
+export async function restoreEventSpace(
+  orgId: string,
+  spaceId: string,
+  lifecycle?: Extract<SpaceLifecycle, "draft" | "upcoming" | "active" | "ended">,
+) {
+  const existing = await getSpaceById(spaceId);
+  if (!existing || existing.orgId !== orgId) return undefined;
+  if (existing.kind === "main") {
+    throw new Error("Main Community does not use Event lifecycle controls.");
+  }
+  if (existing.lifecycle !== "archived") return existing;
+
+  const now = new Date().toISOString();
+  const inferredLifecycle = lifecycle ?? (
+    existing.endedAt || (existing.endsAt && new Date(existing.endsAt).getTime() < Date.now())
+      ? "ended"
+      : "active"
+  );
+  if (!usesDatabase) {
+    existing.lifecycle = inferredLifecycle;
+    existing.archivedAt = undefined;
+    existing.endedAt = inferredLifecycle === "ended" ? existing.endedAt ?? now : undefined;
+    existing.updatedAt = now;
+    const cohort = getStore().cohorts.find((candidate) => candidate.id === spaceId);
+    if (cohort) {
+      cohort.status = "active";
+      cohort.updatedAt = now;
+    }
+    return existing;
+  }
+
+  const [row] = await getDb()
+    .update(dbSchema.spaces)
+    .set({
+      lifecycle: inferredLifecycle,
+      archivedAt: null,
+      endedAt: inferredLifecycle === "ended" ? maybeDate(existing.endedAt ?? now) : null,
+      updatedAt: new Date(now),
+    })
+    .where(and(eq(dbSchema.spaces.id, spaceId), eq(dbSchema.spaces.orgId, orgId)))
+    .returning();
+  await getDb()
+    .update(dbSchema.cohorts)
+    .set({ status: "active", updatedAt: new Date(now) })
+    .where(and(eq(dbSchema.cohorts.id, spaceId), eq(dbSchema.cohorts.orgId, orgId)));
+  return row ? spaceFromRow(row) : undefined;
+}
+
+export async function getSpaceMembership(spaceId: string, membershipId: string) {
+  if (!usesDatabase) {
+    return getStore().spaceMemberships.find(
+      (spaceMembership) =>
+        spaceMembership.spaceId === spaceId &&
+        spaceMembership.membershipId === membershipId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.spaceMemberships)
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, spaceId),
+        eq(dbSchema.spaceMemberships.membershipId, membershipId),
+      ),
+    )
+    .limit(1);
+  return row ? spaceMembershipFromRow(row) : undefined;
+}
+
+async function ensureLegacyEventMembership(
+  space: Space,
+  membership: Membership,
+) {
+  if (space.kind !== "event") return undefined;
+  const cohort = await getCohortById(space.id);
+  if (!cohort) return undefined;
+  if (cohort.orgId !== space.orgId) {
+    throw new Error("Legacy Event mapping is invalid.");
+  }
+  const user = await getUserById(membership.userId);
+  if (!user) throw new Error("Membership user not found.");
+  return upsertCohortMember({
+    orgId: space.orgId,
+    cohortId: space.id,
+    membership,
+    email: user.email,
+    name: user.name,
+  });
+}
+
+export async function grantSpaceMembership(input: {
+  orgId: string;
+  spaceId: string;
+  membershipId: string;
+  accessStatus?: Extract<SpaceAccessStatus, "active" | "waitlist">;
+  joinedVia?: SpaceJoinSource;
+  invitedByMembershipId?: string;
+  sourceSpaceId?: string;
+  decisionNote?: string;
+}): Promise<SpaceMembershipGrantResult> {
+  const [space, membership, existing] = await Promise.all([
+    getSpaceById(input.spaceId),
+    getMembershipById(input.membershipId),
+    getSpaceMembership(input.spaceId, input.membershipId),
+  ]);
+  if (!space || space.orgId !== input.orgId) {
+    throw new Error("Destination Space not found.");
+  }
+  if (space.lifecycle === "archived") {
+    throw new Error("Archived Spaces cannot accept new members.");
+  }
+  if (!membership || membership.orgId !== input.orgId) {
+    throw new Error("Membership does not belong to this organization.");
+  }
+  if (membership.accountStatus === "suspended" || membership.accountStatus === "deprovisioned") {
+    throw new Error(`Account is ${membership.accountStatus}.`);
+  }
+  if (input.invitedByMembershipId) {
+    const inviter = await getMembershipById(input.invitedByMembershipId);
+    if (!inviter || inviter.orgId !== input.orgId) {
+      throw new Error("Inviter does not belong to this organization.");
+    }
+  }
+  if (input.sourceSpaceId) {
+    const sourceSpace = await getSpaceById(input.sourceSpaceId);
+    if (!sourceSpace || sourceSpace.orgId !== input.orgId) {
+      throw new Error("Source Space not found.");
+    }
+  }
+
+  const requestedAccess = input.accessStatus ?? "active";
+  if (existing?.accessStatus === "active") {
+    await ensureLegacyEventMembership(space, membership);
+    return {
+      space,
+      spaceMembership: existing,
+      created: false,
+      updated: false,
+      outcome: "already_active",
+    };
+  }
+  if (existing?.accessStatus === "waitlist" && requestedAccess === "waitlist") {
+    await ensureLegacyEventMembership(space, membership);
+    return {
+      space,
+      spaceMembership: existing,
+      created: false,
+      updated: false,
+      outcome: "already_waitlisted",
+    };
+  }
+  if (
+    existing &&
+    (existing.accessStatus === "rejected" ||
+      existing.accessStatus === "suspended" ||
+      existing.accessStatus === "removed")
+  ) {
+    return {
+      space,
+      spaceMembership: existing,
+      created: false,
+      updated: false,
+      outcome: "conflict",
+      conflictStatus: existing.accessStatus,
+    };
+  }
+
+  const now = new Date().toISOString();
+  if (existing) {
+    const next: SpaceMembership = {
+      ...existing,
+      accessStatus: "active",
+      decisionNote: input.decisionNote?.trim() || existing.decisionNote,
+      grantedAt: existing.grantedAt ?? now,
+      removedAt: undefined,
+      updatedAt: now,
+    };
+    if (!usesDatabase) {
+      Object.assign(existing, next);
+    } else {
+      const [row] = await getDb()
+        .update(dbSchema.spaceMemberships)
+        .set({
+          accessStatus: "active",
+          decisionNote: next.decisionNote,
+          grantedAt: new Date(next.grantedAt!),
+          removedAt: null,
+          updatedAt: new Date(now),
+        })
+        .where(
+          and(
+            eq(dbSchema.spaceMemberships.spaceId, space.id),
+            eq(dbSchema.spaceMemberships.membershipId, membership.id),
+          ),
+        )
+        .returning();
+      if (!row) throw new Error("Unable to activate Space access.");
+      Object.assign(next, spaceMembershipFromRow(row));
+    }
+    await ensureLegacyEventMembership(space, membership);
+    return {
+      space,
+      spaceMembership: next,
+      created: false,
+      updated: true,
+      outcome: "activated_waitlist",
+    };
+  }
+
+  const next: SpaceMembership = {
+    id: `spm_${createHash("sha256")
+      .update(`${space.id}:${membership.id}`)
+      .digest("hex")
+      .slice(0, 24)}`,
+    orgId: input.orgId,
+    spaceId: space.id,
+    membershipId: membership.id,
+    accessStatus: requestedAccess,
+    joinedVia: input.joinedVia ?? "direct",
+    invitedByMembershipId: input.invitedByMembershipId,
+    sourceSpaceId: input.sourceSpaceId,
+    decisionNote: input.decisionNote?.trim() || undefined,
+    grantedAt: requestedAccess === "active" ? now : undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+  let created = true;
+  let persisted = next;
+  if (!usesDatabase) {
+    getStore().spaceMemberships.push(next);
+  } else {
+    const [row] = await getDb()
+      .insert(dbSchema.spaceMemberships)
+      .values(spaceMembershipInsert(next))
+      .onConflictDoNothing({
+        target: [
+          dbSchema.spaceMemberships.spaceId,
+          dbSchema.spaceMemberships.membershipId,
+        ],
+      })
+      .returning();
+    if (row) {
+      persisted = spaceMembershipFromRow(row);
+    } else {
+      created = false;
+      const concurrent = await getSpaceMembership(space.id, membership.id);
+      if (!concurrent) throw new Error("Unable to grant Space access.");
+      persisted = concurrent;
+    }
+  }
+  await ensureLegacyEventMembership(space, membership);
+  if (!created) {
+    if (persisted.accessStatus === "active") {
+      return {
+        space,
+        spaceMembership: persisted,
+        created: false,
+        updated: false,
+        outcome: "already_active",
+      };
+    }
+    if (persisted.accessStatus === "waitlist") {
+      if (requestedAccess === "active") {
+        const activated = await setSpaceMembershipAccessStatus({
+          orgId: input.orgId,
+          spaceId: space.id,
+          membershipId: membership.id,
+          accessStatus: "active",
+          actorMembershipId: input.invitedByMembershipId,
+          decisionNote: input.decisionNote,
+          joinedVia: input.joinedVia,
+          sourceSpaceId: input.sourceSpaceId,
+        });
+        return {
+          space,
+          spaceMembership: activated,
+          created: false,
+          updated: true,
+          outcome: "activated_waitlist",
+        };
+      }
+      return {
+        space,
+        spaceMembership: persisted,
+        created: false,
+        updated: false,
+        outcome: "already_waitlisted",
+      };
+    }
+    return {
+      space,
+      spaceMembership: persisted,
+      created: false,
+      updated: false,
+      outcome: "conflict",
+      conflictStatus: persisted.accessStatus as Extract<
+        SpaceAccessStatus,
+        "rejected" | "suspended" | "removed"
+      >,
+    };
+  }
+  return {
+    space,
+    spaceMembership: persisted,
+    created: true,
+    updated: false,
+    outcome: "added",
+  };
+}
+
+export async function setSpaceMembershipAccessStatus(input: {
+  orgId: string;
+  spaceId: string;
+  membershipId: string;
+  accessStatus: SpaceAccessStatus;
+  actorMembershipId?: string;
+  decisionNote?: string;
+  joinedVia?: SpaceJoinSource;
+  sourceSpaceId?: string;
+}) {
+  const [space, membership, existing] = await Promise.all([
+    getSpaceById(input.spaceId),
+    getMembershipById(input.membershipId),
+    getSpaceMembership(input.spaceId, input.membershipId),
+  ]);
+  if (!space || space.orgId !== input.orgId) throw new Error("Space not found.");
+  if (!membership || membership.orgId !== input.orgId) {
+    throw new Error("Membership does not belong to this organization.");
+  }
+  if (
+    (input.accessStatus === "active" || input.accessStatus === "waitlist") &&
+    (membership.accountStatus === "suspended" ||
+      membership.accountStatus === "deprovisioned")
+  ) {
+    throw new Error(`Account is ${membership.accountStatus}.`);
+  }
+  if (space.kind === "main" && space.lifecycle !== "active") {
+    throw new Error("Main Community lifecycle is invalid.");
+  }
+  if (space.kind === "event" && space.lifecycle === "archived" && input.accessStatus === "active") {
+    throw new Error("Restore the Event before activating member access.");
+  }
+
+  const now = new Date().toISOString();
+  const next: SpaceMembership = {
+    id: existing?.id ?? `spm_${createHash("sha256")
+      .update(`${space.id}:${membership.id}`)
+      .digest("hex")
+      .slice(0, 24)}`,
+    orgId: input.orgId,
+    spaceId: space.id,
+    membershipId: membership.id,
+    accessStatus: input.accessStatus,
+    joinedVia: existing?.joinedVia ?? input.joinedVia ?? "direct",
+    invitedByMembershipId: existing?.invitedByMembershipId ?? input.actorMembershipId,
+    sourceSpaceId: existing?.sourceSpaceId ?? input.sourceSpaceId,
+    decisionNote: input.decisionNote?.trim() || existing?.decisionNote,
+    grantedAt:
+      input.accessStatus === "active"
+        ? existing?.grantedAt ?? now
+        : existing?.grantedAt,
+    removedAt: input.accessStatus === "removed" ? now : undefined,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  if (!usesDatabase) {
+    if (existing) Object.assign(existing, next);
+    else getStore().spaceMemberships.push(next);
+  } else {
+    const [row] = await getDb()
+      .insert(dbSchema.spaceMemberships)
+      .values(spaceMembershipInsert(next))
+      .onConflictDoUpdate({
+        target: [
+          dbSchema.spaceMemberships.spaceId,
+          dbSchema.spaceMemberships.membershipId,
+        ],
+        set: {
+          accessStatus: next.accessStatus,
+          decisionNote: next.decisionNote,
+          grantedAt: maybeDate(next.grantedAt),
+          removedAt: next.removedAt ? new Date(next.removedAt) : null,
+          updatedAt: new Date(now),
+        },
+      })
+      .returning();
+    if (!row) throw new Error("Unable to update Space access.");
+    Object.assign(next, spaceMembershipFromRow(row));
+  }
+  if (space.kind === "event" && input.accessStatus !== "removed") {
+    await ensureLegacyEventMembership(space, membership);
+  }
+  return next;
+}
+
+export async function addMembershipsToMainCommunity(input: {
+  orgId: string;
+  sourceSpaceId: string;
+  membershipIds: string[];
+  actorMembershipId: string;
+  decisionNote?: string;
+}): Promise<AddToMainCommunityResult[]> {
+  const membershipIds = [...new Set(input.membershipIds.filter(Boolean))];
+  if (membershipIds.length > 100) {
+    throw new Error("Add no more than 100 people to Main at a time.");
+  }
+  const spaces = await listSpacesForOrg(input.orgId);
+  const sourceSpace = spaces.find((space) => space.id === input.sourceSpaceId);
+  const mainSpace = spaces.find((space) => space.kind === "main");
+  if (!sourceSpace || sourceSpace.kind !== "event") {
+    throw new Error("Source Event not found.");
+  }
+  if (sourceSpace.lifecycle === "archived") {
+    throw new Error("Restore the archived Event before adding participants to Main.");
+  }
+  if (!mainSpace || mainSpace.lifecycle !== "active") {
+    throw new Error("Main Community is not configured correctly.");
+  }
+  const actor = await getMembershipById(input.actorMembershipId);
+  if (!actor || actor.orgId !== input.orgId || actor.role !== "org_admin") {
+    throw new Error("An organization administrator is required.");
+  }
+
+  const results: AddToMainCommunityResult[] = [];
+  for (const membershipId of membershipIds) {
+    try {
+      const [membership, sourceAccess, mainAccess] = await Promise.all([
+        getMembershipById(membershipId),
+        getSpaceMembership(sourceSpace.id, membershipId),
+        getSpaceMembership(mainSpace.id, membershipId),
+      ]);
+      if (!membership || membership.orgId !== input.orgId) {
+        results.push({
+          membershipId,
+          status: "failed",
+          message: "Membership was not found in this organization.",
+        });
+        continue;
+      }
+      if (!sourceAccess || sourceAccess.accessStatus !== "active") {
+        results.push({
+          membershipId,
+          status: "failed",
+          message: "This person no longer has active access to the source Event.",
+        });
+        continue;
+      }
+      if (
+        membership.accountStatus === "suspended" ||
+        membership.accountStatus === "deprovisioned"
+      ) {
+        results.push({
+          membershipId,
+          status: "account_conflict",
+          message: `The account is ${membership.accountStatus}; restore it explicitly first.`,
+        });
+        continue;
+      }
+      if (mainAccess?.accessStatus === "active") {
+        results.push({
+          membershipId,
+          status: "already_in_main",
+          message: "Already in Main Community; no changes were made.",
+          spaceMembership: mainAccess,
+        });
+        continue;
+      }
+      if (
+        mainAccess?.accessStatus === "rejected" ||
+        mainAccess?.accessStatus === "suspended" ||
+        mainAccess?.accessStatus === "removed"
+      ) {
+        results.push({
+          membershipId,
+          status: "account_conflict",
+          message: `Main Community access is ${mainAccess.accessStatus}; resolve it in member details.`,
+          spaceMembership: mainAccess,
+        });
+        continue;
+      }
+
+      const grant = await grantSpaceMembership({
+        orgId: input.orgId,
+        spaceId: mainSpace.id,
+        membershipId,
+        accessStatus: "active",
+        joinedVia: "promotion",
+        invitedByMembershipId: input.actorMembershipId,
+        sourceSpaceId: sourceSpace.id,
+        decisionNote: input.decisionNote,
+      });
+      if (grant.outcome === "conflict") {
+        results.push({
+          membershipId,
+          status: "account_conflict",
+          message: `Main Community access is ${grant.conflictStatus}; resolve it explicitly.`,
+          spaceMembership: grant.spaceMembership,
+        });
+      } else if (grant.outcome === "already_active") {
+        results.push({
+          membershipId,
+          status: "already_in_main",
+          message: "Already in Main Community; no changes were made.",
+          spaceMembership: grant.spaceMembership,
+        });
+      } else {
+        results.push({
+          membershipId,
+          status: "added",
+          message: "Added to Main Community. Event access was not changed.",
+          spaceMembership: grant.spaceMembership,
+        });
+      }
+    } catch (error) {
+      results.push({
+        membershipId,
+        status: "failed",
+        message: error instanceof Error ? error.message : "Unable to add this person to Main.",
+      });
+    }
+  }
+  return results;
+}
+
+export async function listVisibleSpacesForMembership(
+  membershipId: string,
+): Promise<SpaceMembershipRecord[]> {
+  if (!usesDatabase) {
+    const store = getStore();
+    const membership = store.memberships.find((candidate) => candidate.id === membershipId);
+    if (!membership || membership.accountStatus !== "connected") return [];
+    const spacesById = new Map(
+      store.spaces
+        .filter(
+          (space) =>
+            space.orgId === membership.orgId &&
+            space.lifecycle !== "draft" &&
+            space.lifecycle !== "archived",
+        )
+        .map((space) => [space.id, space]),
+    );
+    return store.spaceMemberships
+      .filter(
+        (spaceMembership) =>
+          spaceMembership.membershipId === membershipId &&
+          spaceMembership.orgId === membership.orgId &&
+          spaceMembership.accessStatus === "active" &&
+          spacesById.has(spaceMembership.spaceId),
+      )
+      .map((spaceMembership) => ({
+        space: spacesById.get(spaceMembership.spaceId)!,
+        spaceMembership,
+      }))
+      .sort((left, right) => sortSpaces(left.space, right.space));
+  }
+
+  const rows = await getDb()
+    .select({
+      space: dbSchema.spaces,
+      spaceMembership: dbSchema.spaceMemberships,
+    })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(dbSchema.spaces, eq(dbSchema.spaces.id, dbSchema.spaceMemberships.spaceId))
+    .innerJoin(
+      dbSchema.memberships,
+      eq(dbSchema.memberships.id, dbSchema.spaceMemberships.membershipId),
+    )
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.membershipId, membershipId),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+        eq(dbSchema.memberships.accountStatus, "connected"),
+        sql`${dbSchema.spaces.lifecycle} not in ('draft', 'archived')`,
+      ),
+    );
+  return rows
+    .map((row) => ({
+      space: spaceFromRow(row.space),
+      spaceMembership: spaceMembershipFromRow(row.spaceMembership),
+    }))
+    .sort((left, right) => sortSpaces(left.space, right.space));
+}
+
+export async function listActiveSpaceMemberRecords(
+  spaceId: string,
+): Promise<ActiveSpaceMemberRecord[]> {
+  if (!usesDatabase) {
+    const store = getStore();
+    const space = store.spaces.find((candidate) => candidate.id === spaceId);
+    if (!space) return [];
+    const membershipById = new Map(
+      store.memberships
+        .filter(
+          (membership) =>
+            membership.orgId === space.orgId && membership.accountStatus === "connected",
+        )
+        .map((membership) => [membership.id, membership]),
+    );
+    return store.spaceMemberships.flatMap((spaceMembership) => {
+      const membership = membershipById.get(spaceMembership.membershipId);
+      if (
+        spaceMembership.spaceId !== spaceId ||
+        spaceMembership.orgId !== space.orgId ||
+        spaceMembership.accessStatus !== "active" ||
+        !membership
+      ) {
+        return [];
+      }
+      return [{
+        spaceMembership,
+        membership,
+        user: store.users.find((user) => user.id === membership.userId),
+        profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+        intent: store.spaceIntents.find(
+          (intent) =>
+            intent.spaceId === spaceId && intent.membershipId === membership.id,
+        ),
+      }];
+    });
+  }
+
+  const rows = await getDb()
+    .select({
+      spaceMembership: dbSchema.spaceMemberships,
+      membership: dbSchema.memberships,
+      user: dbSchema.users,
+      profile: dbSchema.profiles,
+      intent: dbSchema.spaceIntents,
+    })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.id, dbSchema.spaceMemberships.membershipId),
+        eq(dbSchema.memberships.orgId, dbSchema.spaceMemberships.orgId),
+      ),
+    )
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .leftJoin(
+      dbSchema.spaceIntents,
+      and(
+        eq(dbSchema.spaceIntents.spaceId, dbSchema.spaceMemberships.spaceId),
+        eq(dbSchema.spaceIntents.membershipId, dbSchema.spaceMemberships.membershipId),
+      ),
+    )
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, spaceId),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+        eq(dbSchema.memberships.accountStatus, "connected"),
+      ),
+    );
+  return rows.map((row) => ({
+    spaceMembership: spaceMembershipFromRow(row.spaceMembership),
+    membership: membershipFromRow(row.membership),
+    user: row.user ? userFromRow(row.user) : undefined,
+    profile: row.profile ? profileFromRow(row.profile) : undefined,
+    intent: row.intent ? spaceIntentFromRow(row.intent) : undefined,
+  }));
+}
+
+export async function getSpaceIntent(spaceId: string, membershipId: string) {
+  if (!usesDatabase) {
+    return getStore().spaceIntents.find(
+      (intent) => intent.spaceId === spaceId && intent.membershipId === membershipId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.spaceIntents)
+    .where(
+      and(
+        eq(dbSchema.spaceIntents.spaceId, spaceId),
+        eq(dbSchema.spaceIntents.membershipId, membershipId),
+      ),
+    )
+    .limit(1);
+  return row ? spaceIntentFromRow(row) : undefined;
+}
+
+export async function upsertSpaceIntent(intent: SpaceIntent) {
+  const [space, spaceMembership] = await Promise.all([
+    getSpaceById(intent.spaceId),
+    getSpaceMembership(intent.spaceId, intent.membershipId),
+  ]);
+  if (
+    !space ||
+    !spaceMembership ||
+    space.orgId !== intent.orgId ||
+    spaceMembership.orgId !== intent.orgId
+  ) {
+    throw new Error("Space intent must belong to an existing membership in the same space.");
+  }
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const existing = store.spaceIntents.find(
+      (candidate) =>
+        candidate.spaceId === intent.spaceId &&
+        candidate.membershipId === intent.membershipId,
+    );
+    if (existing) {
+      Object.assign(existing, intent, { id: existing.id });
+      return existing;
+    }
+    store.spaceIntents.push(intent);
+    return intent;
+  }
+
+  const insert = spaceIntentInsert(intent);
+  const [row] = await getDb()
+    .insert(dbSchema.spaceIntents)
+    .values(insert)
+    .onConflictDoUpdate({
+      target: [dbSchema.spaceIntents.spaceId, dbSchema.spaceIntents.membershipId],
+      set: {
+        currentGoal: insert.currentGoal,
+        lookingFor: insert.lookingFor,
+        offers: insert.offers,
+        matchingOptIn: insert.matchingOptIn,
+        intentComplete: insert.intentComplete,
+        seekingText: insert.seekingText,
+        offeringText: insert.offeringText,
+        seekingEmbedding: insert.seekingEmbedding,
+        offeringEmbedding: insert.offeringEmbedding,
+        embeddingModel: insert.embeddingModel,
+        embeddingSourceHash: insert.embeddingSourceHash,
+        embeddingStatus: insert.embeddingStatus,
+        embeddingError: insert.embeddingError,
+        embeddingUpdatedAt: insert.embeddingUpdatedAt,
+        updatedAt: insert.updatedAt,
+      },
+    })
+    .returning();
+  return spaceIntentFromRow(row);
 }
 
 export async function getProfileById(profileId: string) {
@@ -2378,6 +3825,73 @@ async function listCohortsByMembershipIds(
   return cohortsByMembershipId;
 }
 
+export async function listSpaceMembershipRecordsByMembershipIds(
+  orgId: string,
+  membershipIds: string[],
+): Promise<Map<string, SpaceMembershipRecord[]>> {
+  const uniqueMembershipIds = [...new Set(membershipIds.filter(Boolean))];
+  const recordsByMembershipId = new Map<string, SpaceMembershipRecord[]>(
+    uniqueMembershipIds.map((membershipId) => [membershipId, []]),
+  );
+  if (!uniqueMembershipIds.length) return recordsByMembershipId;
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const spacesById = new Map(
+      store.spaces
+        .filter((space) => space.orgId === orgId)
+        .map((space) => [space.id, space]),
+    );
+    for (const spaceMembership of store.spaceMemberships) {
+      if (
+        spaceMembership.orgId !== orgId ||
+        !recordsByMembershipId.has(spaceMembership.membershipId)
+      ) {
+        continue;
+      }
+      const space = spacesById.get(spaceMembership.spaceId);
+      if (space) {
+        recordsByMembershipId.get(spaceMembership.membershipId)?.push({
+          space,
+          spaceMembership,
+        });
+      }
+    }
+  } else {
+    const rows = await getDb()
+      .select({
+        space: dbSchema.spaces,
+        spaceMembership: dbSchema.spaceMemberships,
+      })
+      .from(dbSchema.spaceMemberships)
+      .innerJoin(
+        dbSchema.spaces,
+        and(
+          eq(dbSchema.spaces.id, dbSchema.spaceMemberships.spaceId),
+          eq(dbSchema.spaces.orgId, dbSchema.spaceMemberships.orgId),
+        ),
+      )
+      .where(
+        and(
+          eq(dbSchema.spaceMemberships.orgId, orgId),
+          inArray(dbSchema.spaceMemberships.membershipId, uniqueMembershipIds),
+        ),
+      );
+    for (const row of rows) {
+      const spaceMembership = spaceMembershipFromRow(row.spaceMembership);
+      recordsByMembershipId.get(spaceMembership.membershipId)?.push({
+        space: spaceFromRow(row.space),
+        spaceMembership,
+      });
+    }
+  }
+
+  for (const records of recordsByMembershipId.values()) {
+    records.sort((left, right) => sortSpaces(left.space, right.space));
+  }
+  return recordsByMembershipId;
+}
+
 export async function listMemberWorkspaceForOrg(
   orgId: string,
   options: MemberWorkspaceOptions = {},
@@ -2386,26 +3900,29 @@ export async function listMemberWorkspaceForOrg(
   const normalizedQuery = queryText.toLowerCase();
   const pageSize = Math.min(100, positiveInteger(options.pageSize, 25));
   const requestedPage = positiveInteger(options.page, 1);
+  const requestedSpaceId = options.spaceId ?? options.cohortId;
 
   if (!usesDatabase) {
     const store = getStore();
-    const cohortMembershipIds = options.cohortId
+    const spaceMembershipIds = requestedSpaceId
       ? new Set(
-          store.cohortMembers
+          store.spaceMemberships
             .filter(
-              (cohortMember) =>
-                cohortMember.orgId === orgId && cohortMember.cohortId === options.cohortId,
+              (spaceMembership) =>
+                spaceMembership.orgId === orgId &&
+                spaceMembership.spaceId === requestedSpaceId,
             )
-            .map((cohortMember) => cohortMember.membershipId),
+            .map((spaceMembership) => spaceMembership.membershipId),
         )
       : undefined;
     const records = store.memberships
       .filter((membership) => {
         if (
           membership.orgId !== orgId ||
+          (options.accountStatus && membership.accountStatus !== options.accountStatus) ||
           (options.status && membership.status !== options.status) ||
           !matchesInvitationFilter(membership, options.invitationStatus) ||
-          (cohortMembershipIds && !cohortMembershipIds.has(membership.id))
+          (spaceMembershipIds && !spaceMembershipIds.has(membership.id))
         ) {
           return false;
         }
@@ -2426,16 +3943,23 @@ export async function listMemberWorkspaceForOrg(
     const pageCount = total ? Math.ceil(total / pageSize) : 0;
     const page = pageCount ? Math.min(requestedPage, pageCount) : 1;
     const pageMemberships = records.slice((page - 1) * pageSize, page * pageSize);
-    const cohortsByMembershipId = await listCohortsByMembershipIds(
-      orgId,
-      pageMemberships.map((membership) => membership.id),
-    );
+    const [cohortsByMembershipId, spacesByMembershipId] = await Promise.all([
+      listCohortsByMembershipIds(
+        orgId,
+        pageMemberships.map((membership) => membership.id),
+      ),
+      listSpaceMembershipRecordsByMembershipIds(
+        orgId,
+        pageMemberships.map((membership) => membership.id),
+      ),
+    ]);
 
     return {
       records: pageMemberships.map((membership) => ({
         membership,
         user: store.users.find((user) => user.id === membership.userId),
         profile: store.profiles.find((profile) => profile.membershipId === membership.id),
+        spaces: spacesByMembershipId.get(membership.id) ?? [],
         cohorts: cohortsByMembershipId.get(membership.id) ?? [],
       })),
       total,
@@ -2445,14 +3969,14 @@ export async function listMemberWorkspaceForOrg(
     };
   }
 
-  const cohortMembershipQuery = options.cohortId
+  const spaceMembershipQuery = requestedSpaceId
     ? getDb()
-        .select({ membershipId: dbSchema.cohortMembers.membershipId })
-        .from(dbSchema.cohortMembers)
+        .select({ membershipId: dbSchema.spaceMemberships.membershipId })
+        .from(dbSchema.spaceMemberships)
         .where(
           and(
-            eq(dbSchema.cohortMembers.orgId, orgId),
-            eq(dbSchema.cohortMembers.cohortId, options.cohortId),
+            eq(dbSchema.spaceMemberships.orgId, orgId),
+            eq(dbSchema.spaceMemberships.spaceId, requestedSpaceId),
           ),
         )
     : undefined;
@@ -2466,6 +3990,9 @@ export async function listMemberWorkspaceForOrg(
           : undefined;
   const filters = and(
     eq(dbSchema.memberships.orgId, orgId),
+    options.accountStatus
+      ? eq(dbSchema.memberships.accountStatus, options.accountStatus)
+      : undefined,
     options.status ? eq(dbSchema.memberships.status, options.status) : undefined,
     queryText
       ? or(
@@ -2474,8 +4001,8 @@ export async function listMemberWorkspaceForOrg(
         )
       : undefined,
     invitationCondition,
-    cohortMembershipQuery
-      ? inArray(dbSchema.memberships.id, cohortMembershipQuery)
+    spaceMembershipQuery
+      ? inArray(dbSchema.memberships.id, spaceMembershipQuery)
       : undefined,
   );
   const [countRow] = await getDb()
@@ -2499,16 +4026,23 @@ export async function listMemberWorkspaceForOrg(
     .orderBy(desc(dbSchema.memberships.createdAt))
     .limit(pageSize)
     .offset((page - 1) * pageSize);
-  const cohortsByMembershipId = await listCohortsByMembershipIds(
-    orgId,
-    rows.map((row) => row.membership.id),
-  );
+  const [cohortsByMembershipId, spacesByMembershipId] = await Promise.all([
+    listCohortsByMembershipIds(
+      orgId,
+      rows.map((row) => row.membership.id),
+    ),
+    listSpaceMembershipRecordsByMembershipIds(
+      orgId,
+      rows.map((row) => row.membership.id),
+    ),
+  ]);
 
   return {
     records: rows.map((row) => ({
       membership: membershipFromRow(row.membership),
       user: row.user ? userFromRow(row.user) : undefined,
       profile: row.profile ? profileFromRow(row.profile) : undefined,
+      spaces: spacesByMembershipId.get(row.membership.id) ?? [],
       cohorts: cohortsByMembershipId.get(row.membership.id) ?? [],
     })),
     total,
@@ -2521,7 +4055,7 @@ export async function listMemberWorkspaceForOrg(
 export async function listMemberImportCandidatesForOrg(
   orgId: string,
   emails: string[],
-  cohortId?: string,
+  destinationSpaceId?: string,
 ): Promise<MemberImportCandidateRecord[]> {
   const normalizedEmails = [
     ...new Set(emails.map(normalizeEmailAddress).filter(Boolean)),
@@ -2530,11 +4064,20 @@ export async function listMemberImportCandidatesForOrg(
     throw new Error("Member imports are limited to 100 unique email addresses.");
   }
 
-  if (cohortId) {
-    const cohort = await getCohortById(cohortId);
-    if (!cohort || cohort.orgId !== orgId) {
-      throw new Error("Cohort not found.");
-    }
+  const destinationSpace = destinationSpaceId
+    ? await getSpaceById(destinationSpaceId)
+    : undefined;
+  if (destinationSpaceId && (!destinationSpace || destinationSpace.orgId !== orgId)) {
+    throw new Error("Destination Space not found.");
+  }
+  if (destinationSpace?.lifecycle === "archived") {
+    throw new Error("Archived Spaces cannot accept new members.");
+  }
+  const legacyCohort = destinationSpace?.kind === "event"
+    ? await getCohortById(destinationSpace.id)
+    : undefined;
+  if (legacyCohort && legacyCohort.orgId !== orgId) {
+    throw new Error("Legacy Event mapping is invalid.");
   }
 
   if (!normalizedEmails.length) {
@@ -2547,17 +4090,29 @@ export async function listMemberImportCandidatesForOrg(
       const user = store.users.find(
         (candidate) => normalizeEmailAddress(candidate.email) === email,
       );
+      if (!user) {
+        return { email, inCohort: false };
+      }
       const membership = user
         ? store.memberships.find(
             (candidate) => candidate.orgId === orgId && candidate.userId === user.id,
           )
         : undefined;
+      const spaceMembership =
+        destinationSpace && membership
+          ? store.spaceMemberships.find(
+              (candidate) =>
+                candidate.orgId === orgId &&
+                candidate.spaceId === destinationSpace.id &&
+                candidate.membershipId === membership.id,
+            )
+          : undefined;
       const cohortMember =
-        cohortId && membership
+        legacyCohort && membership
           ? store.cohortMembers.find(
               (candidate) =>
                 candidate.orgId === orgId &&
-                candidate.cohortId === cohortId &&
+                candidate.cohortId === legacyCohort.id &&
                 candidate.membershipId === membership.id,
             )
           : undefined;
@@ -2566,6 +4121,9 @@ export async function listMemberImportCandidatesForOrg(
         email,
         user,
         membership,
+        space: destinationSpace,
+        spaceMembership,
+        inSpace: Boolean(spaceMembership),
         cohortMember,
         inCohort: Boolean(cohortMember),
       };
@@ -2587,7 +4145,10 @@ export async function listMemberImportCandidatesForOrg(
     )
     .where(inArray(sql<string>`lower(${dbSchema.users.email})`, normalizedEmails));
   const recordsByEmail = new Map<string, MemberImportCandidateRecord>(
-    normalizedEmails.map((email) => [email, { email, inCohort: false }]),
+    normalizedEmails.map((email) => [email, {
+      email,
+      inCohort: false,
+    }]),
   );
   const membershipIds: string[] = [];
   for (const row of rows) {
@@ -2597,6 +4158,8 @@ export async function listMemberImportCandidatesForOrg(
       email,
       user: userFromRow(row.user),
       membership,
+      space: destinationSpace,
+      inSpace: false,
       inCohort: false,
     });
     if (membership) {
@@ -2604,17 +4167,37 @@ export async function listMemberImportCandidatesForOrg(
     }
   }
 
-  if (cohortId && membershipIds.length) {
-    const cohortMemberRows = await getDb()
-      .select()
-      .from(dbSchema.cohortMembers)
-      .where(
-        and(
-          eq(dbSchema.cohortMembers.orgId, orgId),
-          eq(dbSchema.cohortMembers.cohortId, cohortId),
-          inArray(dbSchema.cohortMembers.membershipId, membershipIds),
+  if (destinationSpace && membershipIds.length) {
+    const [spaceMembershipRows, cohortMemberRows] = await Promise.all([
+      getDb()
+        .select()
+        .from(dbSchema.spaceMemberships)
+        .where(
+          and(
+            eq(dbSchema.spaceMemberships.orgId, orgId),
+            eq(dbSchema.spaceMemberships.spaceId, destinationSpace.id),
+            inArray(dbSchema.spaceMemberships.membershipId, membershipIds),
+          ),
         ),
-      );
+      legacyCohort
+        ? getDb()
+            .select()
+            .from(dbSchema.cohortMembers)
+            .where(
+              and(
+                eq(dbSchema.cohortMembers.orgId, orgId),
+                eq(dbSchema.cohortMembers.cohortId, legacyCohort.id),
+                inArray(dbSchema.cohortMembers.membershipId, membershipIds),
+              ),
+            )
+        : Promise.resolve([]),
+    ]);
+    const spaceMembershipsByMembershipId = new Map(
+      spaceMembershipRows.map((row) => {
+        const spaceMembership = spaceMembershipFromRow(row);
+        return [spaceMembership.membershipId, spaceMembership] as const;
+      }),
+    );
     const cohortMembersByMembershipId = new Map(
       cohortMemberRows.map((row) => {
         const cohortMember = cohortMemberFromRow(row);
@@ -2622,9 +4205,14 @@ export async function listMemberImportCandidatesForOrg(
       }),
     );
     for (const record of recordsByEmail.values()) {
+      const spaceMembership = record.membership
+        ? spaceMembershipsByMembershipId.get(record.membership.id)
+        : undefined;
       const cohortMember = record.membership
         ? cohortMembersByMembershipId.get(record.membership.id)
         : undefined;
+      record.spaceMembership = spaceMembership;
+      record.inSpace = Boolean(spaceMembership);
       record.cohortMember = cohortMember;
       record.inCohort = Boolean(cohortMember);
     }
@@ -2688,34 +4276,12 @@ export async function createCohort(input: {
   eventLabel?: string;
   createdByMembershipId?: string;
 }) {
-  const name = input.name.trim();
-  if (!name) {
-    throw new Error("Cohort name is required.");
-  }
-
-  const now = new Date().toISOString();
-  const cohort: Cohort = {
+  const space = await createEventSpace({
+    ...input,
     id: `coh_${nanoid(8)}`,
-    orgId: input.orgId,
-    name,
-    description: input.description?.trim() ?? "",
-    eventLabel: input.eventLabel?.trim() ?? "",
-    status: "active",
-    createdByMembershipId: input.createdByMembershipId,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  if (!usesDatabase) {
-    getStore().cohorts.unshift(cohort);
-    return cohort;
-  }
-
-  const [row] = await getDb()
-    .insert(dbSchema.cohorts)
-    .values(cohortInsert(cohort))
-    .returning();
-  return cohortFromRow(row);
+    lifecycle: "active",
+  });
+  return legacyCohortForSpace(space);
 }
 
 export async function updateCohort(
@@ -2727,68 +4293,13 @@ export async function updateCohort(
     eventLabel?: string;
   },
 ) {
-  const existing = await getCohortById(cohortId);
-  if (!existing || existing.orgId !== orgId) {
-    return undefined;
-  }
-
-  const name = input.name === undefined ? existing.name : input.name.trim();
-  if (!name) {
-    throw new Error("Cohort name is required.");
-  }
-
-  const now = new Date().toISOString();
-  const next: Cohort = {
-    ...existing,
-    name,
-    description:
-      input.description === undefined ? existing.description : input.description.trim(),
-    eventLabel:
-      input.eventLabel === undefined ? existing.eventLabel : input.eventLabel.trim(),
-    updatedAt: now,
-  };
-
-  if (!usesDatabase) {
-    Object.assign(existing, next);
-    return existing;
-  }
-
-  const [row] = await getDb()
-    .update(dbSchema.cohorts)
-    .set({
-      name: next.name,
-      description: next.description,
-      eventLabel: next.eventLabel,
-      updatedAt: new Date(next.updatedAt),
-    })
-    .where(and(eq(dbSchema.cohorts.id, cohortId), eq(dbSchema.cohorts.orgId, orgId)))
-    .returning();
-  return row ? cohortFromRow(row) : undefined;
+  const space = await updateEventSpace(orgId, cohortId, input);
+  return space ? legacyCohortForSpace(space) : undefined;
 }
 
 export async function archiveCohort(orgId: string, cohortId: string) {
-  const existing = await getCohortById(cohortId);
-  if (!existing || existing.orgId !== orgId) {
-    return undefined;
-  }
-
-  if (existing.status === "archived") {
-    return existing;
-  }
-
-  const now = new Date().toISOString();
-  if (!usesDatabase) {
-    existing.status = "archived";
-    existing.updatedAt = now;
-    return existing;
-  }
-
-  const [row] = await getDb()
-    .update(dbSchema.cohorts)
-    .set({ status: "archived", updatedAt: new Date(now) })
-    .where(and(eq(dbSchema.cohorts.id, cohortId), eq(dbSchema.cohorts.orgId, orgId)))
-    .returning();
-  return row ? cohortFromRow(row) : undefined;
+  const space = await archiveEventSpace(orgId, cohortId);
+  return space ? legacyCohortForSpace(space) : undefined;
 }
 
 export async function getCohortById(cohortId: string) {
@@ -3058,40 +4569,74 @@ export async function addMembershipToCohort(
     throw new Error("A valid email is required.");
   }
 
-  return upsertCohortMember({
+  const existingLegacyMember = !usesDatabase
+    ? getStore().cohortMembers.find(
+        (candidate) =>
+          candidate.cohortId === cohortId &&
+          candidate.membershipId === membership.id,
+      )
+    : (
+        await getDb()
+          .select()
+          .from(dbSchema.cohortMembers)
+          .where(
+            and(
+              eq(dbSchema.cohortMembers.cohortId, cohortId),
+              eq(dbSchema.cohortMembers.membershipId, membership.id),
+            ),
+          )
+          .limit(1)
+      )[0];
+
+  const grant = await grantSpaceMembership({
+    orgId,
+    spaceId: cohortId,
+    membershipId: membership.id,
+    accessStatus: "active",
+    joinedVia: "direct",
+  });
+  if (grant.outcome === "conflict") {
+    throw new Error("Event Space access requires explicit conflict resolution.");
+  }
+
+  const linked = await upsertCohortMember({
     orgId,
     cohortId,
     membership,
     email,
     name: input.name.trim() || displayNameForEmail(email),
   });
+  return { ...linked, created: !existingLegacyMember };
 }
 
 function importedMembershipForUser(input: {
   orgId: string;
   user: User;
+  /** Retained only as migration-era metadata; Space access is authoritative. */
   status: "pending" | "waitlist" | "approved";
   invitedByUserId: string;
-  cohort?: Cohort;
+  destinationSpace: Space;
   now: string;
 }): Membership {
-  const { cohort, now } = input;
+  const { destinationSpace, now } = input;
+  const eventSpace = destinationSpace.kind === "event" ? destinationSpace : undefined;
   return {
     id: `mem_${nanoid(8)}`,
     orgId: input.orgId,
     userId: input.user.id,
     role: "member",
-    affiliationType: cohort ? "current participant" : "invited outsider",
+    accountStatus: input.user.clerkUserId ? "connected" : "invited",
+    affiliationType: eventSpace ? "current participant" : "invited outsider",
     status: input.status,
-    archetypes: cohort
+    archetypes: eventSpace
       ? ["cohort_participant", "student"]
       : ["invited_outsider"],
-    programName: cohort?.name ?? "Guest Network",
-    cohortNameOrYear: cohort ? cohort.eventLabel || cohort.name : "Rolling",
+    programName: eventSpace?.name ?? "Main Community",
+    cohortNameOrYear: eventSpace
+      ? eventSpace.eventLabel || eventSpace.name
+      : "Main Community",
     invitedByUserId: input.invitedByUserId,
-    approvalNote: cohort
-      ? `Invited through ${cohort.name}.`
-      : "Invited by an organization administrator.",
+    approvalNote: `Invited with access to ${destinationSpace.name}.`,
     approvedAt: input.status === "approved" ? now : undefined,
     createdAt: now,
     updatedAt: now,
@@ -3113,9 +4658,13 @@ function membershipNeedsInvitation(membership: Membership) {
 
 export async function bulkImportMembersForOrg(input: {
   orgId: string;
+  destinationSpaceId?: string;
+  accessStatus?: Extract<SpaceAccessStatus, "active" | "waitlist">;
+  /** @deprecated Use `destinationSpaceId`. */
   cohortId?: string;
+  /** @deprecated Space access is stored in `space_memberships`. */
+  status?: "pending" | "waitlist" | "approved";
   members: BulkMemberImportInput[];
-  status: "pending" | "waitlist" | "approved";
   invitedByUserId: string;
 }): Promise<BulkMemberImportResult[]> {
   if (input.members.length > 100) {
@@ -3147,112 +4696,46 @@ export async function bulkImportMembersForOrg(input: {
     return [];
   }
 
-  const cohort = input.cohortId ? await getCohortById(input.cohortId) : undefined;
-  if (input.cohortId && (!cohort || cohort.orgId !== input.orgId)) {
-    throw new Error("Cohort not found.");
+  const canonicalRequest = input.destinationSpaceId !== undefined;
+  if (canonicalRequest && !input.destinationSpaceId?.trim()) {
+    throw new Error("Choose a destination Space.");
   }
-  if (cohort?.status === "archived") {
-    throw new Error("Archived cohorts cannot accept new members.");
+  if (canonicalRequest && !input.accessStatus) {
+    throw new Error("Choose Space access for this import.");
   }
+  const spaces = await listSpacesForOrg(input.orgId);
+  const destinationSpaceId = input.destinationSpaceId?.trim()
+    || input.cohortId?.trim()
+    || spaces.find((space) => space.kind === "main")?.id;
+  const destinationSpace = spaces.find((space) => space.id === destinationSpaceId);
+  if (!destinationSpace) throw new Error("Destination Space not found.");
+  if (destinationSpace.lifecycle === "archived") {
+    throw new Error(
+      canonicalRequest
+        ? "Archived Spaces cannot accept new members."
+        : "Archived cohorts cannot accept new members.",
+    );
+  }
+  if (destinationSpace.kind === "main" && destinationSpace.lifecycle !== "active") {
+    throw new Error("Main Community lifecycle is invalid.");
+  }
+  const accessStatus = input.accessStatus
+    ?? (input.status === "approved" ? "active" : "waitlist");
+  if (accessStatus !== "active" && accessStatus !== "waitlist") {
+    throw new Error("Invalid Space access selection.");
+  }
+  const legacyMembershipStatus = canonicalRequest ? "pending" : input.status ?? "pending";
 
   const initialCandidates = await listMemberImportCandidatesForOrg(
     input.orgId,
     [...uniqueMembers.keys()],
-    input.cohortId,
+    destinationSpace.id,
   );
   const initialByEmail = new Map(
     initialCandidates.map((candidate) => [candidate.email, candidate]),
   );
   const now = new Date().toISOString();
 
-  if (!usesDatabase) {
-    const store = getStore();
-    const results: BulkMemberImportResult[] = [];
-    for (const normalizedInput of uniqueMembers.values()) {
-      const candidate = initialByEmail.get(normalizedInput.email);
-      let user = candidate?.user;
-      let membership = candidate?.membership;
-      let membershipCreated = false;
-
-      user ??= store.users.find(
-        (storedUser) => normalizeEmailAddress(storedUser.email) === normalizedInput.email,
-      );
-      membership ??= user
-        ? store.memberships.find(
-            (storedMembership) =>
-              storedMembership.orgId === input.orgId && storedMembership.userId === user!.id,
-          )
-        : undefined;
-
-      if (!user) {
-        user = {
-          id: `usr_${nanoid(8)}`,
-          email: normalizedInput.email,
-          name: normalizedInput.name,
-          imageUrl: `https://api.dicebear.com/9.x/notionists/svg?seed=${normalizedInput.name}`,
-          platformRole: "standard",
-          createdAt: now,
-          updatedAt: now,
-        };
-        store.users.unshift(user);
-      }
-
-      if (!membership) {
-        membership = importedMembershipForUser({
-          orgId: input.orgId,
-          user,
-          status: input.status,
-          invitedByUserId: input.invitedByUserId,
-          cohort,
-          now,
-        });
-        store.memberships.unshift(membership);
-        membershipCreated = true;
-      }
-
-      if (membership.status === "rejected" || membership.status === "suspended") {
-        results.push({
-          input: normalizedInput,
-          user,
-          membership,
-          membershipCreated: false,
-          cohortMemberCreated: false,
-          classification: "conflict",
-          conflictReason: membership.status,
-          shouldInvite: false,
-        });
-        continue;
-      }
-
-      let cohortMember = candidate?.cohortMember;
-      let cohortMemberCreated = false;
-      if (cohort && !cohortMember) {
-        const linked = await upsertCohortMember({
-          orgId: input.orgId,
-          cohortId: cohort.id,
-          membership,
-          email: user.email,
-          name: user.name,
-        });
-        cohortMember = linked.cohortMember;
-        cohortMemberCreated = linked.created;
-      }
-
-      results.push({
-        input: normalizedInput,
-        user,
-        membership,
-        cohortMember,
-        membershipCreated,
-        cohortMemberCreated,
-        classification: membershipCreated ? "created" : "existing",
-        shouldInvite: membershipNeedsInvitation(membership),
-      });
-    }
-    return results;
-  }
-
-  const db = getDb();
   const newUsers = [...uniqueMembers.values()]
     .filter((member) => !initialByEmail.get(member.email)?.user)
     .map<User>((member) => ({
@@ -3265,16 +4748,20 @@ export async function bulkImportMembersForOrg(input: {
       updatedAt: now,
     }));
   if (newUsers.length) {
-    await db
-      .insert(dbSchema.users)
-      .values(newUsers.map(userInsert))
-      .onConflictDoNothing({ target: dbSchema.users.email });
+    if (!usesDatabase) {
+      getStore().users.unshift(...newUsers);
+    } else {
+      await getDb()
+        .insert(dbSchema.users)
+        .values(newUsers.map(userInsert))
+        .onConflictDoNothing({ target: dbSchema.users.email });
+    }
   }
 
   const candidatesWithUsers = await listMemberImportCandidatesForOrg(
     input.orgId,
     [...uniqueMembers.keys()],
-    input.cohortId,
+    destinationSpace.id,
   );
   const membershipsToCreate = candidatesWithUsers
     .filter(
@@ -3285,85 +4772,81 @@ export async function bulkImportMembersForOrg(input: {
       importedMembershipForUser({
         orgId: input.orgId,
         user: candidate.user,
-        status: input.status,
+        status: legacyMembershipStatus,
         invitedByUserId: input.invitedByUserId,
-        cohort,
+        destinationSpace,
         now,
       }),
     );
   const createdMembershipIds = new Set<string>();
   if (membershipsToCreate.length) {
-    const createdRows = await db
-      .insert(dbSchema.memberships)
-      .values(membershipsToCreate.map(membershipInsert))
-      .onConflictDoNothing({
-        target: [dbSchema.memberships.orgId, dbSchema.memberships.userId],
-      })
-      .returning({ id: dbSchema.memberships.id });
-    for (const row of createdRows) {
-      createdMembershipIds.add(row.id);
+    if (!usesDatabase) {
+      getStore().memberships.unshift(...membershipsToCreate);
+      membershipsToCreate.forEach((membership) => createdMembershipIds.add(membership.id));
+    } else {
+      const createdRows = await getDb()
+        .insert(dbSchema.memberships)
+        .values(membershipsToCreate.map(membershipInsert))
+        .onConflictDoNothing({
+          target: [dbSchema.memberships.orgId, dbSchema.memberships.userId],
+        })
+        .returning({ id: dbSchema.memberships.id });
+      for (const row of createdRows) createdMembershipIds.add(row.id);
     }
   }
 
   const candidatesWithMemberships = await listMemberImportCandidatesForOrg(
     input.orgId,
     [...uniqueMembers.keys()],
-    input.cohortId,
+    destinationSpace.id,
   );
-  const createdCohortMemberIds = new Set<string>();
-  if (cohort) {
-    const cohortMembersToCreate = candidatesWithMemberships
-      .filter(
-        (candidate): candidate is MemberImportCandidateRecord & {
-          user: User;
-          membership: Membership;
-        } =>
-          Boolean(
-            candidate.user &&
-              candidate.membership &&
-              !candidate.inCohort &&
-              candidate.membership.status !== "rejected" &&
-              candidate.membership.status !== "suspended",
-          ),
-      )
-      .map((candidate) => {
-        const status = cohortMemberStatusForMembership(candidate.membership);
-        const cohortMember: CohortMember = {
-          id: `chm_${nanoid(8)}`,
-          orgId: input.orgId,
-          cohortId: cohort.id,
-          membershipId: candidate.membership.id,
-          invitedEmail: candidate.user.email,
-          invitedName: candidate.user.name,
-          status,
-          invitedAt: now,
-          promotedAt: promotedAtForMembership(candidate.membership, status, now),
-          createdAt: now,
-          updatedAt: now,
-        };
-        return cohortMember;
-      });
-    if (cohortMembersToCreate.length) {
-      const createdRows = await db
-        .insert(dbSchema.cohortMembers)
-        .values(cohortMembersToCreate.map(cohortMemberInsert))
-        .onConflictDoNothing({
-          target: [dbSchema.cohortMembers.cohortId, dbSchema.cohortMembers.membershipId],
-        })
-        .returning({ id: dbSchema.cohortMembers.id });
-      for (const row of createdRows) {
-        createdCohortMemberIds.add(row.id);
-      }
+  const initialCohortMemberIds = new Set(
+    initialCandidates.flatMap((candidate) => candidate.cohortMember?.id ?? []),
+  );
+  const inviterMembership = await getMembershipByUserAndOrg(
+    input.invitedByUserId,
+    input.orgId,
+  );
+  const grantsByMembershipId = new Map<string, SpaceMembershipGrantResult>();
+  const conflictsByMembershipId = new Map<
+    string,
+    NonNullable<BulkMemberImportResult["conflictReason"]>
+  >();
+  for (const candidate of candidatesWithMemberships) {
+    if (!candidate.membership) continue;
+    const membership = candidate.membership;
+    const accountConflict = membership.accountStatus === "suspended"
+      ? canonicalRequest ? "account_suspended" as const : "suspended" as const
+      : membership.accountStatus === "deprovisioned"
+        ? "deprovisioned" as const
+        : undefined;
+    const legacyConflict = !canonicalRequest &&
+      (membership.status === "rejected" || membership.status === "suspended")
+      ? membership.status
+      : undefined;
+    if (accountConflict || legacyConflict) {
+      conflictsByMembershipId.set(membership.id, accountConflict ?? legacyConflict!);
+      continue;
+    }
+    const grant = await grantSpaceMembership({
+      orgId: input.orgId,
+      spaceId: destinationSpace.id,
+      membershipId: membership.id,
+      accessStatus,
+      joinedVia: "import",
+      invitedByMembershipId: inviterMembership?.id,
+    });
+    grantsByMembershipId.set(membership.id, grant);
+    if (grant.outcome === "conflict" && grant.conflictStatus) {
+      conflictsByMembershipId.set(membership.id, grant.conflictStatus);
     }
   }
 
-  const finalCandidates = cohort
-    ? await listMemberImportCandidatesForOrg(
-        input.orgId,
-        [...uniqueMembers.keys()],
-        cohort.id,
-      )
-    : candidatesWithMemberships;
+  const finalCandidates = await listMemberImportCandidatesForOrg(
+    input.orgId,
+    [...uniqueMembers.keys()],
+    destinationSpace.id,
+  );
   const finalByEmail = new Map(finalCandidates.map((candidate) => [candidate.email, candidate]));
 
   return [...uniqueMembers.values()].map((normalizedInput) => {
@@ -3373,23 +4856,22 @@ export async function bulkImportMembersForOrg(input: {
     }
 
     const { membership } = candidate;
-    const conflictReason =
-      membership.status === "rejected"
-        ? "rejected" as const
-        : membership.status === "suspended"
-          ? "suspended" as const
-          : undefined;
+    const conflictReason = conflictsByMembershipId.get(membership.id);
     const conflict = Boolean(conflictReason);
+    const grant = grantsByMembershipId.get(membership.id);
     return {
       input: normalizedInput,
       user: candidate.user,
       membership,
+      spaceMembership: conflict ? undefined : candidate.spaceMembership,
+      spaceMembershipCreated: Boolean(grant?.created),
+      spaceMembershipUpdated: Boolean(grant?.updated),
       cohortMember: conflict ? undefined : candidate.cohortMember,
       membershipCreated: createdMembershipIds.has(membership.id),
       cohortMemberCreated: Boolean(
         !conflict &&
           candidate.cohortMember &&
-          createdCohortMemberIds.has(candidate.cohortMember.id),
+          !initialCohortMemberIds.has(candidate.cohortMember.id),
       ),
       classification: conflict
         ? "conflict" as const
@@ -3452,9 +4934,9 @@ export async function importCohortMembers(
 
   const imported = await bulkImportMembersForOrg({
     orgId,
-    cohortId,
+    destinationSpaceId: cohortId,
+    accessStatus: "active",
     members: [...uniqueStudents.values()],
-    status: "waitlist",
     invitedByUserId,
   });
   return Promise.all(
@@ -3930,6 +5412,7 @@ export async function listPostsForOrg(
       : undefined;
     const posts = getStore().posts
       .filter((post) => post.orgId === orgId)
+      .filter((post) => !options.spaceId || post.spaceId === options.spaceId)
       .filter((post) => options.hidden === undefined || post.hidden === options.hidden)
       .filter((post) => !types || types.has(post.type))
       .filter(
@@ -3947,6 +5430,7 @@ export async function listPostsForOrg(
 
   const where = and(
     eq(dbSchema.posts.orgId, orgId),
+    options.spaceId ? eq(dbSchema.posts.spaceId, options.spaceId) : undefined,
     options.hidden === undefined ? undefined : eq(dbSchema.posts.hidden, options.hidden),
     options.types?.length ? inArray(dbSchema.posts.type, options.types) : undefined,
     options.opportunitySources?.length
@@ -3968,6 +5452,180 @@ export async function listPostsForOrg(
   const rows = await (limit ? query.limit(limit) : query);
 
   return rows.map(postFromRow);
+}
+
+/**
+ * Canonical member-facing post list. The Space id is required so callers cannot
+ * accidentally fall back to an organization-wide feed.
+ */
+export async function listPostsForSpace(
+  spaceId: string,
+  options: Omit<PostListOptions, "spaceId"> = {},
+) {
+  const space = await getSpaceById(spaceId);
+  if (!space) return [];
+  return listPostsForOrg(space.orgId, { ...options, spaceId });
+}
+
+/**
+ * Admin audit totals for one Space. Every branch starts from the explicit
+ * Space id; callers never load organization-wide resources and filter them in
+ * the UI.
+ */
+export async function getSpaceAuditMetrics(
+  spaceId: string,
+): Promise<SpaceAuditMetrics | undefined> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return undefined;
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const postIds = new Set(
+      store.posts
+        .filter((post) => post.orgId === space.orgId && post.spaceId === spaceId)
+        .map((post) => post.id),
+    );
+    const matches = store.matches.filter(
+      (match) => match.orgId === space.orgId && match.spaceId === spaceId,
+    );
+    const introRequests = store.introRequests.filter(
+      (request) => request.orgId === space.orgId && request.spaceId === spaceId,
+    );
+
+    return {
+      posts: postIds.size,
+      visibleComments: store.comments.filter(
+        (comment) => postIds.has(comment.postId) && comment.status === "visible",
+      ).length,
+      follows: store.follows.filter(
+        (follow) => follow.orgId === space.orgId && follow.spaceId === spaceId,
+      ).length,
+      savedPosts: store.postSaves.filter((postSave) => postIds.has(postSave.postId)).length,
+      notifications: store.notifications.filter(
+        (notification) =>
+          notification.orgId === space.orgId && notification.spaceId === spaceId,
+      ).length,
+      introRequests: introRequests.length,
+      pendingIntroRequests: introRequests.filter((request) => request.status === "pending")
+        .length,
+      matches: matches.length,
+      visibleMatches: matches.filter(
+        (match) => !match.hiddenByAdmin && !match.dismissedBySource,
+      ).length,
+    };
+  }
+
+  const [
+    postRows,
+    commentRows,
+    followRows,
+    savedPostRows,
+    notificationRows,
+    introRows,
+    pendingIntroRows,
+    matchRows,
+    visibleMatchRows,
+  ] = await Promise.all([
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.posts)
+      .where(
+        and(
+          eq(dbSchema.posts.orgId, space.orgId),
+          eq(dbSchema.posts.spaceId, spaceId),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.comments)
+      .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+      .where(
+        and(
+          eq(dbSchema.posts.orgId, space.orgId),
+          eq(dbSchema.posts.spaceId, spaceId),
+          eq(dbSchema.comments.status, "visible"),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.follows)
+      .where(
+        and(
+          eq(dbSchema.follows.orgId, space.orgId),
+          eq(dbSchema.follows.spaceId, spaceId),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.postSaves)
+      .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.postSaves.postId))
+      .where(
+        and(
+          eq(dbSchema.posts.orgId, space.orgId),
+          eq(dbSchema.posts.spaceId, spaceId),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.notifications)
+      .where(
+        and(
+          eq(dbSchema.notifications.orgId, space.orgId),
+          eq(dbSchema.notifications.spaceId, spaceId),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, space.orgId),
+          eq(dbSchema.introRequests.spaceId, spaceId),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, space.orgId),
+          eq(dbSchema.introRequests.spaceId, spaceId),
+          eq(dbSchema.introRequests.status, "pending"),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.matches)
+      .where(
+        and(
+          eq(dbSchema.matches.orgId, space.orgId),
+          eq(dbSchema.matches.spaceId, spaceId),
+        ),
+      ),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(dbSchema.matches)
+      .where(
+        and(
+          eq(dbSchema.matches.orgId, space.orgId),
+          eq(dbSchema.matches.spaceId, spaceId),
+          eq(dbSchema.matches.hiddenByAdmin, false),
+          eq(dbSchema.matches.dismissedBySource, false),
+        ),
+      ),
+  ]);
+
+  return {
+    posts: countFromRows(postRows),
+    visibleComments: countFromRows(commentRows),
+    follows: countFromRows(followRows),
+    savedPosts: countFromRows(savedPostRows),
+    notifications: countFromRows(notificationRows),
+    introRequests: countFromRows(introRows),
+    pendingIntroRequests: countFromRows(pendingIntroRows),
+    matches: countFromRows(matchRows),
+    visibleMatches: countFromRows(visibleMatchRows),
+  };
 }
 
 export async function listPublicFeedPostRecordsForOrg(
@@ -4012,6 +5670,7 @@ export async function listPublicFeedPostRecordsForOrg(
 
   const where = and(
     eq(dbSchema.posts.orgId, orgId),
+    options.spaceId ? eq(dbSchema.posts.spaceId, options.spaceId) : undefined,
     options.hidden === undefined ? undefined : eq(dbSchema.posts.hidden, options.hidden),
     options.types?.length ? inArray(dbSchema.posts.type, options.types) : undefined,
     options.opportunitySources?.length
@@ -4057,6 +5716,15 @@ export async function listPublicFeedPostRecordsForOrg(
     profile: profileFromRow(row.profile),
     commentCount: Number(row.commentCount),
   }));
+}
+
+export async function listFeedPostRecordsForSpace(
+  spaceId: string,
+  options: Omit<PostListOptions, "spaceId"> = {},
+): Promise<PublicFeedPostRecord[]> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return [];
+  return listPublicFeedPostRecordsForOrg(space.orgId, { ...options, spaceId });
 }
 
 export async function hasPostForMembership(orgId: string, membershipId: string) {
@@ -4150,7 +5818,11 @@ export async function listAllCommentsForOrg(
   if (!usesDatabase) {
     const postIds = new Set(
       getStore()
-        .posts.filter((post) => post.orgId === orgId)
+        .posts.filter(
+          (post) =>
+            post.orgId === orgId &&
+            (!options.spaceId || post.spaceId === options.spaceId),
+        )
         .map((post) => post.id),
     );
     const comments = getStore().comments.filter((comment) => postIds.has(comment.postId));
@@ -4166,7 +5838,12 @@ export async function listAllCommentsForOrg(
     .select({ comment: dbSchema.comments })
     .from(dbSchema.comments)
     .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
-    .where(eq(dbSchema.posts.orgId, orgId));
+    .where(
+      and(
+        eq(dbSchema.posts.orgId, orgId),
+        options.spaceId ? eq(dbSchema.posts.spaceId, options.spaceId) : undefined,
+      ),
+    );
   const ordered =
     options.orderBy === "none"
       ? query
@@ -4185,7 +5862,11 @@ export async function listCommentRecordsForOrg(
     const store = getStore();
     const postById = new Map(
       store.posts
-        .filter((post) => post.orgId === orgId)
+        .filter(
+          (post) =>
+            post.orgId === orgId &&
+            (!options.spaceId || post.spaceId === options.spaceId),
+        )
         .map((post) => [post.id, post]),
     );
     const records = store.comments
@@ -4211,7 +5892,12 @@ export async function listCommentRecordsForOrg(
     })
     .from(dbSchema.comments)
     .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
-    .where(eq(dbSchema.posts.orgId, orgId));
+    .where(
+      and(
+        eq(dbSchema.posts.orgId, orgId),
+        options.spaceId ? eq(dbSchema.posts.spaceId, options.spaceId) : undefined,
+      ),
+    );
   const ordered =
     options.orderBy === "none"
       ? query
@@ -4272,7 +5958,11 @@ export async function listVisibleCommentCountsForOrg(
   if (!usesDatabase) {
     const postIds = new Set(
       getStore()
-        .posts.filter((post) => post.orgId === orgId)
+        .posts.filter(
+          (post) =>
+            post.orgId === orgId &&
+            (!options.spaceId || post.spaceId === options.spaceId),
+        )
         .filter((post) => !scopedPostIds || scopedPostIds.includes(post.id))
         .map((post) => post.id),
     );
@@ -4297,6 +5987,7 @@ export async function listVisibleCommentCountsForOrg(
     .where(
       and(
         eq(dbSchema.posts.orgId, orgId),
+        options.spaceId ? eq(dbSchema.posts.spaceId, options.spaceId) : undefined,
         eq(dbSchema.comments.status, "visible"),
         scopedPostIds ? inArray(dbSchema.comments.postId, scopedPostIds) : undefined,
       ),
@@ -4304,6 +5995,24 @@ export async function listVisibleCommentCountsForOrg(
     .groupBy(dbSchema.comments.postId);
 
   return new Map(rows.map((row) => [row.postId, Number(row.count)]));
+}
+
+export async function listCommentRecordsForSpace(
+  spaceId: string,
+  options: Omit<TimeOrderedListOptions, "spaceId"> = {},
+) {
+  const space = await getSpaceById(spaceId);
+  if (!space) return [];
+  return listCommentRecordsForOrg(space.orgId, { ...options, spaceId });
+}
+
+export async function listVisibleCommentCountsForSpace(
+  spaceId: string,
+  options: Omit<VisibleCommentCountOptions, "spaceId"> = {},
+) {
+  const space = await getSpaceById(spaceId);
+  if (!space) return new Map<string, number>();
+  return listVisibleCommentCountsForOrg(space.orgId, { ...options, spaceId });
 }
 
 async function getOrgAnalyticsInput(orgId: string) {
@@ -4566,11 +6275,257 @@ export async function unfollowMembership(
   return deleted.length > 0;
 }
 
+export async function listFollowsForMembershipInSpace(
+  spaceId: string,
+  followerMembershipId: string,
+) {
+  if (!usesDatabase) {
+    return getStore().follows
+      .filter(
+        (follow) =>
+          follow.spaceId === spaceId &&
+          follow.followerMembershipId === followerMembershipId,
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.follows)
+    .where(
+      and(
+        eq(dbSchema.follows.spaceId, spaceId),
+        eq(dbSchema.follows.followerMembershipId, followerMembershipId),
+      ),
+    )
+    .orderBy(desc(dbSchema.follows.createdAt));
+  return rows.map(followFromRow);
+}
+
+export async function listFollowedMembershipIdsForMembershipInSpace(
+  spaceId: string,
+  followerMembershipId: string,
+  options: { followedMembershipIds?: string[] } = {},
+) {
+  const scopedIds = options.followedMembershipIds
+    ? [...new Set(options.followedMembershipIds.filter(Boolean))]
+    : undefined;
+  if (scopedIds?.length === 0) return [];
+
+  if (!usesDatabase) {
+    const scopedSet = scopedIds ? new Set(scopedIds) : undefined;
+    return getStore().follows
+      .filter(
+        (follow) =>
+          follow.spaceId === spaceId &&
+          follow.followerMembershipId === followerMembershipId &&
+          (!scopedSet || scopedSet.has(follow.followedMembershipId)),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((follow) => follow.followedMembershipId);
+  }
+
+  const rows = await getDb()
+    .select({ followedMembershipId: dbSchema.follows.followedMembershipId })
+    .from(dbSchema.follows)
+    .where(
+      and(
+        eq(dbSchema.follows.spaceId, spaceId),
+        eq(dbSchema.follows.followerMembershipId, followerMembershipId),
+        scopedIds
+          ? inArray(dbSchema.follows.followedMembershipId, scopedIds)
+          : undefined,
+      ),
+    )
+    .orderBy(desc(dbSchema.follows.createdAt));
+  return rows.map((row) => row.followedMembershipId);
+}
+
+async function getFollowBetweenMembershipsInSpace(
+  spaceId: string,
+  followerMembershipId: string,
+  followedMembershipId: string,
+) {
+  if (!usesDatabase) {
+    return getStore().follows.find(
+      (follow) =>
+        follow.spaceId === spaceId &&
+        follow.followerMembershipId === followerMembershipId &&
+        follow.followedMembershipId === followedMembershipId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.follows)
+    .where(
+      and(
+        eq(dbSchema.follows.spaceId, spaceId),
+        eq(dbSchema.follows.followerMembershipId, followerMembershipId),
+        eq(dbSchema.follows.followedMembershipId, followedMembershipId),
+      ),
+    )
+    .limit(1);
+  return row ? followFromRow(row) : undefined;
+}
+
+export async function isFollowingMembershipInSpace(
+  spaceId: string,
+  followerMembershipId: string,
+  followedMembershipId: string,
+) {
+  return Boolean(
+    await getFollowBetweenMembershipsInSpace(
+      spaceId,
+      followerMembershipId,
+      followedMembershipId,
+    ),
+  );
+}
+
+async function requireActiveMembershipsInSpace(
+  spaceId: string,
+  membershipIds: string[],
+) {
+  const space = await getSpaceById(spaceId);
+  if (!space || !spaceLifecycleAllowsMemberAccess(space)) {
+    throw new Error("Space is not available to members.");
+  }
+
+  const records = await Promise.all(
+    [...new Set(membershipIds)].map(async (membershipId) => ({
+      membership: await getMembershipById(membershipId),
+      spaceMembership: await getSpaceMembership(spaceId, membershipId),
+    })),
+  );
+  if (
+    records.some(
+      ({ membership, spaceMembership }) =>
+        !membership ||
+        membership.orgId !== space.orgId ||
+        membership.accountStatus !== "connected" ||
+        spaceMembership?.accessStatus !== "active",
+    )
+  ) {
+    throw new Error("Both members must have active access to this Space.");
+  }
+  return space;
+}
+
+async function authorizedSpaceIdsForConnectedMembership(
+  membershipId: string,
+  requestedSpaceIds?: string[],
+) {
+  const membership = await getMembershipById(membershipId);
+  if (!membership || membership.accountStatus !== "connected") return null;
+
+  const authorizedIds = new Set(
+    (await listVisibleSpacesForMembership(membershipId)).map(
+      ({ space }) => space.id,
+    ),
+  );
+  return requestedSpaceIds
+    ? [...new Set(requestedSpaceIds.filter((spaceId) => authorizedIds.has(spaceId)))]
+    : [...authorizedIds];
+}
+
+export async function followMembershipInSpace(input: {
+  orgId: string;
+  spaceId: string;
+  followerMembershipId: string;
+  followedMembershipId: string;
+}) {
+  if (input.followerMembershipId === input.followedMembershipId) return null;
+  const space = await requireActiveMembershipsInSpace(input.spaceId, [
+    input.followerMembershipId,
+    input.followedMembershipId,
+  ]);
+  if (space.orgId !== input.orgId) throw new Error("Space not found.");
+
+  const existing = await getFollowBetweenMembershipsInSpace(
+    input.spaceId,
+    input.followerMembershipId,
+    input.followedMembershipId,
+  );
+  if (existing) return existing;
+
+  const follow: Follow = {
+    id: `flw_${nanoid(8)}`,
+    orgId: input.orgId,
+    spaceId: input.spaceId,
+    followerMembershipId: input.followerMembershipId,
+    followedMembershipId: input.followedMembershipId,
+    createdAt: new Date().toISOString(),
+  };
+  if (!usesDatabase) {
+    getStore().follows.unshift(follow);
+    return follow;
+  }
+
+  const [row] = await getDb()
+    .insert(dbSchema.follows)
+    .values({ ...follow, createdAt: new Date(follow.createdAt) })
+    .onConflictDoNothing({
+      target: [
+        dbSchema.follows.spaceId,
+        dbSchema.follows.followerMembershipId,
+        dbSchema.follows.followedMembershipId,
+      ],
+    })
+    .returning();
+  return row
+    ? followFromRow(row)
+    : getFollowBetweenMembershipsInSpace(
+        input.spaceId,
+        input.followerMembershipId,
+        input.followedMembershipId,
+      );
+}
+
+export async function unfollowMembershipInSpace(
+  spaceId: string,
+  followerMembershipId: string,
+  followedMembershipId: string,
+) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const before = store.follows.length;
+    store.follows = store.follows.filter(
+      (follow) =>
+        follow.spaceId !== spaceId ||
+        follow.followerMembershipId !== followerMembershipId ||
+        follow.followedMembershipId !== followedMembershipId,
+    );
+    return store.follows.length < before;
+  }
+
+  const deleted = await getDb()
+    .delete(dbSchema.follows)
+    .where(
+      and(
+        eq(dbSchema.follows.spaceId, spaceId),
+        eq(dbSchema.follows.followerMembershipId, followerMembershipId),
+        eq(dbSchema.follows.followedMembershipId, followedMembershipId),
+      ),
+    )
+    .returning({ id: dbSchema.follows.id });
+  return deleted.length > 0;
+}
+
 export async function savePostForMembership(
   orgId: string,
   membershipId: string,
   postId: string,
 ) {
+  const post = await getPostById(postId);
+  if (!post?.spaceId || post.orgId !== orgId) {
+    throw new Error("Post not found in an accessible Space.");
+  }
+  const space = await requireActiveMembershipsInSpace(post.spaceId, [membershipId]);
+  if (space.orgId !== orgId) {
+    throw new Error("Post not found in an accessible Space.");
+  }
+
   if (!usesDatabase) {
     const store = getStore();
     const existing = store.postSaves.find(
@@ -4624,6 +6579,12 @@ export async function savePostForMembership(
 }
 
 export async function unsavePostForMembership(membershipId: string, postId: string) {
+  const post = await getPostById(postId);
+  if (!post?.spaceId) {
+    throw new Error("Post not found in an accessible Space.");
+  }
+  await requireActiveMembershipsInSpace(post.spaceId, [membershipId]);
+
   if (!usesDatabase) {
     const store = getStore();
     const before = store.postSaves.length;
@@ -4657,11 +6618,21 @@ export async function listSavedPostIdsForMembership(
     return new Map<string, PostSave>();
   }
 
+  const authorizedSpaceIds = await authorizedSpaceIdsForConnectedMembership(
+    membershipId,
+  );
+  if (!authorizedSpaceIds?.length) return new Map<string, PostSave>();
+
   if (!usesDatabase) {
     const scopedIds = scopedPostIds ? new Set(scopedPostIds) : undefined;
+    const authorizedIds = new Set(authorizedSpaceIds);
+    const postSpaceById = new Map(
+      getStore().posts.map((post) => [post.id, post.spaceId] as const),
+    );
     return getStore().postSaves.reduce((saves, save) => {
       if (
         save.membershipId === membershipId &&
+        authorizedIds.has(postSpaceById.get(save.postId) ?? "") &&
         (!scopedIds || scopedIds.has(save.postId))
       ) {
         saves.set(save.postId, save);
@@ -4671,20 +6642,97 @@ export async function listSavedPostIdsForMembership(
   }
 
   const rows = await getDb()
-    .select()
+    .select({ save: dbSchema.postSaves })
     .from(dbSchema.postSaves)
+    .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.postSaves.postId))
     .where(
       and(
         eq(dbSchema.postSaves.membershipId, membershipId),
+        inArray(dbSchema.posts.spaceId, authorizedSpaceIds),
         scopedPostIds ? inArray(dbSchema.postSaves.postId, scopedPostIds) : undefined,
       ),
     )
     .orderBy(desc(dbSchema.postSaves.createdAt));
 
-  return new Map(rows.map((row) => {
+  return new Map(rows.map(({ save: row }) => {
     const save = postSaveFromRow(row);
     return [save.postId, save] as const;
   }));
+}
+
+export async function savePostForMembershipInSpace(
+  orgId: string,
+  spaceId: string,
+  membershipId: string,
+  postId: string,
+) {
+  const space = await requireActiveMembershipsInSpace(spaceId, [membershipId]);
+  const post = await getPostByIdInSpace(spaceId, postId);
+  if (!post || post.orgId !== orgId || space.orgId !== orgId) {
+    throw new Error("Post not found in this Space.");
+  }
+  return savePostForMembership(orgId, membershipId, postId);
+}
+
+export async function unsavePostForMembershipInSpace(
+  spaceId: string,
+  membershipId: string,
+  postId: string,
+) {
+  await requireActiveMembershipsInSpace(spaceId, [membershipId]);
+  if (!(await getPostByIdInSpace(spaceId, postId))) {
+    throw new Error("Post not found in this Space.");
+  }
+  return unsavePostForMembership(membershipId, postId);
+}
+
+export async function listSavedPostIdsForMembershipInSpace(
+  spaceId: string,
+  membershipId: string,
+  options: { postIds?: string[] } = {},
+) {
+  await requireActiveMembershipsInSpace(spaceId, [membershipId]);
+  const scopedPostIds = options.postIds
+    ? [...new Set(options.postIds.filter(Boolean))]
+    : undefined;
+  if (scopedPostIds?.length === 0) return new Map<string, PostSave>();
+
+  if (!usesDatabase) {
+    const postIdsInSpace = new Set(
+      getStore().posts
+        .filter(
+          (post) =>
+            post.spaceId === spaceId &&
+            (!scopedPostIds || scopedPostIds.includes(post.id)),
+        )
+        .map((post) => post.id),
+    );
+    return getStore().postSaves.reduce((saves, save) => {
+      if (save.membershipId === membershipId && postIdsInSpace.has(save.postId)) {
+        saves.set(save.postId, save);
+      }
+      return saves;
+    }, new Map<string, PostSave>());
+  }
+
+  const rows = await getDb()
+    .select({ save: dbSchema.postSaves })
+    .from(dbSchema.postSaves)
+    .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.postSaves.postId))
+    .where(
+      and(
+        eq(dbSchema.postSaves.membershipId, membershipId),
+        eq(dbSchema.posts.spaceId, spaceId),
+        scopedPostIds ? inArray(dbSchema.postSaves.postId, scopedPostIds) : undefined,
+      ),
+    )
+    .orderBy(desc(dbSchema.postSaves.createdAt));
+  return new Map(
+    rows.map(({ save: row }) => {
+      const save = postSaveFromRow(row);
+      return [save.postId, save] as const;
+    }),
+  );
 }
 
 export async function getPostById(postId: string) {
@@ -4696,6 +6744,21 @@ export async function getPostById(postId: string) {
     .select()
     .from(dbSchema.posts)
     .where(eq(dbSchema.posts.id, postId))
+    .limit(1);
+  return row ? postFromRow(row) : undefined;
+}
+
+export async function getPostByIdInSpace(spaceId: string, postId: string) {
+  if (!usesDatabase) {
+    return getStore().posts.find(
+      (post) => post.id === postId && post.spaceId === spaceId,
+    );
+  }
+
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.posts)
+    .where(and(eq(dbSchema.posts.id, postId), eq(dbSchema.posts.spaceId, spaceId)))
     .limit(1);
   return row ? postFromRow(row) : undefined;
 }
@@ -4802,6 +6865,16 @@ export async function getPostThreadRecord(
   };
 }
 
+export async function getPostThreadRecordForSpace(
+  spaceId: string,
+  postId: string,
+): Promise<PostThreadRecord | undefined> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return undefined;
+  const thread = await getPostThreadRecord(postId, space.orgId);
+  return thread?.post.spaceId === spaceId ? thread : undefined;
+}
+
 export async function listCommentsForPost(postId: string) {
   if (!usesDatabase) {
     return getStore().comments
@@ -4895,8 +6968,37 @@ export async function listMatchRunsForOrg(orgId: string, limit = 10) {
   return rows.map(matchRunFromRow);
 }
 
+export async function listMatchRunsForSpace(spaceId: string, limit = 10) {
+  const space = await getSpaceById(spaceId);
+  if (!space) return [];
+  const safeLimit = positiveIntegerLimit(limit) ?? 10;
+
+  if (!usesDatabase) {
+    return getStore().matchRuns
+      .filter(
+        (run) => run.orgId === space.orgId && run.spaceId === spaceId,
+      )
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+      .slice(0, safeLimit);
+  }
+
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.matchRuns)
+    .where(
+      and(
+        eq(dbSchema.matchRuns.orgId, space.orgId),
+        eq(dbSchema.matchRuns.spaceId, spaceId),
+      ),
+    )
+    .orderBy(desc(dbSchema.matchRuns.startedAt))
+    .limit(safeLimit);
+  return rows.map(matchRunFromRow);
+}
+
 export async function recordMatchFeedback(input: {
   orgId: string;
+  spaceId?: string;
   matchId: string;
   sourceProfileId: string;
   value: MatchFeedback["value"];
@@ -4905,10 +7007,11 @@ export async function recordMatchFeedback(input: {
   const now = new Date().toISOString();
   const reasons = sanitizeMatchFeedbackReasons(input.reasons).slice(0, 4);
   const buildFeedback = (
-    match: Pick<MatchRecord, "matchType" | "algorithmVersion" | "score">,
+    match: Pick<MatchRecord, "spaceId" | "matchType" | "algorithmVersion" | "score">,
   ): MatchFeedback => ({
     id: `mfb_${nanoid(8)}`,
     ...input,
+    spaceId: match.spaceId,
     matchType: match.matchType,
     algorithmVersion: match.algorithmVersion,
     score: match.score,
@@ -4922,6 +7025,7 @@ export async function recordMatchFeedback(input: {
       (candidate) =>
         candidate.id === input.matchId &&
         candidate.orgId === input.orgId &&
+        (!input.spaceId || candidate.spaceId === input.spaceId) &&
         candidate.sourceProfileId === input.sourceProfileId,
     );
     if (!match) return null;
@@ -4946,6 +7050,7 @@ export async function recordMatchFeedback(input: {
   const [match] = await getDb()
     .select({
       id: dbSchema.matches.id,
+      spaceId: dbSchema.matches.spaceId,
       matchType: dbSchema.matches.matchType,
       algorithmVersion: dbSchema.matches.algorithmVersion,
       score: dbSchema.matches.score,
@@ -4955,12 +7060,13 @@ export async function recordMatchFeedback(input: {
       and(
         eq(dbSchema.matches.id, input.matchId),
         eq(dbSchema.matches.orgId, input.orgId),
+        input.spaceId ? eq(dbSchema.matches.spaceId, input.spaceId) : undefined,
         eq(dbSchema.matches.sourceProfileId, input.sourceProfileId),
       ),
     )
     .limit(1);
   if (!match) return null;
-  const feedback = buildFeedback(match);
+  const feedback = buildFeedback({ ...match, spaceId: match.spaceId ?? undefined });
   const [row] = await getDb()
     .insert(dbSchema.matchFeedback)
     .values(matchFeedbackInsert(feedback))
@@ -5039,43 +7145,155 @@ export async function getMatchFeedbackSummaryForOrg(orgId: string) {
   return summarizeMatchFeedback(rows.map(matchFeedbackFromRow));
 }
 
-export async function listMatchesForProfile(profileId: string) {
+function eligibleMatchTargetRecord(
+  store: StoreState,
+  match: MatchRecord,
+) {
+  if (!match.spaceId) return undefined;
+  const space = store.spaces.find(
+    (candidate) => candidate.id === match.spaceId && candidate.orgId === match.orgId,
+  );
+  const targetProfile = store.profiles.find(
+    (profile) => profile.id === match.targetProfileId,
+  );
+  const targetMembership = targetProfile
+    ? store.memberships.find(
+        (membership) =>
+          membership.id === targetProfile.membershipId &&
+          membership.orgId === match.orgId,
+      )
+    : undefined;
+  const spaceMembership = targetMembership
+    ? store.spaceMemberships.find(
+        (candidate) =>
+          candidate.spaceId === match.spaceId &&
+          candidate.membershipId === targetMembership.id &&
+          candidate.orgId === match.orgId,
+      )
+    : undefined;
+  const intent = targetMembership
+    ? store.spaceIntents.find(
+        (candidate) =>
+          candidate.spaceId === match.spaceId &&
+          candidate.membershipId === targetMembership.id &&
+          candidate.orgId === match.orgId,
+      )
+    : undefined;
+
+  if (
+    !space ||
+    !targetProfile ||
+    !targetMembership ||
+    !spaceMembership ||
+    !intent ||
+    !isSpaceMatchingMemberEligible(space, {
+      membership: targetMembership,
+      profile: targetProfile,
+      spaceMembership,
+      intent,
+    })
+  ) {
+    return undefined;
+  }
+
+  return { targetMembership, targetProfile };
+}
+
+export async function listMatchesForProfile(
+  profileId: string,
+  options: { spaceId?: string; limit?: number } = {},
+) {
+  const limit = positiveIntegerLimit(options.limit) ?? 12;
   if (!usesDatabase) {
-    return getStore().matches
+    const store = getStore();
+    return store.matches
       .filter(
         (match) =>
           match.sourceProfileId === profileId &&
+          (!options.spaceId || match.spaceId === options.spaceId) &&
+          (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
           !match.hiddenByAdmin &&
           !match.dismissedBySource,
       )
       .sort((left, right) => right.score - left.score)
-      .slice(0, 12);
+      .slice(0, limit);
   }
 
+  const targetProfiles = alias(dbSchema.profiles, "listed_match_target_profiles");
+  const targetMemberships = alias(
+    dbSchema.memberships,
+    "listed_match_target_memberships",
+  );
   const rows = await getDb()
-    .select()
+    .select({ match: dbSchema.matches })
     .from(dbSchema.matches)
+    .leftJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .leftJoin(
+      targetMemberships,
+      and(
+        eq(targetMemberships.id, targetProfiles.membershipId),
+        eq(targetMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaces,
+      and(
+        eq(dbSchema.spaces.id, dbSchema.matches.spaceId),
+        eq(dbSchema.spaces.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceMemberships,
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceMemberships.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceIntents,
+      and(
+        eq(dbSchema.spaceIntents.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceIntents.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceIntents.orgId, dbSchema.matches.orgId),
+      ),
+    )
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
+        options.spaceId
+          ? and(
+              eq(targetMemberships.accountStatus, "connected"),
+              eq(targetProfiles.onboardingComplete, true),
+              eq(dbSchema.spaceMemberships.accessStatus, "active"),
+              eq(dbSchema.spaceIntents.matchingOptIn, true),
+              eq(dbSchema.spaceIntents.intentComplete, true),
+              eq(dbSchema.spaces.matchingEnabled, true),
+              sql`${dbSchema.spaces.lifecycle} in ('upcoming', 'active', 'ended')`,
+            )
+          : undefined,
         eq(dbSchema.matches.hiddenByAdmin, false),
         eq(dbSchema.matches.dismissedBySource, false),
       ),
     )
     .orderBy(desc(dbSchema.matches.score))
-    .limit(12);
-  return rows.map(matchFromRow);
+    .limit(limit);
+  return rows.map((row) => matchFromRow(row.match));
 }
 
-export async function listMatchesForMembership(membershipId: string) {
+export async function listMatchesForMembership(
+  membershipId: string,
+  options: { spaceId?: string; limit?: number } = {},
+) {
   const profile = await getProfileByMembershipId(membershipId);
-  return profile ? listMatchesForProfile(profile.id) : [];
+  return profile ? listMatchesForProfile(profile.id, options) : [];
 }
 
 export async function listMatchTargetRecordsForProfile(
   profileId: string,
   followerMembershipId: string,
-  options: { limit?: number; matchType?: string } = {},
+  options: { spaceId?: string; limit?: number; matchType?: string } = {},
 ): Promise<MatchTargetRecord[]> {
   const limit = positiveIntegerLimit(options.limit) ?? 12;
 
@@ -5087,7 +7305,11 @@ export async function listMatchTargetRecordsForProfile(
     );
     const followedIds = new Set(
       store.follows
-        .filter((follow) => follow.followerMembershipId === followerMembershipId)
+        .filter(
+          (follow) =>
+            follow.followerMembershipId === followerMembershipId &&
+            (!options.spaceId || follow.spaceId === options.spaceId),
+        )
         .map((follow) => follow.followedMembershipId),
     );
 
@@ -5095,6 +7317,8 @@ export async function listMatchTargetRecordsForProfile(
       .filter(
         (match) =>
           match.sourceProfileId === profileId &&
+          (!options.spaceId || match.spaceId === options.spaceId) &&
+          (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
           (!options.matchType || match.matchType === options.matchType) &&
           !match.hiddenByAdmin &&
           !match.dismissedBySource,
@@ -5127,17 +7351,59 @@ export async function listMatchTargetRecordsForProfile(
     })
     .from(dbSchema.matches)
     .leftJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
-    .leftJoin(targetMemberships, eq(targetMemberships.id, targetProfiles.membershipId))
+    .leftJoin(
+      targetMemberships,
+      and(
+        eq(targetMemberships.id, targetProfiles.membershipId),
+        eq(targetMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaces,
+      and(
+        eq(dbSchema.spaces.id, dbSchema.matches.spaceId),
+        eq(dbSchema.spaces.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceMemberships,
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceMemberships.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceIntents,
+      and(
+        eq(dbSchema.spaceIntents.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceIntents.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceIntents.orgId, dbSchema.matches.orgId),
+      ),
+    )
     .leftJoin(
       dbSchema.follows,
       and(
         eq(dbSchema.follows.followerMembershipId, followerMembershipId),
         eq(dbSchema.follows.followedMembershipId, targetMemberships.id),
+        options.spaceId ? eq(dbSchema.follows.spaceId, options.spaceId) : undefined,
       ),
     )
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
+        options.spaceId
+          ? and(
+              eq(targetMemberships.accountStatus, "connected"),
+              eq(targetProfiles.onboardingComplete, true),
+              eq(dbSchema.spaceMemberships.accessStatus, "active"),
+              eq(dbSchema.spaceIntents.matchingOptIn, true),
+              eq(dbSchema.spaceIntents.intentComplete, true),
+              eq(dbSchema.spaces.matchingEnabled, true),
+              sql`${dbSchema.spaces.lifecycle} in ('upcoming', 'active', 'ended')`,
+            )
+          : undefined,
         options.matchType ? eq(dbSchema.matches.matchType, options.matchType) : undefined,
         eq(dbSchema.matches.hiddenByAdmin, false),
         eq(dbSchema.matches.dismissedBySource, false),
@@ -5156,83 +7422,241 @@ export async function listMatchTargetRecordsForProfile(
   }));
 }
 
-export async function listVisibleMatchTargetMembershipIdsForProfile(profileId: string) {
+export async function listVisibleMatchTargetMembershipIdsForProfile(
+  profileId: string,
+  options: { spaceId?: string; limit?: number } = {},
+) {
+  const limit = positiveIntegerLimit(options.limit) ?? 12;
   if (!usesDatabase) {
+    const store = getStore();
     const profileById = new Map(
-      getStore().profiles.map((profile) => [profile.id, profile]),
+      store.profiles.map((profile) => [profile.id, profile]),
     );
-    return getStore().matches
+    return store.matches
       .filter(
         (match) =>
           match.sourceProfileId === profileId &&
+          (!options.spaceId || match.spaceId === options.spaceId) &&
+          (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
           !match.hiddenByAdmin &&
           !match.dismissedBySource,
       )
       .sort((left, right) => right.score - left.score)
-      .slice(0, 12)
+      .slice(0, limit)
       .map((match) => profileById.get(match.targetProfileId)?.membershipId)
       .filter((membershipId): membershipId is string => Boolean(membershipId));
   }
 
+  const targetProfiles = alias(dbSchema.profiles, "visible_match_target_profiles");
+  const targetMemberships = alias(
+    dbSchema.memberships,
+    "visible_match_target_memberships",
+  );
   const rows = await getDb()
-    .select({ membershipId: dbSchema.profiles.membershipId })
+    .select({ membershipId: targetProfiles.membershipId })
     .from(dbSchema.matches)
-    .innerJoin(dbSchema.profiles, eq(dbSchema.profiles.id, dbSchema.matches.targetProfileId))
+    .innerJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .innerJoin(
+      targetMemberships,
+      and(
+        eq(targetMemberships.id, targetProfiles.membershipId),
+        eq(targetMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaces,
+      and(
+        eq(dbSchema.spaces.id, dbSchema.matches.spaceId),
+        eq(dbSchema.spaces.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceMemberships,
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceMemberships.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceIntents,
+      and(
+        eq(dbSchema.spaceIntents.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceIntents.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceIntents.orgId, dbSchema.matches.orgId),
+      ),
+    )
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
+        options.spaceId
+          ? and(
+              eq(targetMemberships.accountStatus, "connected"),
+              eq(targetProfiles.onboardingComplete, true),
+              eq(dbSchema.spaceMemberships.accessStatus, "active"),
+              eq(dbSchema.spaceIntents.matchingOptIn, true),
+              eq(dbSchema.spaceIntents.intentComplete, true),
+              eq(dbSchema.spaces.matchingEnabled, true),
+              sql`${dbSchema.spaces.lifecycle} in ('upcoming', 'active', 'ended')`,
+            )
+          : undefined,
         eq(dbSchema.matches.hiddenByAdmin, false),
         eq(dbSchema.matches.dismissedBySource, false),
       ),
     )
     .orderBy(desc(dbSchema.matches.score))
-    .limit(12);
+    .limit(limit);
   return rows.map((row) => row.membershipId);
 }
 
 export async function listVisibleMatchTargetMembershipIdsForMembership(
   membershipId: string,
+  options: { spaceId?: string; limit?: number } = {},
 ) {
+  const limit = positiveIntegerLimit(options.limit) ?? 12;
   if (!usesDatabase) {
     const profile = await getProfileByMembershipId(membershipId);
-    return profile ? listVisibleMatchTargetMembershipIdsForProfile(profile.id) : [];
+    return profile
+      ? listVisibleMatchTargetMembershipIdsForProfile(profile.id, options)
+      : [];
   }
 
   const sourceProfiles = alias(dbSchema.profiles, "source_profiles");
   const targetProfiles = alias(dbSchema.profiles, "target_profiles");
+  const targetMemberships = alias(
+    dbSchema.memberships,
+    "visible_membership_match_targets",
+  );
   const rows = await getDb()
     .select({ membershipId: targetProfiles.membershipId })
     .from(dbSchema.matches)
     .innerJoin(sourceProfiles, eq(sourceProfiles.id, dbSchema.matches.sourceProfileId))
     .innerJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .innerJoin(
+      targetMemberships,
+      and(
+        eq(targetMemberships.id, targetProfiles.membershipId),
+        eq(targetMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaces,
+      and(
+        eq(dbSchema.spaces.id, dbSchema.matches.spaceId),
+        eq(dbSchema.spaces.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceMemberships,
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceMemberships.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceIntents,
+      and(
+        eq(dbSchema.spaceIntents.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceIntents.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceIntents.orgId, dbSchema.matches.orgId),
+      ),
+    )
     .where(
       and(
         eq(sourceProfiles.membershipId, membershipId),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
+        options.spaceId
+          ? and(
+              eq(targetMemberships.accountStatus, "connected"),
+              eq(targetProfiles.onboardingComplete, true),
+              eq(dbSchema.spaceMemberships.accessStatus, "active"),
+              eq(dbSchema.spaceIntents.matchingOptIn, true),
+              eq(dbSchema.spaceIntents.intentComplete, true),
+              eq(dbSchema.spaces.matchingEnabled, true),
+              sql`${dbSchema.spaces.lifecycle} in ('upcoming', 'active', 'ended')`,
+            )
+          : undefined,
         eq(dbSchema.matches.hiddenByAdmin, false),
         eq(dbSchema.matches.dismissedBySource, false),
       ),
     )
     .orderBy(desc(dbSchema.matches.score))
-    .limit(12);
+    .limit(limit);
   return rows.map((row) => row.membershipId);
 }
 
-export async function hasVisibleMatchForProfile(profileId: string) {
+export async function hasVisibleMatchForProfile(
+  profileId: string,
+  options: { spaceId?: string } = {},
+) {
   if (!usesDatabase) {
-    return getStore().matches.some(
+    const store = getStore();
+    return store.matches.some(
       (match) =>
         match.sourceProfileId === profileId &&
+        (!options.spaceId || match.spaceId === options.spaceId) &&
+        (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
         !match.hiddenByAdmin &&
         !match.dismissedBySource,
     );
   }
 
+  const targetProfiles = alias(dbSchema.profiles, "existing_match_target_profiles");
+  const targetMemberships = alias(
+    dbSchema.memberships,
+    "existing_match_target_memberships",
+  );
   const [row] = await getDb()
     .select({ id: dbSchema.matches.id })
     .from(dbSchema.matches)
+    .leftJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .leftJoin(
+      targetMemberships,
+      and(
+        eq(targetMemberships.id, targetProfiles.membershipId),
+        eq(targetMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaces,
+      and(
+        eq(dbSchema.spaces.id, dbSchema.matches.spaceId),
+        eq(dbSchema.spaces.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceMemberships,
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceMemberships.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceMemberships.orgId, dbSchema.matches.orgId),
+      ),
+    )
+    .leftJoin(
+      dbSchema.spaceIntents,
+      and(
+        eq(dbSchema.spaceIntents.spaceId, dbSchema.matches.spaceId),
+        eq(dbSchema.spaceIntents.membershipId, targetMemberships.id),
+        eq(dbSchema.spaceIntents.orgId, dbSchema.matches.orgId),
+      ),
+    )
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
+        options.spaceId
+          ? and(
+              eq(targetMemberships.accountStatus, "connected"),
+              eq(targetProfiles.onboardingComplete, true),
+              eq(dbSchema.spaceMemberships.accessStatus, "active"),
+              eq(dbSchema.spaceIntents.matchingOptIn, true),
+              eq(dbSchema.spaceIntents.intentComplete, true),
+              eq(dbSchema.spaces.matchingEnabled, true),
+              sql`${dbSchema.spaces.lifecycle} in ('upcoming', 'active', 'ended')`,
+            )
+          : undefined,
         eq(dbSchema.matches.hiddenByAdmin, false),
         eq(dbSchema.matches.dismissedBySource, false),
       ),
@@ -5241,9 +7665,12 @@ export async function hasVisibleMatchForProfile(profileId: string) {
   return Boolean(row);
 }
 
-export async function hasVisibleMatchForMembership(membershipId: string) {
+export async function hasVisibleMatchForMembership(
+  membershipId: string,
+  options: { spaceId?: string } = {},
+) {
   const profile = await getProfileByMembershipId(membershipId);
-  return profile ? hasVisibleMatchForProfile(profile.id) : false;
+  return profile ? hasVisibleMatchForProfile(profile.id, options) : false;
 }
 
 export async function getIntroRequestById(introRequestId: string) {
@@ -5259,6 +7686,28 @@ export async function getIntroRequestById(introRequestId: string) {
   return row ? introRequestFromRow(row) : undefined;
 }
 
+export async function getIntroRequestByIdInSpace(
+  spaceId: string,
+  introRequestId: string,
+) {
+  if (!usesDatabase) {
+    return getStore().introRequests.find(
+      (request) => request.id === introRequestId && request.spaceId === spaceId,
+    );
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.introRequests)
+    .where(
+      and(
+        eq(dbSchema.introRequests.id, introRequestId),
+        eq(dbSchema.introRequests.spaceId, spaceId),
+      ),
+    )
+    .limit(1);
+  return row ? introRequestFromRow(row) : undefined;
+}
+
 export async function listIntroRequestsForMembership(
   membershipId: string,
   options: IntroRequestListOptions = {},
@@ -5269,6 +7718,7 @@ export async function listIntroRequestsForMembership(
     const requests = getStore().introRequests
       .filter(
         (request) =>
+          (!options.spaceId || request.spaceId === options.spaceId) &&
           (options.direction === "incoming"
             ? request.receiverMembershipId === membershipId
             : options.direction === "outgoing"
@@ -5291,6 +7741,9 @@ export async function listIntroRequestsForMembership(
       .from(dbSchema.introRequests)
       .where(
         and(
+          options.spaceId
+            ? eq(dbSchema.introRequests.spaceId, options.spaceId)
+            : undefined,
           options.direction === "incoming"
             ? eq(dbSchema.introRequests.receiverMembershipId, membershipId)
             : options.direction === "outgoing"
@@ -5311,6 +7764,9 @@ export async function listIntroRequestsForMembership(
     .from(dbSchema.introRequests)
     .where(
       and(
+        options.spaceId
+          ? eq(dbSchema.introRequests.spaceId, options.spaceId)
+          : undefined,
         options.direction === "incoming"
           ? eq(dbSchema.introRequests.receiverMembershipId, membershipId)
           : options.direction === "outgoing"
@@ -5325,6 +7781,157 @@ export async function listIntroRequestsForMembership(
     .orderBy(desc(dbSchema.introRequests.createdAt));
   const rows = await (limit ? query.limit(limit) : query);
   return rows.map(introRequestFromRow);
+}
+
+export async function listIntroRequestsForMembershipInSpace(
+  spaceId: string,
+  membershipId: string,
+  options: Omit<IntroRequestListOptions, "spaceId"> = {},
+) {
+  return listIntroRequestsForMembership(membershipId, { ...options, spaceId });
+}
+
+/**
+ * Account-level private connection history. Completed intros remain visible
+ * after Space removal; pending/expired records remain visible only while the
+ * member can still access their source Space.
+ */
+export async function listIntroRequestsForMembershipWithSpaceAccess(
+  membershipId: string,
+  accessibleSpaceIds: string[],
+  options: Omit<IntroRequestListOptions, "spaceId"> = {},
+) {
+  const ids = [...new Set(accessibleSpaceIds.filter(Boolean))];
+  const limit = positiveIntegerLimit(options.limit);
+  const directionMatches = (request: IntroRequest) =>
+    options.direction === "incoming"
+      ? request.receiverMembershipId === membershipId
+      : options.direction === "outgoing"
+        ? request.requesterMembershipId === membershipId
+        : request.requesterMembershipId === membershipId ||
+          request.receiverMembershipId === membershipId;
+  const canRetain = (request: IntroRequest) =>
+    request.status === "accepted" ||
+    request.status === "declined" ||
+    Boolean(request.spaceId && ids.includes(request.spaceId));
+
+  if (!usesDatabase) {
+    const requests = getStore().introRequests
+      .filter(
+        (request) =>
+          directionMatches(request) &&
+          canRetain(request) &&
+          (!options.status || request.status === options.status),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return limit ? requests.slice(0, limit) : requests;
+  }
+
+  const participantCondition =
+    options.direction === "incoming"
+      ? eq(dbSchema.introRequests.receiverMembershipId, membershipId)
+      : options.direction === "outgoing"
+        ? eq(dbSchema.introRequests.requesterMembershipId, membershipId)
+        : or(
+            eq(dbSchema.introRequests.requesterMembershipId, membershipId),
+            eq(dbSchema.introRequests.receiverMembershipId, membershipId),
+          );
+  const accessCondition = ids.length
+    ? or(
+        inArray(dbSchema.introRequests.status, ["accepted", "declined"]),
+        inArray(dbSchema.introRequests.spaceId, ids),
+      )
+    : inArray(dbSchema.introRequests.status, ["accepted", "declined"]);
+  const where = and(
+    participantCondition,
+    accessCondition,
+    options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
+  );
+  const query = getDb()
+    .select()
+    .from(dbSchema.introRequests)
+    .where(where)
+    .orderBy(desc(dbSchema.introRequests.createdAt));
+  const rows = await (limit ? query.limit(limit) : query);
+  return rows.map(introRequestFromRow);
+}
+
+export async function getPendingIntroRequestBetweenMembershipsInSpace(
+  spaceId: string,
+  firstMembershipId: string,
+  secondMembershipId: string,
+) {
+  if (!usesDatabase) {
+    return getStore().introRequests.find(
+      (request) =>
+        request.spaceId === spaceId &&
+        request.status === "pending" &&
+        ((request.requesterMembershipId === firstMembershipId &&
+          request.receiverMembershipId === secondMembershipId) ||
+          (request.requesterMembershipId === secondMembershipId &&
+            request.receiverMembershipId === firstMembershipId)),
+    );
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.introRequests)
+    .where(
+      and(
+        eq(dbSchema.introRequests.spaceId, spaceId),
+        eq(dbSchema.introRequests.status, "pending"),
+        or(
+          and(
+            eq(dbSchema.introRequests.requesterMembershipId, firstMembershipId),
+            eq(dbSchema.introRequests.receiverMembershipId, secondMembershipId),
+          ),
+          and(
+            eq(dbSchema.introRequests.requesterMembershipId, secondMembershipId),
+            eq(dbSchema.introRequests.receiverMembershipId, firstMembershipId),
+          ),
+        ),
+      ),
+    )
+    .limit(1);
+  return row ? introRequestFromRow(row) : undefined;
+}
+
+export async function getPendingIntroRequestBetweenMembershipsInOrg(
+  orgId: string,
+  firstMembershipId: string,
+  secondMembershipId: string,
+) {
+  if (!usesDatabase) {
+    return getStore().introRequests.find(
+      (request) =>
+        request.orgId === orgId &&
+        request.status === "pending" &&
+        ((request.requesterMembershipId === firstMembershipId &&
+          request.receiverMembershipId === secondMembershipId) ||
+          (request.requesterMembershipId === secondMembershipId &&
+            request.receiverMembershipId === firstMembershipId)),
+    );
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.introRequests)
+    .where(
+      and(
+        eq(dbSchema.introRequests.orgId, orgId),
+        eq(dbSchema.introRequests.status, "pending"),
+        or(
+          and(
+            eq(dbSchema.introRequests.requesterMembershipId, firstMembershipId),
+            eq(dbSchema.introRequests.receiverMembershipId, secondMembershipId),
+          ),
+          and(
+            eq(dbSchema.introRequests.requesterMembershipId, secondMembershipId),
+            eq(dbSchema.introRequests.receiverMembershipId, firstMembershipId),
+          ),
+        ),
+      ),
+    )
+    .limit(1);
+  return row ? introRequestFromRow(row) : undefined;
 }
 
 export async function hasIntroRequestFromMembership(membershipId: string) {
@@ -5397,33 +8004,224 @@ export async function listActiveIntroRequestStatusesForRequester(
   }, new Map<string, IntroStatus>());
 }
 
+export async function listActiveIntroRequestStatusesForRequesterInSpace(
+  spaceId: string,
+  requesterMembershipId: string,
+  receiverMembershipIds?: string[],
+) {
+  const uniqueReceiverIds = receiverMembershipIds
+    ? [...new Set(receiverMembershipIds.filter(Boolean))]
+    : undefined;
+  if (receiverMembershipIds && !uniqueReceiverIds?.length) {
+    return new Map<string, IntroStatus>();
+  }
+
+  if (!usesDatabase) {
+    const receiverIds = uniqueReceiverIds ? new Set(uniqueReceiverIds) : undefined;
+    return getStore().introRequests
+      .filter(
+        (request) => {
+          const otherMembershipId =
+            request.requesterMembershipId === requesterMembershipId
+              ? request.receiverMembershipId
+              : request.receiverMembershipId === requesterMembershipId
+                ? request.requesterMembershipId
+                : undefined;
+          return Boolean(
+            otherMembershipId &&
+              (!receiverIds || receiverIds.has(otherMembershipId)) &&
+              request.status !== "expired" &&
+              (request.spaceId === spaceId || request.status === "pending"),
+          );
+        },
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .reduce((statuses, request) => {
+        const otherMembershipId =
+          request.requesterMembershipId === requesterMembershipId
+            ? request.receiverMembershipId
+            : request.requesterMembershipId;
+        if (!statuses.has(otherMembershipId)) {
+          statuses.set(otherMembershipId, request.status);
+        }
+        return statuses;
+      }, new Map<string, IntroStatus>());
+  }
+
+  const participantCondition = uniqueReceiverIds
+    ? or(
+        and(
+          eq(dbSchema.introRequests.requesterMembershipId, requesterMembershipId),
+          inArray(dbSchema.introRequests.receiverMembershipId, uniqueReceiverIds),
+        ),
+        and(
+          eq(dbSchema.introRequests.receiverMembershipId, requesterMembershipId),
+          inArray(dbSchema.introRequests.requesterMembershipId, uniqueReceiverIds),
+        ),
+      )
+    : or(
+        eq(dbSchema.introRequests.requesterMembershipId, requesterMembershipId),
+        eq(dbSchema.introRequests.receiverMembershipId, requesterMembershipId),
+      );
+  const rows = await getDb()
+    .select({
+      requesterMembershipId: dbSchema.introRequests.requesterMembershipId,
+      receiverMembershipId: dbSchema.introRequests.receiverMembershipId,
+      status: dbSchema.introRequests.status,
+    })
+    .from(dbSchema.introRequests)
+    .where(
+      and(
+        or(
+          eq(dbSchema.introRequests.spaceId, spaceId),
+          eq(dbSchema.introRequests.status, "pending"),
+        ),
+        participantCondition,
+        sql`${dbSchema.introRequests.status} <> 'expired'`,
+      ),
+    )
+    .orderBy(desc(dbSchema.introRequests.createdAt));
+  return rows.reduce((statuses, row) => {
+    const otherMembershipId =
+      row.requesterMembershipId === requesterMembershipId
+        ? row.receiverMembershipId
+        : row.requesterMembershipId;
+    if (!statuses.has(otherMembershipId)) {
+      statuses.set(otherMembershipId, row.status);
+    }
+    return statuses;
+  }, new Map<string, IntroStatus>());
+}
+
 export async function listNotificationsForMembership(
   membershipId: string,
   options: TimeOrderedListOptions = {},
 ) {
-  const limit = positiveIntegerLimit(options.limit);
+  const authorizedSpaceIds = await authorizedSpaceIdsForConnectedMembership(
+    membershipId,
+  );
+  if (!authorizedSpaceIds) return [];
+  return listNotificationsForMembershipWithSpaceAccess(
+    membershipId,
+    authorizedSpaceIds,
+    options,
+  );
+}
 
+export async function hasUnreadNotificationsForMembership(membershipId: string) {
+  const authorizedSpaceIds = await authorizedSpaceIdsForConnectedMembership(
+    membershipId,
+  );
+  if (!authorizedSpaceIds) return false;
+  return hasUnreadNotificationsForMembershipWithSpaceAccess(
+    membershipId,
+    authorizedSpaceIds,
+  );
+}
+
+export async function markNotificationsReadForMembership(membershipId: string) {
+  const authorizedSpaceIds = await authorizedSpaceIdsForConnectedMembership(
+    membershipId,
+  );
+  if (!authorizedSpaceIds) return 0;
+  return markNotificationsReadForMembershipWithSpaceAccess(
+    membershipId,
+    authorizedSpaceIds,
+  );
+}
+
+export async function listNotificationsForMembershipInSpace(
+  spaceId: string,
+  membershipId: string,
+  options: Omit<TimeOrderedListOptions, "spaceId"> = {},
+) {
+  await requireActiveMembershipsInSpace(spaceId, [membershipId]);
+  const limit = positiveIntegerLimit(options.limit);
   if (!usesDatabase) {
     const notifications = getStore().notifications
-      .filter((notification) => notification.membershipId === membershipId)
+      .filter(
+        (notification) =>
+          notification.membershipId === membershipId &&
+          notification.spaceId === spaceId,
+      )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-
     return limit ? notifications.slice(0, limit) : notifications;
   }
 
   const query = getDb()
     .select()
     .from(dbSchema.notifications)
-    .where(eq(dbSchema.notifications.membershipId, membershipId))
+    .where(
+      and(
+        eq(dbSchema.notifications.membershipId, membershipId),
+        eq(dbSchema.notifications.spaceId, spaceId),
+      ),
+    )
     .orderBy(desc(dbSchema.notifications.createdAt));
   const rows = await (limit ? query.limit(limit) : query);
   return rows.map(notificationFromRow);
 }
 
-export async function hasUnreadNotificationsForMembership(membershipId: string) {
+/** Account Inbox query: account-level records plus records from Spaces the caller
+ * has already authorized. Callers must derive accessibleSpaceIds server-side. */
+export async function listNotificationsForMembershipWithSpaceAccess(
+  membershipId: string,
+  accessibleSpaceIds: string[],
+  options: Omit<TimeOrderedListOptions, "spaceId"> = {},
+) {
+  const limit = positiveIntegerLimit(options.limit);
+  const ids = await authorizedSpaceIdsForConnectedMembership(
+    membershipId,
+    accessibleSpaceIds,
+  );
+  if (!ids) return [];
   if (!usesDatabase) {
+    const idSet = new Set(ids);
+    const notifications = getStore().notifications
+      .filter(
+        (notification) =>
+          notification.membershipId === membershipId &&
+          (!notification.spaceId || idSet.has(notification.spaceId)),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return limit ? notifications.slice(0, limit) : notifications;
+  }
+
+  const query = getDb()
+    .select()
+    .from(dbSchema.notifications)
+    .where(
+      and(
+        eq(dbSchema.notifications.membershipId, membershipId),
+        ids.length
+          ? or(
+              sql`${dbSchema.notifications.spaceId} is null`,
+              inArray(dbSchema.notifications.spaceId, ids),
+            )
+          : sql`${dbSchema.notifications.spaceId} is null`,
+      ),
+    )
+    .orderBy(desc(dbSchema.notifications.createdAt));
+  const rows = await (limit ? query.limit(limit) : query);
+  return rows.map(notificationFromRow);
+}
+
+export async function hasUnreadNotificationsForMembershipWithSpaceAccess(
+  membershipId: string,
+  accessibleSpaceIds: string[],
+) {
+  const ids = await authorizedSpaceIdsForConnectedMembership(
+    membershipId,
+    accessibleSpaceIds,
+  );
+  if (!ids) return false;
+  if (!usesDatabase) {
+    const idSet = new Set(ids);
     return getStore().notifications.some(
-      (notification) => notification.membershipId === membershipId && !notification.readAt,
+      (notification) =>
+        notification.membershipId === membershipId &&
+        !notification.readAt &&
+        (!notification.spaceId || idSet.has(notification.spaceId)),
     );
   }
 
@@ -5434,18 +8232,35 @@ export async function hasUnreadNotificationsForMembership(membershipId: string) 
       and(
         eq(dbSchema.notifications.membershipId, membershipId),
         sql`${dbSchema.notifications.readAt} is null`,
+        ids.length
+          ? or(
+              sql`${dbSchema.notifications.spaceId} is null`,
+              inArray(dbSchema.notifications.spaceId, ids),
+            )
+          : sql`${dbSchema.notifications.spaceId} is null`,
       ),
     )
     .limit(1);
   return Boolean(row);
 }
 
-export async function markNotificationsReadForMembership(membershipId: string) {
+export async function markNotificationsReadForMembershipWithSpaceAccess(
+  membershipId: string,
+  accessibleSpaceIds: string[],
+) {
+  const ids = await authorizedSpaceIdsForConnectedMembership(
+    membershipId,
+    accessibleSpaceIds,
+  );
+  if (!ids) return 0;
   const readAt = new Date().toISOString();
-
   if (!usesDatabase) {
+    const idSet = new Set(ids);
     const notifications = getStore().notifications.filter(
-      (notification) => notification.membershipId === membershipId && !notification.readAt,
+      (notification) =>
+        notification.membershipId === membershipId &&
+        !notification.readAt &&
+        (!notification.spaceId || idSet.has(notification.spaceId)),
     );
     notifications.forEach((notification) => {
       notification.readAt = readAt;
@@ -5459,6 +8274,45 @@ export async function markNotificationsReadForMembership(membershipId: string) {
     .where(
       and(
         eq(dbSchema.notifications.membershipId, membershipId),
+        sql`${dbSchema.notifications.readAt} is null`,
+        ids.length
+          ? or(
+              sql`${dbSchema.notifications.spaceId} is null`,
+              inArray(dbSchema.notifications.spaceId, ids),
+            )
+          : sql`${dbSchema.notifications.spaceId} is null`,
+      ),
+    )
+    .returning({ id: dbSchema.notifications.id });
+  return rows.length;
+}
+
+export async function markNotificationsReadForMembershipInSpace(
+  spaceId: string,
+  membershipId: string,
+) {
+  await requireActiveMembershipsInSpace(spaceId, [membershipId]);
+  const readAt = new Date().toISOString();
+  if (!usesDatabase) {
+    const notifications = getStore().notifications.filter(
+      (notification) =>
+        notification.membershipId === membershipId &&
+        notification.spaceId === spaceId &&
+        !notification.readAt,
+    );
+    notifications.forEach((notification) => {
+      notification.readAt = readAt;
+    });
+    return notifications.length;
+  }
+
+  const rows = await getDb()
+    .update(dbSchema.notifications)
+    .set({ readAt: new Date(readAt) })
+    .where(
+      and(
+        eq(dbSchema.notifications.membershipId, membershipId),
+        eq(dbSchema.notifications.spaceId, spaceId),
         sql`${dbSchema.notifications.readAt} is null`,
       ),
     )
@@ -5476,6 +8330,7 @@ export async function listIntroRequestsForOrg(
     const requests = getStore().introRequests.filter(
       (request) =>
         request.orgId === orgId &&
+        (!options.spaceId || request.spaceId === options.spaceId) &&
         (!options.status || request.status === options.status) &&
         (!options.sourceType || request.sourceType === options.sourceType),
     );
@@ -5494,6 +8349,9 @@ export async function listIntroRequestsForOrg(
       .where(
         and(
           eq(dbSchema.introRequests.orgId, orgId),
+          options.spaceId
+            ? eq(dbSchema.introRequests.spaceId, options.spaceId)
+            : undefined,
           options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
           options.sourceType
             ? eq(dbSchema.introRequests.sourceType, options.sourceType)
@@ -5510,6 +8368,9 @@ export async function listIntroRequestsForOrg(
     .where(
       and(
         eq(dbSchema.introRequests.orgId, orgId),
+        options.spaceId
+          ? eq(dbSchema.introRequests.spaceId, options.spaceId)
+          : undefined,
         options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
         options.sourceType ? eq(dbSchema.introRequests.sourceType, options.sourceType) : undefined,
       ),
@@ -5520,16 +8381,29 @@ export async function listIntroRequestsForOrg(
   return rows.map(introRequestFromRow);
 }
 
+export async function listIntroRequestsForSpace(
+  spaceId: string,
+  options: Omit<OrgIntroRequestListOptions, "spaceId"> = {},
+) {
+  const space = await getSpaceById(spaceId);
+  if (!space) return [];
+  return listIntroRequestsForOrg(space.orgId, { ...options, spaceId });
+}
+
 export async function listMatchesForOrg(
   orgId: string,
-  options: { limit?: number } = {},
+  options: { spaceId?: string; limit?: number } = {},
 ) {
   const limit =
     options.limit && options.limit > 0 ? Math.floor(options.limit) : undefined;
 
   if (!usesDatabase) {
     const matches = getStore().matches
-      .filter((match) => match.orgId === orgId)
+      .filter(
+        (match) =>
+          match.orgId === orgId &&
+          (!options.spaceId || match.spaceId === options.spaceId),
+      )
       .sort((left, right) => right.score - left.score);
 
     return limit ? matches.slice(0, limit) : matches;
@@ -5538,7 +8412,12 @@ export async function listMatchesForOrg(
   const query = getDb()
     .select()
     .from(dbSchema.matches)
-    .where(eq(dbSchema.matches.orgId, orgId))
+    .where(
+      and(
+        eq(dbSchema.matches.orgId, orgId),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
+      ),
+    )
     .orderBy(desc(dbSchema.matches.score));
   const rows = await (limit ? query.limit(limit) : query);
 
@@ -5558,6 +8437,7 @@ export async function listMatchProfileRecordsForOrg(
       .filter(
         (match) =>
           match.orgId === orgId &&
+          (!options.spaceId || match.spaceId === options.spaceId) &&
           (!options.matchType || match.matchType === options.matchType) &&
           (!options.scoreBand || match.scoreBand === options.scoreBand),
       )
@@ -5585,6 +8465,7 @@ export async function listMatchProfileRecordsForOrg(
     .where(
       and(
         eq(dbSchema.matches.orgId, orgId),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.matchType ? eq(dbSchema.matches.matchType, options.matchType) : undefined,
         options.scoreBand ? eq(dbSchema.matches.scoreBand, options.scoreBand) : undefined,
       ),
@@ -5599,7 +8480,62 @@ export async function listMatchProfileRecordsForOrg(
   }));
 }
 
+export async function listMatchProfileRecordsForSpace(
+  spaceId: string,
+  options: Omit<MatchProfileRecordListOptions, "spaceId"> = {},
+): Promise<MatchProfileRecord[]> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return [];
+  return listMatchProfileRecordsForOrg(space.orgId, { ...options, spaceId });
+}
+
 export async function addNotification(notification: Notification) {
+  if (
+    spaceScopedNotificationTypes.has(notification.type) &&
+    !notification.spaceId
+  ) {
+    throw new Error("Content notifications must belong to a Space.");
+  }
+  const membership = await getMembershipById(notification.membershipId);
+  const isAccessNotification = notification.type === "membership_approved";
+  if (
+    !membership ||
+    membership.orgId !== notification.orgId ||
+    (isAccessNotification
+      ? membership.accountStatus === "suspended" ||
+        membership.accountStatus === "deprovisioned"
+      : membership.accountStatus !== "connected")
+  ) {
+    throw new Error("Notification recipient account is not eligible.");
+  }
+  if (notification.spaceId) {
+    const [space, spaceMembership] = await Promise.all([
+      getSpaceById(notification.spaceId),
+      getSpaceMembership(notification.spaceId, notification.membershipId),
+    ]);
+    if (
+      !space ||
+      space.orgId !== notification.orgId ||
+      !spaceLifecycleAllowsMemberAccess(space) ||
+      spaceMembership?.orgId !== notification.orgId ||
+      spaceMembership.accessStatus !== "active"
+    ) {
+      throw new Error("Notification recipient does not have access to this Space.");
+    }
+    const linkPath = notification.link.split(/[?#]/, 1)[0];
+    const spacePath = `/s/${space.slug}`;
+    if (
+      !linkPath.startsWith("/org/") ||
+      (linkPath !== spacePath &&
+        !linkPath.endsWith(spacePath) &&
+        !linkPath.includes(`${spacePath}/`))
+    ) {
+      throw new Error("Space notification link must target its owning Space.");
+    }
+    if (!isAccessNotification && membership.accountStatus !== "connected") {
+      throw new Error("Notification recipient must have a connected account.");
+    }
+  }
   if (!usesDatabase) {
     getStore().notifications.unshift(notification);
     return;
@@ -5638,6 +8574,7 @@ export async function createPost(
     await addAnalyticsEvent({
       id: `evt_${nanoid(8)}`,
       orgId: input.orgId,
+      spaceId: input.spaceId,
       membershipId: input.authorMembershipId,
       eventName: "post_created",
       payload: { postId: post.id, type: post.type },
@@ -5645,6 +8582,20 @@ export async function createPost(
     });
   }
   return post;
+}
+
+export async function createPostInSpace(
+  input: Omit<Post, "id" | "createdAt" | "updatedAt" | "visibility"> & {
+    spaceId: string;
+    visibility?: "space_only";
+  },
+  options: { recordAnalytics?: boolean } = {},
+) {
+  const space = await requireActiveMembershipsInSpace(input.spaceId, [
+    input.authorMembershipId,
+  ]);
+  if (space.orgId !== input.orgId) throw new Error("Space not found.");
+  return createPost({ ...input, visibility: "space_only" }, options);
 }
 
 export async function createComment(
@@ -5666,9 +8617,11 @@ export async function createComment(
   }
 
   if (options.recordAnalytics !== false) {
+    const post = await getPostById(input.postId);
     await addAnalyticsEvent({
       id: `evt_${nanoid(8)}`,
-      orgId: options.orgId ?? (await getPostById(input.postId))?.orgId ?? seedOrganization.id,
+      orgId: options.orgId ?? post?.orgId ?? seedOrganization.id,
+      spaceId: post?.spaceId,
       membershipId: input.authorMembershipId,
       eventName: "comment_created",
       payload: { postId: input.postId },
@@ -5676,6 +8629,24 @@ export async function createComment(
     });
   }
   return comment;
+}
+
+export async function createCommentInSpace(
+  spaceId: string,
+  input: Omit<Comment, "id" | "createdAt" | "updatedAt" | "status">,
+  options: { recordAnalytics?: boolean } = {},
+) {
+  const [space, post] = await Promise.all([
+    requireActiveMembershipsInSpace(spaceId, [input.authorMembershipId]),
+    getPostByIdInSpace(spaceId, input.postId),
+  ]);
+  if (!post || post.orgId !== space.orgId) {
+    throw new Error("Post not found in this Space.");
+  }
+  return createComment(input, {
+    orgId: space.orgId,
+    recordAnalytics: options.recordAnalytics,
+  });
 }
 
 export async function upsertProfile(
@@ -5762,6 +8733,7 @@ export async function createIntroRequest(
     await addAnalyticsEvent({
       id: `evt_${nanoid(8)}`,
       orgId: input.orgId,
+      spaceId: input.spaceId,
       membershipId: input.requesterMembershipId,
       eventName: "intro_requested",
       payload: { receiverMembershipId: input.receiverMembershipId, sourceType: input.sourceType },
@@ -5769,6 +8741,28 @@ export async function createIntroRequest(
     });
   }
   return intro;
+}
+
+export async function createIntroRequestInSpace(
+  input: Omit<IntroRequest, "id" | "createdAt" | "updatedAt"> & {
+    spaceId: string;
+  },
+  options: { recordAnalytics?: boolean } = {},
+) {
+  const space = await requireActiveMembershipsInSpace(input.spaceId, [
+    input.requesterMembershipId,
+    input.receiverMembershipId,
+  ]);
+  if (space.orgId !== input.orgId) throw new Error("Space not found.");
+  const pending = await getPendingIntroRequestBetweenMembershipsInOrg(
+    input.orgId,
+    input.requesterMembershipId,
+    input.receiverMembershipId,
+  );
+  if (pending) {
+    throw new Error("A pending intro already exists for this pair in this Space.");
+  }
+  return createIntroRequest(input, options);
 }
 
 export async function respondToIntroRequest(
@@ -5795,6 +8789,7 @@ export async function respondToIntroRequest(
       await addAnalyticsEvent({
         id: `evt_${nanoid(8)}`,
         orgId: intro.orgId,
+        spaceId: intro.spaceId,
         membershipId: intro.receiverMembershipId,
         eventName: `intro_${status}`,
         payload: { introRequestId: intro.id },
@@ -5825,6 +8820,7 @@ export async function respondToIntroRequest(
     await addAnalyticsEvent({
       id: `evt_${nanoid(8)}`,
       orgId: intro.orgId,
+      spaceId: intro.spaceId,
       membershipId: intro.receiverMembershipId,
       eventName: `intro_${status}`,
       payload: { introRequestId: intro.id },
@@ -5832,6 +8828,16 @@ export async function respondToIntroRequest(
     });
   }
   return intro;
+}
+
+export async function respondToIntroRequestInSpace(
+  spaceId: string,
+  introRequestId: string,
+  status: "accepted" | "declined",
+  options: { recordAnalytics?: boolean } = {},
+) {
+  if (!(await getIntroRequestByIdInSpace(spaceId, introRequestId))) return null;
+  return respondToIntroRequest(introRequestId, status, options);
 }
 
 export async function updateMembershipStatus(
@@ -5873,11 +8879,49 @@ export async function updateMembershipStatus(
   if (!row) {
     return null;
   }
+  const updatedMembership = membershipFromRow(row);
 
   if (shouldRecomputeMatches) {
     await recomputeMatchesForMembership(row.orgId, row.id);
   }
-  return membershipFromRow(row);
+  return updatedMembership;
+}
+
+export async function updateMembershipAccountStatus(
+  membershipId: string,
+  accountStatus: AccountStatus,
+  options: {
+    adminNote?: string;
+    existingMembership?: Membership;
+    recomputeMatches?: boolean;
+  } = {},
+) {
+  const membership = options.existingMembership ?? (await getMembershipById(membershipId));
+  if (!membership) return null;
+  const now = new Date().toISOString();
+
+  if (!usesDatabase) {
+    membership.accountStatus = accountStatus;
+    if (options.adminNote !== undefined) membership.approvalNote = options.adminNote;
+    membership.updatedAt = now;
+  } else {
+    const [row] = await getDb()
+      .update(dbSchema.memberships)
+      .set({
+        accountStatus,
+        approvalNote: options.adminNote ?? membership.approvalNote,
+        updatedAt: new Date(now),
+      })
+      .where(eq(dbSchema.memberships.id, membershipId))
+      .returning();
+    if (!row) return null;
+    Object.assign(membership, membershipFromRow(row));
+  }
+
+  if (options.recomputeMatches ?? true) {
+    await recomputeMatchesForMembership(membership.orgId, membership.id);
+  }
+  return membership;
 }
 
 export async function updateMembershipRole(
@@ -5926,6 +8970,7 @@ export async function updateMembershipClerkState(
   const next = { ...membership, updatedAt: now };
   if ("clerkMembershipId" in input) {
     next.clerkMembershipId = input.clerkMembershipId ?? undefined;
+    if (input.clerkMembershipId) next.accountStatus = "connected";
   }
   if ("clerkRole" in input) {
     next.clerkRole = (input.clerkRole as ClerkOrgRole | null) ?? undefined;
@@ -5953,6 +8998,7 @@ export async function updateMembershipClerkState(
   };
   if ("clerkMembershipId" in input) {
     updateValues.clerkMembershipId = input.clerkMembershipId ?? null;
+    if (input.clerkMembershipId) updateValues.accountStatus = "connected";
   }
   if ("clerkRole" in input) {
     updateValues.clerkRole = input.clerkRole ?? null;
@@ -6137,70 +9183,112 @@ async function getOrganizationById(orgId: string) {
   return row ? organizationFromRow(row) : undefined;
 }
 
-async function recomputeMatchesForMembership(orgId: string, membershipId: string) {
-  const input = await getMatchRecomputeInput(orgId);
-  if (!input) {
-    return [];
+async function listMatchingSpacesForMembership(orgId: string, membershipId: string) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const activeSpaceIds = new Set(
+      store.spaceMemberships
+        .filter(
+          (spaceMembership) =>
+            spaceMembership.orgId === orgId &&
+            spaceMembership.membershipId === membershipId &&
+            spaceMembership.accessStatus === "active",
+        )
+        .map((spaceMembership) => spaceMembership.spaceId),
+    );
+    return store.spaces.filter(
+      (space) =>
+        space.orgId === orgId && activeSpaceIds.has(space.id) && spaceAllowsMatching(space),
+    );
   }
 
-  const profile = input.profiles.find((candidate) => candidate.membershipId === membershipId);
-  return profile ? runMatchRecompute(input) : [];
+  const rows = await getDb()
+    .select({ space: dbSchema.spaces })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(dbSchema.spaces, eq(dbSchema.spaces.id, dbSchema.spaceMemberships.spaceId))
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.orgId, orgId),
+        eq(dbSchema.spaceMemberships.membershipId, membershipId),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+      ),
+    );
+  return rows.map((row) => spaceFromRow(row.space)).filter(spaceAllowsMatching);
 }
 
-async function getMatchRecomputeInput(orgId: string) {
-  const [organization, membershipRecords, configs, posts] = await Promise.all([
-    getOrganizationById(orgId),
-    listMembershipRecordsForOrg(orgId),
-    listMatchTypeConfigsForOrg(orgId),
-    listPostsForOrg(orgId, { hidden: false }),
-  ]);
-
-  if (!organization) {
-    return undefined;
+async function recomputeMatchesForMembership(orgId: string, membershipId: string) {
+  const spaces = await listMatchingSpacesForMembership(orgId, membershipId);
+  const matches: MatchRecord[] = [];
+  for (const space of spaces) {
+    matches.push(...(await recomputeMatchesForSpace(space.id)));
   }
-
-  return {
-    organization,
-    memberships: membershipRecords.map((record) => record.membership),
-    profiles: membershipRecords.flatMap((record) =>
-      record.profile ? [record.profile] : [],
-    ),
-    configs,
-    posts,
-  };
+  return matches;
 }
 
 export async function recomputeMatchesForProfile(orgId: string, profileId: string) {
-  const input = await getMatchRecomputeInput(orgId);
-  if (!input || !input.profiles.some((profile) => profile.id === profileId)) {
-    return [];
-  }
-  return runMatchRecompute(input);
+  const profile = await getProfileById(profileId);
+  if (!profile) return [];
+  const membership = await getMembershipById(profile.membershipId);
+  if (!membership || membership.orgId !== orgId) return [];
+  return recomputeMatchesForMembership(orgId, membership.id);
 }
 
-async function prepareMatchingEmbeddings(
-  input: NonNullable<Awaited<ReturnType<typeof getMatchRecomputeInput>>>,
-) {
-  const hasProvider = hasConfiguredEmbeddingProvider();
-  const postsByMembership = new Map<string, Post[]>();
-  for (const post of input.posts) {
-    const posts = postsByMembership.get(post.authorMembershipId) ?? [];
-    posts.push(post);
-    postsByMembership.set(post.authorMembershipId, posts);
-  }
+async function getSpaceMatchRecomputeInput(spaceId: string) {
+  const space = await getSpaceById(spaceId);
+  if (!space) return undefined;
 
-  const pending = input.profiles.flatMap((profile) => {
-    const texts = buildMatchingEmbeddingTexts(
-      profile,
-      postsByMembership.get(profile.membershipId) ?? [],
-    );
+  const [organization, records, configs, posts] = await Promise.all([
+    getOrganizationById(space.orgId),
+    listActiveSpaceMemberRecords(space.id),
+    listMatchTypeConfigsForOrg(space.orgId),
+    usesDatabase
+      ? getDb()
+          .select()
+          .from(dbSchema.posts)
+          .where(
+            and(
+              eq(dbSchema.posts.spaceId, space.id),
+              eq(dbSchema.posts.hidden, false),
+            ),
+          )
+          .then((rows) => rows.map(postFromRow))
+      : Promise.resolve(
+          getStore().posts.filter(
+            (post) => post.spaceId === space.id && !post.hidden,
+          ),
+        ),
+  ]);
+  if (!organization) return undefined;
+
+  const matchingRecords = records.flatMap<SpaceMatchingMember>((record) =>
+    record.profile && record.intent
+      ? [{
+          membership: record.membership,
+          profile: record.profile,
+          spaceMembership: record.spaceMembership,
+          intent: record.intent,
+        }]
+      : [],
+  );
+  return { organization, space, records: matchingRecords, configs, posts };
+}
+
+const localEmbeddingReason =
+  "OPENAI_API_KEY is not configured; deterministic local embeddings are in use.";
+
+async function prepareProfileEmbeddings(profiles: Profile[]) {
+  const hasProvider = hasConfiguredEmbeddingProvider();
+  const pending = profiles.flatMap((profile) => {
+    // Reusable profile embeddings must never contain Space-private activity.
+    const texts = buildMatchingEmbeddingTexts(profile, []);
     const sourceHash = createHash("sha256")
       .update(
         JSON.stringify({
           dimensions: MATCHING_EMBEDDING_DIMENSIONS,
           localModel: LOCAL_EMBEDDING_MODEL,
           providerModel: MATCHING_EMBEDDING_MODEL,
-          texts,
+          seekingText: texts.seekingProfileText,
+          offeringText: texts.offeringText,
         }),
       )
       .digest("hex");
@@ -6210,70 +9298,46 @@ async function prepareMatchingEmbeddings(
       profile.offeringEmbedding?.length === MATCHING_EMBEDDING_DIMENSIONS;
     const canReuseLocalFallback =
       !hasProvider && profile.embeddingModel === LOCAL_EMBEDDING_MODEL;
-    if (
-      hasCurrentVectors &&
+    return hasCurrentVectors &&
       (profile.embeddingStatus === "ready" || canReuseLocalFallback)
-    ) {
-      return [];
-    }
-    return [{ profile, sourceHash, texts }];
+      ? []
+      : [{ profile, sourceHash, texts }];
   });
   if (!pending.length) {
-    const degraded = input.profiles.filter(
+    const degraded = profiles.filter(
       (profile) => profile.embeddingModel === LOCAL_EMBEDDING_MODEL,
     ).length;
     return {
       refreshed: 0,
       degraded,
-      degradedReason: degraded
-        ? "OPENAI_API_KEY is not configured; deterministic local embeddings are in use."
-        : undefined,
+      degradedReason: degraded ? localEmbeddingReason : undefined,
     };
   }
 
-  const embeddingInputs = pending.flatMap(({ texts }) => [
+  const inputs = pending.flatMap(({ texts }) => [
     texts.seekingProfileText,
     texts.offeringText,
-    ...(texts.recentIntentText ? [texts.recentIntentText] : []),
   ]);
   let generated: Awaited<ReturnType<typeof generateEmbeddingVectors>>;
   let providerError: string | undefined;
   try {
-    generated = await generateEmbeddingVectors(embeddingInputs);
+    generated = await generateEmbeddingVectors(inputs);
   } catch (error) {
-    providerError = error instanceof Error ? error.message.slice(0, 500) : "Embedding request failed.";
-    generated = {
-      model: LOCAL_EMBEDDING_MODEL,
-      vectors: embeddingInputs.map(buildLocalEmbedding),
-    };
+    providerError = error instanceof Error
+      ? error.message.slice(0, 500)
+      : "Embedding request failed.";
+    generated = { model: LOCAL_EMBEDDING_MODEL, vectors: inputs.map(buildLocalEmbedding) };
   }
   const degradedReason =
-    providerError ??
-    (generated.model === LOCAL_EMBEDDING_MODEL
-      ? "OPENAI_API_KEY is not configured; deterministic local embeddings are in use."
-      : undefined);
+    providerError ?? (generated.model === LOCAL_EMBEDDING_MODEL ? localEmbeddingReason : undefined);
 
   let offset = 0;
   for (const { profile, sourceHash, texts } of pending) {
-    const seekingProfileEmbedding = generated.vectors[offset];
-    const offeringEmbedding = generated.vectors[offset + 1];
-    const recentIntentEmbedding = texts.recentIntentText
-      ? generated.vectors[offset + 2]
-      : undefined;
-    offset += texts.recentIntentText ? 3 : 2;
-    profile.seekingEmbeddingText = [
-      texts.seekingProfileText,
-      texts.recentIntentText ? `Recent intent:\n${texts.recentIntentText}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    profile.seekingEmbeddingText = texts.seekingProfileText;
     profile.offeringEmbeddingText = texts.offeringText;
-    profile.seekingEmbedding = blendEmbeddings(
-      seekingProfileEmbedding,
-      recentIntentEmbedding,
-      0.2,
-    );
-    profile.offeringEmbedding = offeringEmbedding;
+    profile.seekingEmbedding = generated.vectors[offset];
+    profile.offeringEmbedding = generated.vectors[offset + 1];
+    offset += 2;
     profile.embeddingModel = generated.model;
     profile.embeddingSourceHash = sourceHash;
     profile.embeddingStatus = degradedReason ? "failed" : "ready";
@@ -6304,10 +9368,122 @@ async function prepareMatchingEmbeddings(
   };
 }
 
-async function beginMatchRun(orgId: string) {
+async function prepareSpaceIntentEmbeddings(
+  records: SpaceMatchingMember[],
+  posts: Post[],
+) {
+  const hasProvider = hasConfiguredEmbeddingProvider();
+  const postsByMembership = new Map<string, Post[]>();
+  for (const post of posts) {
+    const memberPosts = postsByMembership.get(post.authorMembershipId) ?? [];
+    memberPosts.push(post);
+    postsByMembership.set(post.authorMembershipId, memberPosts);
+  }
+  const candidateRecords = records.filter(
+    (record) =>
+      record.intent.matchingOptIn &&
+      record.intent.intentComplete &&
+      record.profile.onboardingComplete,
+  );
+  const pending = candidateRecords.flatMap((record) => {
+    const texts = buildSpaceIntentEmbeddingTexts(
+      record.profile,
+      record.intent,
+      postsByMembership.get(record.membership.id) ?? [],
+    );
+    const sourceHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          dimensions: MATCHING_EMBEDDING_DIMENSIONS,
+          localModel: LOCAL_EMBEDDING_MODEL,
+          providerModel: MATCHING_EMBEDDING_MODEL,
+          spaceId: record.intent.spaceId,
+          seekingText: texts.seekingText,
+          offeringText: texts.offeringText,
+        }),
+      )
+      .digest("hex");
+    const hasCurrentVectors =
+      record.intent.embeddingSourceHash === sourceHash &&
+      record.intent.seekingEmbedding?.length === MATCHING_EMBEDDING_DIMENSIONS &&
+      record.intent.offeringEmbedding?.length === MATCHING_EMBEDDING_DIMENSIONS;
+    const canReuseLocalFallback =
+      !hasProvider && record.intent.embeddingModel === LOCAL_EMBEDDING_MODEL;
+    return hasCurrentVectors &&
+      (record.intent.embeddingStatus === "ready" || canReuseLocalFallback)
+      ? []
+      : [{ record, sourceHash, texts }];
+  });
+  if (!pending.length) {
+    const degraded = candidateRecords.filter(
+      (record) => record.intent.embeddingModel === LOCAL_EMBEDDING_MODEL,
+    ).length;
+    return {
+      refreshed: 0,
+      degraded,
+      degradedReason: degraded ? localEmbeddingReason : undefined,
+    };
+  }
+
+  const inputs = pending.flatMap(({ texts }) => [texts.seekingText, texts.offeringText]);
+  let generated: Awaited<ReturnType<typeof generateEmbeddingVectors>>;
+  let providerError: string | undefined;
+  try {
+    generated = await generateEmbeddingVectors(inputs);
+  } catch (error) {
+    providerError = error instanceof Error
+      ? error.message.slice(0, 500)
+      : "Embedding request failed.";
+    generated = { model: LOCAL_EMBEDDING_MODEL, vectors: inputs.map(buildLocalEmbedding) };
+  }
+  const degradedReason =
+    providerError ?? (generated.model === LOCAL_EMBEDDING_MODEL ? localEmbeddingReason : undefined);
+
+  let offset = 0;
+  for (const { record, sourceHash, texts } of pending) {
+    const intent = record.intent;
+    intent.seekingText = texts.seekingText;
+    intent.offeringText = texts.offeringText;
+    intent.seekingEmbedding = generated.vectors[offset];
+    intent.offeringEmbedding = generated.vectors[offset + 1];
+    offset += 2;
+    intent.embeddingModel = generated.model;
+    intent.embeddingSourceHash = sourceHash;
+    intent.embeddingStatus = degradedReason ? "failed" : "ready";
+    intent.embeddingError = degradedReason;
+    intent.embeddingUpdatedAt = new Date().toISOString();
+    intent.updatedAt = intent.embeddingUpdatedAt;
+
+    if (usesDatabase) {
+      await getDb()
+        .update(dbSchema.spaceIntents)
+        .set({
+          seekingText: intent.seekingText,
+          offeringText: intent.offeringText,
+          seekingEmbedding: intent.seekingEmbedding,
+          offeringEmbedding: intent.offeringEmbedding,
+          embeddingModel: intent.embeddingModel,
+          embeddingSourceHash: intent.embeddingSourceHash,
+          embeddingStatus: intent.embeddingStatus,
+          embeddingError: intent.embeddingError,
+          embeddingUpdatedAt: new Date(intent.embeddingUpdatedAt),
+          updatedAt: new Date(intent.updatedAt),
+        })
+        .where(eq(dbSchema.spaceIntents.id, intent.id));
+    }
+  }
+  return {
+    refreshed: pending.length,
+    degraded: degradedReason ? pending.length : 0,
+    degradedReason,
+  };
+}
+
+async function beginMatchRun(orgId: string, spaceId: string) {
   const run: MatchRun = {
     id: `mrun_${nanoid(10)}`,
     orgId,
+    spaceId,
     startedAt: new Date().toISOString(),
     status: "running",
     metadata: {},
@@ -6340,103 +9516,124 @@ async function finishMatchRun(
   }
 }
 
-async function runMatchRecompute(
-  input: NonNullable<Awaited<ReturnType<typeof getMatchRecomputeInput>>>,
-) {
-  const run = await beginMatchRun(input.organization.id);
+async function replaceMatchesForSpace(space: Space, matches: MatchRecord[]) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const priorState = new Map(
+      store.matches
+        .filter((match) => match.spaceId === space.id)
+        .map((match) => [
+          match.id,
+          {
+            dismissedBySource: match.dismissedBySource,
+            hiddenByAdmin: match.hiddenByAdmin,
+          },
+        ]),
+    );
+    const dismissedByFeedback = new Set(
+      store.matchFeedback
+        .filter(
+          (feedback) =>
+            feedback.spaceId === space.id && feedback.value === "not_relevant",
+        )
+        .map((feedback) => feedback.matchId),
+    );
+    for (const match of matches) {
+      Object.assign(match, priorState.get(match.id));
+      if (dismissedByFeedback.has(match.id)) match.dismissedBySource = true;
+    }
+    store.matches = [
+      ...store.matches.filter((match) => match.spaceId !== space.id),
+      ...matches,
+    ];
+    return;
+  }
+
+  const [previousRows, feedbackRows] = await Promise.all([
+    getDb()
+      .select({
+        id: dbSchema.matches.id,
+        dismissedBySource: dbSchema.matches.dismissedBySource,
+        hiddenByAdmin: dbSchema.matches.hiddenByAdmin,
+      })
+      .from(dbSchema.matches)
+      .where(eq(dbSchema.matches.spaceId, space.id)),
+    getDb()
+      .select({ matchId: dbSchema.matchFeedback.matchId })
+      .from(dbSchema.matchFeedback)
+      .where(
+        and(
+          eq(dbSchema.matchFeedback.spaceId, space.id),
+          eq(dbSchema.matchFeedback.value, "not_relevant"),
+        ),
+      ),
+  ]);
+  const priorState = new Map(previousRows.map((row) => [row.id, row]));
+  const dismissedByFeedback = new Set(feedbackRows.map((row) => row.matchId));
+  for (const match of matches) {
+    Object.assign(match, priorState.get(match.id));
+    if (dismissedByFeedback.has(match.id)) match.dismissedBySource = true;
+  }
+
+  const deleteQuery = getDb()
+    .delete(dbSchema.matches)
+    .where(eq(dbSchema.matches.spaceId, space.id));
+  if (matches.length) {
+    await getDb().batch([
+      deleteQuery,
+      getDb().insert(dbSchema.matches).values(matches.map(matchInsert)),
+    ]);
+  } else {
+    await deleteQuery;
+  }
+}
+
+export async function recomputeMatchesForSpace(spaceId: string) {
+  const input = await getSpaceMatchRecomputeInput(spaceId);
+  if (!input) return [];
+  const run = await beginMatchRun(input.organization.id, input.space.id);
   try {
-    const embeddingResult = await prepareMatchingEmbeddings(input);
-    const matches = recomputeMatchesForProfiles(
+    if (!spaceAllowsMatching(input.space)) {
+      await replaceMatchesForSpace(input.space, []);
+      await finishMatchRun(run, "completed", {
+        skipped: true,
+        reason: input.space.matchingEnabled
+          ? `Space lifecycle is ${input.space.lifecycle}.`
+          : "Matching is disabled for this Space.",
+        matches: 0,
+      });
+      return [];
+    }
+
+    const profileResult = await prepareProfileEmbeddings(
+      input.records.map((record) => record.profile),
+    );
+    const intentResult = await prepareSpaceIntentEmbeddings(input.records, input.posts);
+    const matches = recomputeMatchesForSpaceMembers(
       input.organization,
-      input.memberships,
-      input.profiles,
+      input.space,
+      input.records,
       input.configs,
       { runId: run.id },
     );
+    await replaceMatchesForSpace(input.space, matches);
 
-    if (!usesDatabase) {
-      const store = getStore();
-      const priorState = new Map(
-        store.matches
-          .filter((match) => match.orgId === input.organization.id)
-          .map((match) => [
-            match.id,
-            {
-              dismissedBySource: match.dismissedBySource,
-              hiddenByAdmin: match.hiddenByAdmin,
-            },
-          ]),
-      );
-      const dismissedByFeedback = new Set(
-        store.matchFeedback
-          .filter(
-            (feedback) =>
-              feedback.orgId === input.organization.id &&
-              feedback.value === "not_relevant",
-          )
-          .map((feedback) => feedback.matchId),
-      );
-      for (const match of matches) {
-        Object.assign(match, priorState.get(match.id));
-        if (dismissedByFeedback.has(match.id)) match.dismissedBySource = true;
-      }
-      store.matches = [
-        ...store.matches.filter((match) => match.orgId !== input.organization.id),
-        ...matches,
-      ];
-    } else {
-      const [previousRows, feedbackRows] = await Promise.all([
-        getDb()
-          .select({
-            id: dbSchema.matches.id,
-            dismissedBySource: dbSchema.matches.dismissedBySource,
-            hiddenByAdmin: dbSchema.matches.hiddenByAdmin,
-          })
-          .from(dbSchema.matches)
-          .where(eq(dbSchema.matches.orgId, input.organization.id)),
-        getDb()
-          .select({ matchId: dbSchema.matchFeedback.matchId })
-          .from(dbSchema.matchFeedback)
-          .where(
-            and(
-              eq(dbSchema.matchFeedback.orgId, input.organization.id),
-              eq(dbSchema.matchFeedback.value, "not_relevant"),
-            ),
-          ),
-      ]);
-      const priorState = new Map(previousRows.map((row) => [row.id, row]));
-      const dismissedByFeedback = new Set(feedbackRows.map((row) => row.matchId));
-      for (const match of matches) {
-        Object.assign(match, priorState.get(match.id));
-        if (dismissedByFeedback.has(match.id)) match.dismissedBySource = true;
-      }
-      const deleteQuery = getDb()
-        .delete(dbSchema.matches)
-        .where(eq(dbSchema.matches.orgId, input.organization.id));
-      if (matches.length) {
-        await getDb().batch([
-          deleteQuery,
-          getDb().insert(dbSchema.matches).values(matches.map(matchInsert)),
-        ]);
-      } else {
-        await deleteQuery;
-      }
-    }
-
+    const degradedReason = profileResult.degradedReason ?? intentResult.degradedReason;
     await finishMatchRun(run, "completed", {
       algorithmVersion: matches[0]?.algorithmVersion ?? "hybrid-v2",
-      activeTypes: input.configs.length,
-      eligibleProfiles: input.profiles.filter((profile) => profile.onboardingComplete).length,
+      spaceId: input.space.id,
+      activeTypes: input.configs.filter((config) => config.active).length,
+      eligibleProfiles: input.records.length,
       matches: matches.length,
-      embeddingsRefreshed: embeddingResult.refreshed,
-      embeddingsDegraded: embeddingResult.degraded,
-      ...(embeddingResult.degradedReason
-        ? { embeddingDegradedReason: embeddingResult.degradedReason }
-        : {}),
+      profileEmbeddingsRefreshed: profileResult.refreshed,
+      intentEmbeddingsRefreshed: intentResult.refreshed,
+      embeddingsDegraded: profileResult.degraded + intentResult.degraded,
+      ...(degradedReason ? { embeddingDegradedReason: degradedReason } : {}),
     });
     return matches;
   } catch (error) {
     await finishMatchRun(run, "failed", {
+      spaceId: input.space.id,
       error: error instanceof Error ? error.message.slice(0, 500) : "Match recompute failed.",
     });
     throw error;
@@ -6444,9 +9641,12 @@ async function runMatchRecompute(
 }
 
 export async function recomputeMatchesForOrg(orgId: string) {
-  const input = await getMatchRecomputeInput(orgId);
-  if (!input) return [];
-  return runMatchRecompute(input);
+  const spaces = (await listSpacesForOrg(orgId)).filter(spaceAllowsMatching);
+  const matches: MatchRecord[] = [];
+  for (const space of spaces) {
+    matches.push(...(await recomputeMatchesForSpace(space.id)));
+  }
+  return matches;
 }
 
 export async function getAnalyticsSnapshot(orgId: string) {

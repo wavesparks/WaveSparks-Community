@@ -38,7 +38,7 @@ async function main() {
   await writeFile(
     credentialsPath,
     [
-      "Wavespark preview accounts",
+      "Wavesparks preview accounts",
       `Generated: ${new Date().toISOString()}`,
       "",
       ...accountLines,

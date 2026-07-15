@@ -6,6 +6,7 @@ import { useId, useState, type FormEvent } from "react";
 import {
   resendMembershipInvitationAction,
   revokeMembershipInvitationAction,
+  updateMemberSpaceAccessAction,
   updateMembershipAction,
 } from "@/actions/admin";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
-import type { MembershipRole, MembershipStatus } from "@/lib/domain";
+import type {
+  AccountStatus,
+  MembershipRole,
+  SpaceAccessStatus,
+} from "@/lib/domain";
 
 export interface MemberDetailPanelProps {
   invitationsEnabled?: boolean;
@@ -23,33 +28,40 @@ export interface MemberDetailPanelProps {
     name: string;
   };
   membership: {
+    accountStatus: AccountStatus;
     approvalNote?: string;
     clerkInvitationError?: string;
     clerkInvitationStatus?: string;
     clerkMembershipId?: string;
     id: string;
     role: MembershipRole;
-    status: MembershipStatus;
   };
+  spaces: Array<{
+    id: string;
+    name: string;
+    kind: "main" | "event";
+    lifecycle: string;
+    accessStatus?: SpaceAccessStatus;
+  }>;
   slug: string;
 }
 
 function confirmationMessage(
   initialRole: MembershipRole,
   nextRole: MembershipRole,
-  initialStatus: MembershipStatus,
-  nextStatus: MembershipStatus,
+  initialStatus: AccountStatus,
+  nextStatus: AccountStatus,
 ) {
   const warnings: string[] = [];
 
   if (initialRole !== "org_admin" && nextRole === "org_admin") {
     warnings.push("grant this member administrator access");
   }
-  if (initialStatus !== nextStatus && nextStatus === "rejected") {
-    warnings.push("reject this member's community access");
-  }
   if (initialStatus !== nextStatus && nextStatus === "suspended") {
-    warnings.push("suspend this member's community access");
+    warnings.push("suspend this account across every Space");
+  }
+  if (initialStatus !== nextStatus && nextStatus === "deprovisioned") {
+    warnings.push("deprovision this account across every Space");
   }
 
   if (!warnings.length) {
@@ -63,12 +75,16 @@ export function MemberDetailPanel({
   invitationsEnabled = true,
   member,
   membership,
+  spaces,
   slug,
 }: MemberDetailPanelProps) {
   const summaryId = useId();
   const [role, setRole] = useState<MembershipRole>(membership.role);
-  const [status, setStatus] = useState<MembershipStatus>(
-    membership.role === "org_admin" ? "approved" : membership.status,
+  const [status, setStatus] = useState<AccountStatus>(membership.accountStatus);
+  const [selectedSpaceId, setSelectedSpaceId] = useState(spaces[0]?.id ?? "");
+  const selectedSpace = spaces.find((space) => space.id === selectedSpaceId);
+  const [selectedSpaceAccess, setSelectedSpaceAccess] = useState<SpaceAccessStatus>(
+    spaces[0]?.accessStatus ?? "active",
   );
   const connected = Boolean(membership.clerkMembershipId);
   const invitationPending = membership.clerkInvitationStatus === "pending";
@@ -76,7 +92,12 @@ export function MemberDetailPanel({
     connected && membership.clerkInvitationError?.startsWith("Invitation email failed:");
 
   function confirmUpdate(event: FormEvent<HTMLFormElement>) {
-    const message = confirmationMessage(membership.role, role, membership.status, status);
+    const message = confirmationMessage(
+      membership.role,
+      role,
+      membership.accountStatus,
+      status,
+    );
     if (message && !window.confirm(message)) {
       event.preventDefault();
     }
@@ -125,9 +146,6 @@ export function MemberDetailPanel({
               onChange={(event) => {
                 const nextRole = event.target.value as MembershipRole;
                 setRole(nextRole);
-                if (nextRole === "org_admin") {
-                  setStatus("approved");
-                }
               }}
               value={role}
             >
@@ -136,20 +154,21 @@ export function MemberDetailPanel({
             </Select>
           </div>
           <div>
-            <Label htmlFor={`${membership.id}-status`}>Community access</Label>
+            <Label htmlFor={`${membership.id}-status`}>Account status</Label>
             <Select
-              disabled={role === "org_admin"}
               id={`${membership.id}-status`}
-              onChange={(event) => setStatus(event.target.value as MembershipStatus)}
+              name="account_status"
+              onChange={(event) => setStatus(event.target.value as AccountStatus)}
               value={status}
             >
-              <option value="pending">Pending review</option>
-              <option value="waitlist">Waitlist</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="suspended">Suspended</option>
+              <option value="invited">Invited</option>
+              <option disabled={!connected} value="connected">Connected</option>
+              <option value="suspended">Suspended globally</option>
+              <option value="deprovisioned">Deprovisioned</option>
             </Select>
-            <input name="status" type="hidden" value={role === "org_admin" ? "approved" : status} />
+            <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
+              Suspension overrides access to every Space. It does not rewrite Space rosters.
+            </p>
           </div>
           <div className="md:col-span-2">
             <Label htmlFor={`${membership.id}-approval-note`}>Admin note</Label>
@@ -164,6 +183,93 @@ export function MemberDetailPanel({
             <SubmitButton pendingLabel="Saving member">Save changes</SubmitButton>
           </div>
         </form>
+
+        <div className="space-y-3 border-t border-[var(--line)] pt-4">
+          <div>
+            <p className="text-sm font-semibold text-[var(--ink)]">Space access</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
+              Main and every Event are independent. Changing one never changes another.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {spaces.filter((space) => space.accessStatus).map((space) => (
+              <Badge key={space.id} variant={space.accessStatus === "active" ? "accent" : "muted"}>
+                {space.name} · {space.accessStatus}
+              </Badge>
+            ))}
+            {!spaces.some((space) => space.accessStatus) ? (
+              <span className="text-xs text-[var(--ink-soft)]">No Space access assigned</span>
+            ) : null}
+          </div>
+          {spaces.length ? (
+            <form
+              action={updateMemberSpaceAccessAction.bind(null, slug, membership.id)}
+              className="grid gap-4 md:grid-cols-2"
+              onSubmit={(event) => {
+                if (
+                  (selectedSpaceAccess === "rejected" ||
+                    selectedSpaceAccess === "suspended" ||
+                    selectedSpaceAccess === "removed") &&
+                  !window.confirm(
+                    `Set ${selectedSpace?.name ?? "this Space"} access to ${selectedSpaceAccess}?`,
+                  )
+                ) {
+                  event.preventDefault();
+                }
+              }}
+            >
+              <div>
+                <Label htmlFor={`${membership.id}-space`}>Space</Label>
+                <Select
+                  id={`${membership.id}-space`}
+                  name="space_id"
+                  onChange={(event) => {
+                    const nextId = event.target.value;
+                    const nextSpace = spaces.find((space) => space.id === nextId);
+                    setSelectedSpaceId(nextId);
+                    setSelectedSpaceAccess(nextSpace?.accessStatus ?? "active");
+                  }}
+                  value={selectedSpaceId}
+                >
+                  {spaces.map((space) => (
+                    <option key={space.id} value={space.id}>
+                      {space.name} · {space.kind === "main" ? "Main" : "Event"}
+                      {space.lifecycle === "archived" ? " (archived)" : ""}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor={`${membership.id}-space-access`}>Access status</Label>
+                <Select
+                  id={`${membership.id}-space-access`}
+                  name="access_status"
+                  onChange={(event) =>
+                    setSelectedSpaceAccess(event.target.value as SpaceAccessStatus)
+                  }
+                  value={selectedSpaceAccess}
+                >
+                  <option value="active">Active</option>
+                  <option value="waitlist">Waitlist</option>
+                  <option value="rejected">Rejected</option>
+                  <option value="suspended">Suspended in this Space</option>
+                  <option value="removed">Removed</option>
+                </Select>
+              </div>
+              <div className="md:col-span-2">
+                <Label htmlFor={`${membership.id}-space-note`}>Decision note</Label>
+                <Input
+                  id={`${membership.id}-space-note`}
+                  name="decision_note"
+                  placeholder="Visible to other administrators"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <SubmitButton pendingLabel="Saving access">Save Space access</SubmitButton>
+              </div>
+            </form>
+          ) : null}
+        </div>
 
         {!connected ? (
           <div className="space-y-3 border-t border-[var(--line)] pt-4">

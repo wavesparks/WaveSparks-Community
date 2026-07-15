@@ -16,8 +16,8 @@ import {
   linkOrganizationToClerkOrg,
   recordClerkWebhookEvent,
   unlinkOrganizationFromClerkOrg,
+  updateMembershipAccountStatus,
   updateMembershipClerkState,
-  updateMembershipStatus,
   upsertSessionUser,
 } from "@/server/store";
 
@@ -260,21 +260,18 @@ export async function POST(req: NextRequest) {
           clerkMembershipId: event.data.id,
           clerkRole: event.data.role,
         });
+        await updateMembershipAccountStatus(membership.id, "connected");
       }
     }
 
     if (event.type === "organizationMembership.deleted") {
       const membership = await getMembershipByClerkMembershipId(event.data.id);
       if (membership) {
-        const nextMembership =
-          membership.status === "rejected" || membership.status === "suspended"
-            ? membership
-            : await updateMembershipStatus(
-                membership.id,
-                "suspended",
-                "Suspended after removal from Clerk organization.",
-                { existingMembership: membership, recomputeMatches: false },
-              );
+        const nextMembership = await updateMembershipAccountStatus(
+          membership.id,
+          "deprovisioned",
+          { existingMembership: membership },
+        );
         await updateMembershipClerkState(membership.id, {
           clerkMembershipId: null,
           clerkRole: null,

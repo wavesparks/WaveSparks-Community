@@ -27,3 +27,20 @@ export function getPostCommentRevalidationPaths(
     ...getPostListRevalidationPaths(slug, type),
   ];
 }
+
+export function getSpacePostCommentRevalidationPaths(
+  slug: string,
+  spaceSlug: string,
+  postId: string,
+  type: PostType,
+) {
+  const legacyRoot = `/org/${slug}`;
+  const spaceRoot = `${legacyRoot}/s/${spaceSlug}`;
+  return [
+    `${spaceRoot}/posts/${postId}`,
+    ...getPostListRevalidationPaths(slug, type).map((path) =>
+      path.replace(legacyRoot, spaceRoot),
+    ),
+    `${spaceRoot}/knowledge`,
+  ];
+}

@@ -43,7 +43,7 @@ describe("preview accounts internal route", () => {
 
   it("provisions the three preview accounts for an admin", async () => {
     getCurrentAuthIdentityMock.mockResolvedValue({
-      email: "avery@wavespark.co",
+      email: "avery@wavesparks.co",
       name: "Avery Tan",
       provider: "clerk",
     });

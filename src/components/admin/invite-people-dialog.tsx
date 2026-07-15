@@ -11,8 +11,17 @@ import type { MemberImportAccessStatus } from "@/lib/member-import";
 import { cn } from "@/lib/utils";
 
 export interface InvitePeopleDialogProps {
-  cohorts: Array<{ id: string; name: string }>;
+  spaces?: Array<{
+    id: string;
+    name: string;
+    kind: "main" | "event";
+    lifecycle: string;
+  }>;
+  /** @deprecated Use `spaces`. */
+  cohorts?: Array<{ id: string; name: string }>;
   defaultAccessStatus?: MemberImportAccessStatus;
+  defaultDestinationSpaceId?: string;
+  /** @deprecated Use `defaultDestinationSpaceId`. */
   defaultCohortId?: string;
   invitationsEnabled?: boolean;
   slug: string;
@@ -22,13 +31,21 @@ export interface InvitePeopleDialogProps {
 type InviteTab = "one" | "list";
 
 export function InvitePeopleDialog({
+  spaces,
   cohorts,
-  defaultAccessStatus = "pending",
+  defaultAccessStatus = "active",
+  defaultDestinationSpaceId,
   defaultCohortId,
   invitationsEnabled = true,
   slug,
   triggerLabel = "Invite people",
 }: InvitePeopleDialogProps) {
+  const availableSpaces = spaces ?? (cohorts ?? []).map((cohort) => ({
+    ...cohort,
+    kind: "event" as const,
+    lifecycle: "active",
+  }));
+  const destinationSpaceId = defaultDestinationSpaceId ?? defaultCohortId;
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<InviteTab>("one");
   const tabsId = useId();
@@ -97,11 +114,11 @@ export function InvitePeopleDialog({
               tabIndex={0}
             >
               <InviteOnePersonForm
-                cohorts={cohorts}
+                spaces={availableSpaces}
                 defaultAccessStatus={defaultAccessStatus}
-                defaultCohortId={defaultCohortId}
+                defaultDestinationSpaceId={destinationSpaceId}
                 invitationsEnabled={invitationsEnabled}
-                returnToCohortId={defaultCohortId}
+                returnToSpaceId={destinationSpaceId}
                 slug={slug}
               />
             </div>
@@ -113,9 +130,9 @@ export function InvitePeopleDialog({
               tabIndex={0}
             >
               <MemberImportWorkflow
-                cohorts={cohorts}
+                spaces={availableSpaces}
                 defaultAccessStatus={defaultAccessStatus}
-                defaultCohortId={defaultCohortId}
+                defaultDestinationSpaceId={destinationSpaceId}
                 invitationsEnabled={invitationsEnabled}
                 slug={slug}
               />

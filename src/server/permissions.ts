@@ -8,7 +8,7 @@ export function canAdminOrganization(user: User, membership: Membership) {
 }
 
 export function canViewAdminRoute(user: User, membership: Membership) {
-  return canAdminOrganization(user, membership) && membership.status === "approved";
+  return canAdminOrganization(user, membership) && membership.accountStatus === "connected";
 }
 
 export function canViewContactDetails(
@@ -27,7 +27,11 @@ export function canViewContactDetails(
 }
 
 export function canAccessFeed(membership: Membership, profile?: Profile) {
-  return membership.status === "approved" && Boolean(profile?.onboardingComplete);
+  return (
+    membership.accountStatus === "connected" &&
+    membership.status === "approved" &&
+    Boolean(profile?.onboardingComplete)
+  );
 }
 
 export function getProfileVisibilityForMember(profile: Profile, membership: Membership) {

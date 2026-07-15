@@ -80,7 +80,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("keeps follows private to the follower and supports unfollow", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
 
     await expect(followMembership(org.id, "mem_jules", "mem_jules")).resolves.toBeNull();
 
@@ -129,7 +129,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("recommends posts from followed and matched members with reason labels", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const followedPost = await addPost({
       authorMembershipId: "mem_marcus",
       title: "Followed member recommendation marker",
@@ -155,7 +155,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("tracks saved posts once and exposes saved state in feed views", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const firstSave = await savePostForMembership(org.id, "mem_jules", "pst_8");
     const duplicateSave = await savePostForMembership(org.id, "mem_jules", "pst_8");
     const savedPosts = await listSavedPostIdsForMembership("mem_jules", {
@@ -178,7 +178,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("builds a limited searchable people directory without contact fields", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const hiddenProfile = (await getProfileByMembershipId("mem_marcus"))!;
     hiddenProfile.profileVisibleInMatching = false;
 
@@ -215,7 +215,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("loads safe member profile detail with follow and profile-intro state", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const targetProfile = (await getProfileByMembershipId("mem_kai"))!;
 
     await followMembership(org.id, "mem_jules", "mem_kai");
@@ -247,7 +247,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("builds knowledge views from resources, featured threads, active discussions, and saved posts", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     await savePostForMembership(org.id, "mem_jules", "pst_8");
 
     const library = await getKnowledgePostViewsForOrg(org, {
@@ -270,7 +270,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("can skip matched recommendation signals while preserving follow state", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const followedPost = await addPost({
       authorMembershipId: "mem_marcus",
       title: "Followed member lightweight opportunity marker",
@@ -299,7 +299,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("builds public feed views without personalized state", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const publicPost = await addPost({
       authorMembershipId: "mem_marcus",
       title: "Public feed fast path marker",
@@ -485,7 +485,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("filters feed posts by structured fields", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const posts = await getFeedViewsForOrg(org, {
       viewerMembershipId: "mem_jules",
       filters: {
@@ -501,7 +501,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("segments opportunities by explicit source layer", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
 
     const official = await getFeedViewsForOrg(org, {
       onlyOpportunities: true,
@@ -518,7 +518,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("pushes visibility and opportunity filters into post listing", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const hiddenPost = await addPost({
       authorMembershipId: "mem_marcus",
       title: "Hidden post should stay out of feed",
@@ -555,7 +555,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("limits default feed listings without truncating explicit search results", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const target = await addPost({
       authorMembershipId: "mem_marcus",
       title: "Deep search result marker",
@@ -579,7 +579,7 @@ describe("feed filters and social recommendations", () => {
   });
 
   it("counts only visible comments in feed views", async () => {
-    const org = (await getOrganizationBySlug("wavespark"))!;
+    const org = (await getOrganizationBySlug("wavesparks"))!;
     const post = await addPost({
       authorMembershipId: "mem_marcus",
       title: "Visible comment count marker",

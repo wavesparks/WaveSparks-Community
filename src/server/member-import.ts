@@ -3,10 +3,14 @@ import {
   MEMBER_IMPORT_MAX_ROWS,
   type MemberImportClassification,
   type MemberImportPreview,
-  type MemberImportPreviewInput,
+  type MemberImportPreviewRequest,
   type MemberImportPreviewRow,
+  type MemberImportSpaceAction,
 } from "@/lib/member-import";
-import { listMemberImportCandidatesForOrg } from "@/server/store";
+import {
+  listMemberImportCandidatesForOrg,
+  listSpacesForOrg,
+} from "@/server/store";
 
 const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const retryableInvitationStatuses = new Set(["failed", "revoked", "expired"]);
@@ -44,16 +48,30 @@ function domainWarnings(org: Organization, email: string) {
 
 export async function buildMemberImportPreview(
   org: Organization,
-  input: MemberImportPreviewInput,
+  input: MemberImportPreviewRequest,
 ): Promise<MemberImportPreview> {
   if (!Array.isArray(input.rows) || input.rows.length > MEMBER_IMPORT_MAX_ROWS) {
     throw new Error(`Import no more than ${MEMBER_IMPORT_MAX_ROWS} rows at a time.`);
   }
-  if (!(["pending", "waitlist", "approved"] as const).includes(input.accessStatus)) {
-    throw new Error("Invalid community access selection.");
+  const spaces = await listSpacesForOrg(org.id);
+  const requestedSpaceId = input.destinationSpaceId.trim();
+  if (!requestedSpaceId) {
+    throw new Error("Choose a destination Space.");
   }
-
-  const cohortId = input.cohortId?.trim() || undefined;
+  const destinationSpace = spaces.find((space) => space.id === requestedSpaceId);
+  if (!destinationSpace) {
+    throw new Error("Destination Space not found.");
+  }
+  if (destinationSpace.lifecycle === "archived") {
+    throw new Error("Archived Spaces cannot accept new members.");
+  }
+  if (destinationSpace.kind === "main" && destinationSpace.lifecycle !== "active") {
+    throw new Error("Main Community lifecycle is invalid.");
+  }
+  const accessStatus = input.accessStatus;
+  if (!(["active", "waitlist"] as const).includes(accessStatus)) {
+    throw new Error("Invalid Space access selection.");
+  }
   const prepared = input.rows.map((row, index) => ({
     rowNumber:
       Number.isInteger(row.rowNumber) && row.rowNumber > 0
@@ -95,7 +113,7 @@ export async function buildMemberImportPreview(
   const candidates = await listMemberImportCandidatesForOrg(
     org.id,
     validUniqueEmails,
-    cohortId,
+    destinationSpace.id,
   );
   const candidatesByEmail = new Map(
     candidates.map((candidate) => [candidate.email, candidate]),
@@ -115,6 +133,7 @@ export async function buildMemberImportPreview(
       return {
         ...base,
         classification: entry.classification,
+        spaceAction: "none",
         cohortAction: "none",
         message: entry.message,
       };
@@ -122,51 +141,80 @@ export async function buildMemberImportPreview(
 
     const candidate = candidatesByEmail.get(entry.row.normalizedEmail);
     const membership = candidate?.membership;
-    const cohortAction = cohortId
-      ? candidate?.inCohort
-        ? "already_in_cohort"
-        : "add"
-      : "none";
+    const existingSpaceAccess = candidate?.spaceMembership?.accessStatus;
+    const spaceAction: MemberImportSpaceAction = !existingSpaceAccess
+      ? "grant"
+      : existingSpaceAccess === "active"
+        ? "already_in_space"
+        : existingSpaceAccess === "waitlist"
+          ? accessStatus === "active"
+            ? "activate_waitlist"
+            : "already_in_space"
+          : "conflict";
+    const cohortAction = destinationSpace.kind !== "event"
+      ? "none"
+      : spaceAction === "grant" || spaceAction === "activate_waitlist"
+        ? "add"
+        : spaceAction === "already_in_space"
+          ? "already_in_cohort"
+          : "none";
 
     if (!membership) {
       return {
         ...base,
         classification: "ready",
+        spaceAction,
         cohortAction,
-        message: "A new member record and invitation will be created.",
+        message: `A new account invitation and ${destinationSpace.name} access will be created.`,
       };
     }
-    if (membership.status === "rejected" || membership.status === "suspended") {
+    if (
+      membership.accountStatus === "suspended" ||
+      membership.accountStatus === "deprovisioned"
+    ) {
       return {
         ...base,
         classification: "inactive_conflict",
+        spaceAction: "conflict",
         cohortAction: "none",
         membershipId: membership.id,
-        message: `This member is ${membership.status}; restore access explicitly before inviting.`,
+        message: `This account is ${membership.accountStatus}; restore it explicitly before assigning Space access.`,
+      };
+    }
+    if (spaceAction === "conflict") {
+      return {
+        ...base,
+        classification: "inactive_conflict",
+        spaceAction,
+        cohortAction: "none",
+        membershipId: membership.id,
+        message: `Access to ${destinationSpace.name} is ${existingSpaceAccess}; resolve it explicitly in member details.`,
       };
     }
     if (membership.clerkMembershipId) {
       return {
         ...base,
         classification: "already_connected",
+        spaceAction,
         cohortAction,
         membershipId: membership.id,
         message:
-          cohortAction === "add"
-            ? "Already connected; this member will only be added to the cohort."
-            : "This member is already connected.",
+          spaceAction === "grant" || spaceAction === "activate_waitlist"
+            ? `Already connected; only ${destinationSpace.name} access will change.`
+            : `Already connected with ${destinationSpace.name} access.`,
       };
     }
     if (membership.clerkInvitationStatus === "pending") {
       return {
         ...base,
         classification: "already_invited",
+        spaceAction,
         cohortAction,
         membershipId: membership.id,
         message:
-          cohortAction === "add"
-            ? "An invitation is already pending; this member will only be added to the cohort."
-            : "An active invitation already exists and will not be duplicated.",
+          spaceAction === "grant" || spaceAction === "activate_waitlist"
+            ? `An account invitation is already pending; only ${destinationSpace.name} access will change.`
+            : "An active account invitation and the selected Space access already exist.",
       };
     }
     if (
@@ -176,21 +224,23 @@ export async function buildMemberImportPreview(
       return {
         ...base,
         classification: "retryable",
+        spaceAction,
         cohortAction,
         membershipId: membership.id,
-        message: "The existing member record can receive a fresh invitation.",
+        message: `The account invitation can be retried and ${destinationSpace.name} access will be ensured.`,
       };
     }
 
     return {
       ...base,
       classification: "existing_member",
+      spaceAction,
       cohortAction,
       membershipId: membership.id,
       message:
-        cohortAction === "add"
-          ? "Existing member; only the cohort association will be added."
-          : "This member already exists and will not be changed.",
+        spaceAction === "grant" || spaceAction === "activate_waitlist"
+          ? `Existing account; only ${destinationSpace.name} access will change.`
+          : `This account already has ${destinationSpace.name} access.`,
     };
   });
 
@@ -203,7 +253,10 @@ export async function buildMemberImportPreview(
     rows,
     summary,
     canInviteCount: summary.ready + summary.retryable,
-    accessStatus: input.accessStatus,
-    ...(cohortId ? { cohortId } : {}),
+    accessStatus,
+    destinationSpaceId: destinationSpace.id,
+    destinationSpaceName: destinationSpace.name,
+    destinationSpaceKind: destinationSpace.kind,
+    ...(destinationSpace.kind === "event" ? { cohortId: destinationSpace.id } : {}),
   };
 }

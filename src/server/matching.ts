@@ -8,6 +8,9 @@ import type {
   Organization,
   Post,
   Profile,
+  Space,
+  SpaceIntent,
+  SpaceMembership,
 } from "@/lib/domain";
 import {
   matchFactorLabels,
@@ -16,6 +19,14 @@ import {
 import { buildLocalEmbedding } from "@/server/embeddings";
 
 export const MATCHING_ALGORITHM_VERSION = "hybrid-v2";
+export const SPACE_INTENT_EMBEDDING_WEIGHT = 0.2;
+
+export interface SpaceMatchingMember {
+  membership: Membership;
+  profile: Profile;
+  spaceMembership: SpaceMembership;
+  intent: SpaceIntent;
+}
 
 const tagAliases: Record<string, string> = {
   "co founder": "cofounder",
@@ -178,6 +189,47 @@ export function buildMatchingEmbeddingTexts(
     seekingProfileText,
     offeringText,
     recentIntentText: recentIntentText(posts, now),
+  };
+}
+
+/**
+ * Keeps reusable profile semantics separate from activity that is private to a
+ * single space. The profile text belongs on Profile; only the two space intent
+ * strings belong on SpaceIntent.
+ */
+export function buildSpaceIntentEmbeddingTexts(
+  profile: Profile,
+  intent: SpaceIntent,
+  posts: Post[] = [],
+  now = new Date(),
+) {
+  const profileTexts = buildMatchingEmbeddingTexts(profile, [], now);
+  const recentActivity = recentIntentText(posts, now);
+  const seekingText = [
+    intent.currentGoal ? `Current goal: ${intent.currentGoal}` : "",
+    intent.lookingFor.length
+      ? `Looking for in this space: ${intent.lookingFor.join(", ")}`
+      : "",
+    recentActivity ? `Recent intent in this space:\n${recentActivity}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  const offeringText = [
+    intent.offers.length
+      ? `Can offer in this space: ${intent.offers.join(", ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+
+  return {
+    profileSeekingText: profileTexts.seekingProfileText,
+    profileOfferingText: profileTexts.offeringText,
+    seekingText,
+    offeringText,
+    recentIntentText: recentActivity,
   };
 }
 
@@ -370,6 +422,90 @@ function participates(profile: Profile, target: Profile, config: MatchTypeConfig
       profile.offeringMatchTypes.includes(config.slug));
 }
 
+export function spaceAllowsMatching(space: Space) {
+  return (
+    space.matchingEnabled &&
+    (space.lifecycle === "upcoming" ||
+      space.lifecycle === "active" ||
+      space.lifecycle === "ended")
+  );
+}
+
+export function isSpaceMatchingMemberEligible(
+  space: Space,
+  record: SpaceMatchingMember,
+) {
+  return Boolean(
+    spaceAllowsMatching(space) &&
+      record.membership.orgId === space.orgId &&
+      record.membership.accountStatus === "connected" &&
+      record.spaceMembership.orgId === space.orgId &&
+      record.spaceMembership.spaceId === space.id &&
+      record.spaceMembership.membershipId === record.membership.id &&
+      record.spaceMembership.accessStatus === "active" &&
+      record.profile.membershipId === record.membership.id &&
+      record.profile.onboardingComplete &&
+      record.intent.orgId === space.orgId &&
+      record.intent.spaceId === space.id &&
+      record.intent.membershipId === record.membership.id &&
+      record.intent.matchingOptIn &&
+      record.intent.intentComplete,
+  );
+}
+
+function profileWithSpaceIntent(profile: Profile, intent: SpaceIntent) {
+  return {
+    ...profile,
+    seekingEmbedding: blendEmbeddings(
+      profile.seekingEmbedding ?? [],
+      intent.seekingEmbedding,
+      SPACE_INTENT_EMBEDDING_WEIGHT,
+    ),
+    offeringEmbedding: blendEmbeddings(
+      profile.offeringEmbedding ?? [],
+      intent.offeringEmbedding,
+      SPACE_INTENT_EMBEDDING_WEIGHT,
+    ),
+  };
+}
+
+function buildMatchRecord(
+  organization: Organization,
+  source: Profile,
+  target: Profile,
+  config: MatchTypeConfig,
+  options: { runId?: string; spaceId?: string } = {},
+): MatchRecord {
+  const breakdown = computeMatchBreakdown(source, target, config);
+  const score = Math.max(
+    0,
+    Math.min(100, Math.round(Object.values(breakdown).reduce((sum, value) => sum + value, 0))),
+  );
+  const now = new Date().toISOString();
+  const scope = options.spaceId ? `${options.spaceId}_` : "";
+  return {
+    id: `match_${scope}${source.id}_${target.id}_${config.slug}`,
+    orgId: organization.id,
+    ...(options.spaceId ? { spaceId: options.spaceId } : {}),
+    sourceProfileId: source.id,
+    targetProfileId: target.id,
+    matchType: config.slug,
+    score,
+    scoreBreakdown: breakdown,
+    explanationText: buildFallbackExplanation(source, target, breakdown, config),
+    overlapTags: topOverlapTags(source, target),
+    scoreBand: scoreBand(score),
+    confidence: matchConfidence(source, target),
+    algorithmVersion: MATCHING_ALGORITHM_VERSION,
+    ...(options.runId ? { runId: options.runId } : {}),
+    surfacedAt: now,
+    dismissedBySource: false,
+    hiddenByAdmin: false,
+    createdAt: now,
+    updatedAt: now,
+  } satisfies MatchRecord;
+}
+
 export function computeMatch(
   organization: Organization,
   sourceMembership: Membership,
@@ -378,7 +514,7 @@ export function computeMatch(
   target: Profile,
   configOrType: MatchTypeConfig | MatchType,
   runId?: string,
-) {
+): MatchRecord | null {
   const config = typeof configOrType === "string" ? fallbackConfig(configOrType) : configOrType;
   if (
     source.id === target.id ||
@@ -394,32 +530,35 @@ export function computeMatch(
     return null;
   }
 
-  const breakdown = computeMatchBreakdown(source, target, config);
-  const score = Math.max(
-    0,
-    Math.min(100, Math.round(Object.values(breakdown).reduce((sum, value) => sum + value, 0))),
+  return buildMatchRecord(organization, source, target, config, { runId });
+}
+
+export function computeSpaceMatch(
+  organization: Organization,
+  space: Space,
+  sourceRecord: SpaceMatchingMember,
+  targetRecord: SpaceMatchingMember,
+  configOrType: MatchTypeConfig | MatchType,
+  runId?: string,
+): MatchRecord | null {
+  const config = typeof configOrType === "string" ? fallbackConfig(configOrType) : configOrType;
+  if (
+    sourceRecord.profile.id === targetRecord.profile.id ||
+    !isSpaceMatchingMemberEligible(space, sourceRecord) ||
+    !isSpaceMatchingMemberEligible(space, targetRecord) ||
+    !config.active ||
+    !participates(sourceRecord.profile, targetRecord.profile, config)
+  ) {
+    return null;
+  }
+
+  return buildMatchRecord(
+    organization,
+    profileWithSpaceIntent(sourceRecord.profile, sourceRecord.intent),
+    profileWithSpaceIntent(targetRecord.profile, targetRecord.intent),
+    config,
+    { runId, spaceId: space.id },
   );
-  const now = new Date().toISOString();
-  return {
-    id: `match_${source.id}_${target.id}_${config.slug}`,
-    orgId: organization.id,
-    sourceProfileId: source.id,
-    targetProfileId: target.id,
-    matchType: config.slug,
-    score,
-    scoreBreakdown: breakdown,
-    explanationText: buildFallbackExplanation(source, target, breakdown, config),
-    overlapTags: topOverlapTags(source, target),
-    scoreBand: scoreBand(score),
-    confidence: matchConfidence(source, target),
-    algorithmVersion: MATCHING_ALGORITHM_VERSION,
-    ...(runId ? { runId } : {}),
-    surfacedAt: now,
-    dismissedBySource: false,
-    hiddenByAdmin: false,
-    createdAt: now,
-    updatedAt: now,
-  } satisfies MatchRecord;
 }
 
 interface RecomputeMatchesForProfilesOptions {
@@ -494,6 +633,69 @@ export function recomputeMatchesForProfiles(
       );
     }
   }
+  return matches.sort(
+    (left, right) =>
+      left.sourceProfileId.localeCompare(right.sourceProfileId) ||
+      right.score - left.score ||
+      left.targetProfileId.localeCompare(right.targetProfileId),
+  );
+}
+
+export function recomputeMatchesForSpaceMembers(
+  organization: Organization,
+  space: Space,
+  records: SpaceMatchingMember[],
+  configsOrOptions: MatchTypeConfig[] | RecomputeMatchesForProfilesOptions =
+    stableDefaultMatchTypeConfigs(organization.id),
+  maybeOptions: RecomputeMatchesForProfilesOptions = {},
+) {
+  if (space.orgId !== organization.id || !spaceAllowsMatching(space)) {
+    return [];
+  }
+
+  const configs = Array.isArray(configsOrOptions)
+    ? configsOrOptions
+    : stableDefaultMatchTypeConfigs(organization.id);
+  const options = Array.isArray(configsOrOptions) ? maybeOptions : configsOrOptions;
+  const eligibleRecords = records.filter((record) =>
+    isSpaceMatchingMemberEligible(space, record),
+  );
+  const scopedProfileIds = new Set(options.profileIds ?? []);
+  const limitPerSourceAndType = options.limit === null ? undefined : options.limit ?? 12;
+  const matches: MatchRecord[] = [];
+
+  for (const source of eligibleRecords) {
+    for (const config of configs.filter((candidate) => candidate.active)) {
+      const candidates = eligibleRecords
+        .map((target) =>
+          computeSpaceMatch(
+            organization,
+            space,
+            source,
+            target,
+            config,
+            options.runId,
+          ),
+        )
+        .filter((match): match is MatchRecord => Boolean(match && match.score >= config.minimumScore))
+        .sort(
+          (left, right) =>
+            right.score - left.score || left.targetProfileId.localeCompare(right.targetProfileId),
+        );
+      const selected = limitPerSourceAndType
+        ? candidates.slice(0, limitPerSourceAndType)
+        : candidates;
+      matches.push(
+        ...selected.filter(
+          (match) =>
+            !scopedProfileIds.size ||
+            scopedProfileIds.has(match.sourceProfileId) ||
+            scopedProfileIds.has(match.targetProfileId),
+        ),
+      );
+    }
+  }
+
   return matches.sort(
     (left, right) =>
       left.sourceProfileId.localeCompare(right.sourceProfileId) ||

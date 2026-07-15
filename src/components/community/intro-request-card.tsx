@@ -14,9 +14,12 @@ export function IntroRequestCard({
     <Card className="space-y-5" data-testid="intro-request-card">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase text-[var(--accent)]">
-            {request.isIncoming ? "Incoming" : "Outgoing"} · {request.sourceType.replaceAll("_", " ")}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold uppercase text-[var(--accent)]">
+              {request.isIncoming ? "Incoming" : "Outgoing"} · {request.sourceType.replaceAll("_", " ")}
+            </p>
+            {request.spaceName ? <Badge variant="muted">{request.spaceName}</Badge> : null}
+          </div>
           <h3 className="mt-1 text-xl font-semibold leading-tight text-[var(--ink)]">
             {request.otherParty.displayName}
           </h3>

@@ -1,214 +1,211 @@
-# Wavespark Admin Lifecycle Guide
+# Wavesparks Admin Lifecycle Guide
 
-This guide covers the operational lifecycle for identity, invitations, approvals, cohorts, roles, introductions, moderation, suspension, restoration, deletion, and Clerk reconciliation.
-
-All screenshots use synthetic accounts and local test data.
+This guide describes the operational model for accounts, invitations, Main Community access, Event participation, moderation, and matching.
 
 ## Operating model
 
-The Wavespark Admin console is the daily management surface. Do not use Clerk Dashboard as the normal invitation or membership-management interface.
+The Admin console is the daily management surface. Clerk manages identity and the organization account connection; Wavesparks manages every community entitlement.
 
-| Area | Authority |
+| Concern | Authority |
 | --- | --- |
 | Identity, primary email, credentials, sessions | Clerk |
-| Organization role and member relationship | Wavespark Admin action, written to Clerk immediately |
-| Invitation delivery and acceptance | Clerk, initiated and tracked by Wavespark |
-| Approval state, profile, content, matches, moderation | Wavespark |
-| Drift recovery | Clerk webhooks, then reconciliation tooling |
+| Invitation creation and acceptance | Clerk, initiated and tracked by Wavesparks |
+| Global role | `memberships.role` in Wavesparks, synchronized to Clerk |
+| Account connection and global safety | `memberships.account_status` |
+| Main Community or Event access | `space_memberships.access_status` |
+| Core profile | One account-level Wavesparks profile |
+| Event/Main goals and matching opt-in | One `space_intent` per member and Space |
+| Content, social activity, and matching | The explicit current Space |
 
-The local role is authoritative. A role from the member's currently active Clerk organization must never overwrite the Wavespark role.
+Legacy `memberships.status` and Cohort records remain during migration compatibility. They are not the authority for Main Community or Event access.
 
-## Lifecycle at a glance
+## Access model
 
-```mermaid
-flowchart LR
-  A["Admin creates local review record"] --> B["Wavespark confirms Clerk invite or membership"]
-  B --> C["Member accepts"]
-  C --> D["Pending or waitlist"]
-  D --> E["Admin approves, rejects, or keeps waitlisted"]
-  E --> F["Approved and profile-ready"]
-  F --> G["Community participation"]
-  G --> H["Suspend or restore when needed"]
-  H --> I["Delete and anonymize on account deletion"]
+Every protected read and write uses the same rule:
+
+```text
+connected account
++ account not globally suspended or deprovisioned
++ active Space entitlement
++ Space lifecycle permits member access
+= effective Space access
 ```
 
-## 1. Use the Members workspace
+Main Community and Events are independent boundaries:
 
-Open `/org/wavespark/admin/members`. Each record brings together:
+- Event access never grants Main Community access.
+- Main Community access never reveals an Event.
+- Removing access from one Space does not change another Space.
+- A person may participate in any number of Events and Main Community at the same time.
+- Promotion to Main does not copy Event posts, follows, matches, feedback, or introductions.
 
-- Name and primary email
-- Local role and community status
-- Clerk membership connection
-- Clerk invitation status and last error
-- Optional cohort associations
-- Admin decision note
-- Available invitation and status actions
+## 1. Use Members for accounts and invitations
 
-Members is the only member and invitation center. Use its search, community-access, invitation-state, and cohort filters to work through the 25-person pages. Cohorts are optional groups and review contexts; they do not create a second member record or access state.
+Open `/org/wavesparks/admin/members` to search and filter account records, inspect invitation state, see Space-access chips, and perform account-level safety actions.
 
-![Admin member records](assets/guides/admin-members.png)
+Members owns:
 
-The mobile layout keeps the same fields in a stacked record rather than compressing the desktop table.
+- Name, primary email, and Clerk connection
+- Global `Member` or `Admin` role
+- Account status and invitation status
+- Space access across Main Community and Events
+- Invitation errors, retries, and administrative notes
 
-![Admin members on mobile](assets/guides/admin-members-mobile.png)
+Do not interpret a connected Clerk account as community access. A connected account with no active Space entitlement cannot enter Main Community or an Event.
 
-## 2. Invite one member
+### Account states
 
-1. Choose **Invite people**, then **One person**.
-2. Enter the member's name and exact email address.
-3. Select `Member` or `Admin`, the initial access state, and an optional cohort.
-4. Confirm the elevated permissions when inviting an Admin. Admins are approved automatically.
-5. Choose **Create invitation**. Treat the result as “Invitation created,” not proof of email delivery.
-
-What happens next:
-
-- Existing Clerk user: Wavespark adds the user directly to the Wavespark Clerk organization and sends a Wavespark sign-in notification through Resend.
-- No Clerk user: Clerk creates a targeted email invitation with the Wavespark acceptance URL.
-- Wavespark stores the Clerk membership or invitation identifiers and status.
-- A Clerk or notification-email failure is saved on the member record and the UI reports failure rather than success.
-
-Never send a generic Clerk Dashboard invitation. It may not contain the app-specific redirect and cannot establish the intended local review workflow.
-
-## 3. Upload and review a member list
-
-Choose **Invite people**, then **Upload list**. The supported path is:
-
-1. Upload a `.csv` or `.xlsx` file, or paste CSV-formatted rows.
-2. Map the required Email column and optional Name column.
-3. Choose `Pending review`, `Waitlist`, or `Approved` for newly created memberships and optionally choose a cohort.
-4. Review and edit row-level classifications before confirming.
-5. Choose **Invite N people**, then inspect the row results and retry only failures.
-
-Files are parsed in memory and are not retained. Each file is limited to 2 MB, the first worksheet, 20 columns, and 100 non-empty data rows. Invalid or duplicate rows do not block valid rows. Existing member data is never overwritten; a selected cohort only adds the missing association. Rejected or suspended members must be restored explicitly from their member details.
-
-## 4. Read invitation states
-
-| State | Meaning | Admin action |
+| State | Meaning | Effect |
 | --- | --- | --- |
-| Empty | No current invitation is tracked. | Send an invitation if the member is active. |
-| `pending` | Clerk confirmed a usable invitation. | Wait, resend, or revoke. |
-| `accepted` | The invitation was accepted or Clerk membership is connected. | Continue application review. |
-| `revoked` | The invitation can no longer be used. | Send a new invitation when appropriate. |
-| `expired` | The Clerk ticket expired. | Resend to create a fresh ticket. |
-| `failed` | Clerk did not confirm the operation. | Review the stored error and retry. |
+| `invited` | An account invitation exists or connection is incomplete. | No Space can be entered yet. |
+| `connected` | The Clerk organization account is connected. | Active Space entitlements may become effective. |
+| `suspended` | A reversible global safety block. | Overrides access to every Space without rewriting each roster. |
+| `deprovisioned` | The organization account is no longer provisioned. | Blocks every Space until explicitly restored. |
 
-Use **Resend invite** to revoke the active ticket and create a new one. Use **Revoke invite** when the member should not be able to complete account creation.
+Clerk webhooks may update this account relationship. They must never create a Main Community or Event entitlement.
 
-## 5. Manage roles and states
+### Global Admin role
 
-| Change | Local result | Clerk result |
+An Admin can audit and manage every Space. That authority does not make the Admin a social participant. To post, browse People, follow, send introductions, or enter matching, the Admin must have an explicit active entitlement to that Space.
+
+When inviting an Admin, the UI confirms the elevated global permission. Selecting no destination Space is valid and prevents the Admin from appearing in participant rosters or matching pools.
+
+## 2. Invite one person
+
+Choose **Invite people**, then **One person**.
+
+1. Enter the exact email and optional name.
+2. Choose `Member` or `Admin`.
+3. For a Member, choose the destination Main Community or Event and the initial Space access.
+4. For an Admin, confirm the global permission and choose a destination only if the Admin should also participate socially.
+5. Create the invitation and review the result.
+
+For an existing Clerk user, Wavesparks connects the organization account and the selected active entitlement can take effect immediately. For a new user, Wavesparks creates a targeted Clerk invitation. The person accepts that account invitation once; all already-assigned Space entitlements then become available according to their own status and lifecycle.
+
+The success message is **Invitation created**, not **Email delivered**. Delivery cannot be guaranteed by the application.
+
+### Invitation states
+
+| State | Meaning | Typical action |
 | --- | --- | --- |
-| Role to `Member` | Member permissions | Clerk role becomes `org:member` |
-| Role to `Admin` | Admin permissions and approved status | Clerk role becomes `org:admin` |
-| `pending`, `waitlist`, or `approved` | Active local membership | Existing Clerk user is added, or a missing user is invited |
-| `rejected` or `suspended` | Interaction is disabled | Pending invitation is revoked and Clerk membership is removed |
-| Restore inactive member | Active local state returns | Existing Clerk user is re-added; otherwise a new invite is sent |
+| Empty | No current invitation is tracked. | Create one if appropriate. |
+| `pending` | Clerk accepted a usable invitation. | Wait, resend, or revoke. |
+| `accepted` | The account connection completed. | Manage Space access separately. |
+| `revoked` | The ticket can no longer be used. | Create a new invitation if needed. |
+| `expired` | The ticket expired. | Retry with a new ticket. |
+| `failed` | Clerk did not confirm the operation. | Review the row error and retry. |
 
-An Admin cannot demote or suspend their own active Admin membership from the same session.
+## 3. Import a list into one destination Space
 
-## 6. Approve without duplicate notifications
+Choose **Invite people** from Members or **Add participants** from an Event. Event entry points preselect that Event.
 
-Approval email and in-app notification delivery occurs only when the status actually changes from a non-approved state to `approved`.
+The workflow is deliberately review-first:
 
-Saving an already-approved record again does not send another approval notification or reset the original `approvedAt` timestamp. It may still synchronize role or repair Clerk drift.
+1. Upload `.csv` or `.xlsx`, or paste CSV-formatted rows.
+2. Map required Email and optional Name fields.
+3. Choose one destination Space and its initial access.
+4. Correct or remove problem rows in preview.
+5. Confirm **Invite N people**.
+6. Review row-level results and retry only failed invitations.
 
-Approval does not bypass profile readiness. An approved member with incomplete required fields is sent to onboarding before interaction unlocks.
+Selecting a file never sends invitations. Files are parsed in memory and are not retained. Limits are 2 MB, the first worksheet, 20 columns, and 100 non-empty data rows. Bulk import always creates ordinary Members; it cannot grant Admin.
 
-## 7. Use cohorts for grouping and review
+Preview distinguishes new invitations, retryable invitations, existing accounts, existing Space access, duplicates, invalid rows, and rejected/suspended conflicts. The first occurrence of a duplicate email wins. Invalid rows do not block valid rows.
 
-Open `/org/wavespark/admin/cohorts` to create, edit, archive, or review an optional member group.
+Existing account profile data and global roles are not overwritten. Import adds only the requested destination entitlement when safe. Rejected, suspended, removed, or globally blocked records require explicit resolution in member details.
 
-![Admin cohort workspace](assets/guides/admin-cohorts.png)
+## 4. Use Spaces for community boundaries
 
-The cohort summary derives `Total`, `Needs decision`, `Active`, and `Needs attention` from membership and invitation state. The legacy cohort-member `invited/promoted` fields are not displayed and do not drive these counts.
+Open `/org/wavesparks/admin/spaces`.
 
-Choose **Add people** to reuse the same single-person and CSV/XLSX importer. The current cohort is preselected and new memberships default to `Waitlist`; the Admin can change the batch access setting before confirmation.
+Every organization has exactly one **Main Community** and any number of **Events**. The legacy Admin Cohorts URLs redirect into this model; Event is the product-facing object.
 
-Import rules:
+The Main Community is permanent, invitation-only, always active, and cannot be ended or archived. Its locked card never reveals posts, members, or counts to people without access.
 
-- Maximum 100 unique email addresses per import.
-- CSV and XLSX input supports explicit Email/Name column mapping; Email is required and Name is optional.
-- New Clerk invitations run through the official bulk API in groups of no more than 10.
-- Every member receives an individual success or failure result.
-- Local records remain when Clerk fails so only failed rows need retrying.
-- The page reports partial success instead of claiming the entire import succeeded.
+### Event lifecycle
 
-Filter and select pending or waitlisted members, then use **Approve N for community**. Rejected and suspended members must be handled from Members. Notifications are sent only for real state transitions.
+| Lifecycle | Member behavior |
+| --- | --- |
+| `draft` | Admin-only setup; participants cannot enter. |
+| `upcoming` | Active participants can enter before the start date. |
+| `active` | Participants can read, interact, and match in the Event. |
+| `ended` | Displayed as a Past Event; full interaction and matching continue. |
+| `archived` | Hidden from participants; access and matching stop while data is retained. |
 
-## 8. Configure and review AI matching
+Ending an Event is not archiving it. Use archive only when member access should close. Archived Events can be restored without copying or recreating their data.
 
-Open `/org/wavespark/admin/matches` to review recommendations, matching runs, embedding health, and aggregate member feedback.
+An Event detail page keeps Overview, Participants, Content, Matching, and Settings in the same Space boundary. Counts never include members or activity from another Space.
 
-![Admin matching type configuration](assets/guides/admin-matches.png)
+## 5. Add Event participants to Main Community
 
-Each matching type has a stable key and Admin-controlled name, description, direction, member-facing seeking and offering labels, six factor weights, minimum score, and active state. The six weights must total 100. Up to 12 types may be active at once.
+From an Event, select eligible participants and use **Add N to Main Community**.
 
-- **Mutual** requires both members to select the type under both **I am looking for** and **I can offer**.
-- **Seeker to provider** requires the source to seek the type and the target to offer it.
-- Archiving a type removes it from member choices and future rankings without deleting historical configuration.
-- Saving a type increments its version and starts a full organization recompute.
+The operation:
 
-Run health shows how many embeddings were refreshed or degraded. A degraded run uses the deterministic local fallback and displays the provider error; it must not be treated as a normal AI-quality run.
+- Creates an active Main Community entitlement immediately
+- Is idempotent for people already in Main
+- Preserves the source Event entitlement
+- Does not duplicate account invitations for connected users
+- Does not copy Event content, follows, matches, feedback, or introduction state
+- Reports `Added`, `Already in Main`, `Account conflict`, or `Failed` per person
 
-Member feedback is private. Admins see aggregate Helpful, Not relevant, matching-type, and reason counts. A Not relevant response suppresses that recommendation for the source member across later recomputations. Feedback does not silently rewrite factor weights.
+Rejected, suspended, removed, or globally blocked access is never silently restored. Resolve the conflict explicitly before adding the person.
 
-See [AI matching engine](ai-matching-engine.md) for the scoring, post policy, embedding model, storage choice, and operating thresholds.
+## 6. Manage Space access separately from account safety
 
-## 9. Create a manual introduction
+### Space access states
 
-Open `/org/wavespark/admin/requests`.
+| State | Meaning |
+| --- | --- |
+| `active` | Entitlement is usable when the account and lifecycle also permit access. |
+| `waitlist` | No member access yet; retained for a Space-specific decision. |
+| `rejected` | Access was declined and requires explicit reconsideration. |
+| `suspended` | Access is paused in this Space only. |
+| `removed` | Access was removed from this Space only. |
 
-![Admin manual introduction workspace](assets/guides/admin-introductions.png)
+Use a Space-level state when the decision concerns one Event or Main Community. Use global account suspension only for safety or provisioning issues that must override every Space.
 
-A valid manual introduction requires two different members, both `approved`, both profile-ready, and both opted into introductions.
+High-impact actions such as granting Admin, global suspension, deprovisioning, rejecting access, or removing access require confirmation. Main/Event removal never modifies another roster.
 
-Select the requesting and receiving member separately, then add a concrete purpose and context. The receiving member must accept before either side sees private contact details.
+## 7. Keep content and interaction inside the current Space
 
-## 10. Moderate content and profiles
+Canonical member URLs include the Space slug:
 
-Use the Admin Posts and Profiles workspaces to hide or restore posts, lock comments, remove comments, feature profiles, mark stale profiles, and recompute matches after material changes.
+```text
+/org/:orgSlug/s/:spaceSlug/feed
+/org/:orgSlug/s/:spaceSlug/people
+/org/:orgSlug/s/:spaceSlug/matches
+/org/:orgSlug/s/:spaceSlug/knowledge
+/org/:orgSlug/s/:spaceSlug/opportunities
+/org/:orgSlug/s/:spaceSlug/requests
+/org/:orgSlug/s/:spaceSlug/compose
+/org/:orgSlug/s/:spaceSlug/posts/:postId
+```
 
-Public Feed and public post reading remain available to visitors and every membership state. Treat moderation as a public-reading decision, not only a member-area decision.
+The Space must also be explicit in every mutation. A cookie or last-visited value must never decide where a post, follow, intro, or match belongs.
 
-## 11. Suspend, restore, reject, and delete
+Posts belong to one Space. Comments inherit the post's Space. Saved-post reads, notification links, direct post links, and People profiles all recheck current access. There is no anonymous Main Community feed.
 
-### Suspend
+Follows, matches, feedback, and pending introductions record their source Space. The same pair may have only one unresolved introduction across the organization, preventing duplicate requests from overlapping Spaces. Accepted introductions remain private account history but grant no content or roster access elsewhere.
 
-Use `suspended` for a reversible access pause. Wavespark removes the Clerk organization membership and revokes pending invitations. The member can still read public content and sees a clear note and sign-out action.
+## 8. Operate matching per Space
 
-### Reject
+Matching candidates must have all of the following in the same Space:
 
-Use `rejected` to close the current application. Pending Clerk access is revoked or removed in the same way as suspension.
+- Connected account
+- Active Space entitlement
+- Completed core profile
+- Completed Space intent
+- Space matching opt-in enabled
+- A lifecycle of `upcoming`, `active`, or `ended`
 
-### Restore
+An ended Event continues matching. An archived Event stops matching and hides its results. Roster, intent, or Space-post changes recompute only the affected Space; results are replaced atomically for that Space rather than deleting organization-wide matches.
 
-Change the member back to an active state. An existing Clerk user is re-added directly; otherwise a fresh personal invitation is sent.
+See [AI matching engine](ai-matching-engine.md) for scoring and embedding details.
 
-### Delete
+## 9. Reconcile Clerk without granting access
 
-Clerk `user.deleted` triggers anonymization rather than destructive content deletion:
-
-- Name becomes `Former member`.
-- Email becomes a unique address under `deleted.invalid`.
-- Clerk IDs, contacts, credentials, follows, saves, notifications, matching data, and pending intros are removed or terminated.
-- Posts and comments remain with the anonymized author.
-
-## 12. Understand webhook recovery
-
-The Clerk webhook records an event as processed only after business handling succeeds. A failed handler returns an error so Clerk can retry the same event.
-
-Handled events include user creation/update/deletion, primary-email changes, invitation creation/acceptance/revocation/expiry, membership creation/update/removal, and organization creation/update/deletion.
-
-Important drift rules:
-
-- An out-of-band Clerk invitation does not create a local member.
-- Clerk membership removal suspends an otherwise-active local member.
-- Clerk organization deletion only unlinks the local organization; it does not delete community data.
-- A suspended or rejected member is never silently re-added during login.
-
-## 13. Reconcile Clerk and Wavespark
-
-Reconciliation is dry-run by default and requires an explicit environment.
+Reconciliation is dry-run by default and requires an explicit environment:
 
 ```bash
 pnpm clerk:reconcile -- --environment=development
@@ -217,62 +214,39 @@ pnpm clerk:reconcile -- --environment=production
 pnpm clerk:reconcile -- --environment=production --apply --confirm-production
 ```
 
-The production dry run writes:
+Review account connections, invitation state, global roles, stale invitations, and untracked Clerk organization memberships. Reconciliation repairs Clerk drift; it does not infer or create Space entitlements.
 
-```text
-/tmp/wavespark-clerk-reconcile-production.json
-```
-
-Review organization-setting changes, extra organizations, member additions/removals, invitations, role differences, stale invitations, and untracked Clerk memberships. Production apply requires both write flags, refuses untracked memberships, and deletes an extra organization only after every account has been copied to the canonical organization and no pending invitation remains. Run the dry run again after apply.
-
-`organizationCapacityConstraint` is an informational plan limit, not an actionable drift item. If the canonical organization needs more seats than that value, upgrade the Clerk subscription before sending more invitations.
-
-## 14. Run environment-safe commands
-
-Database writes are dry-run by default. Always specify the environment.
-
-```bash
-pnpm db:migrate -- --environment=development
-pnpm db:migrate -- --environment=development --apply
-pnpm db:seed -- --environment=development --apply
-pnpm db:bootstrap -- --environment=development --apply
-pnpm db:preview-accounts -- --environment=development --apply
-```
-
-Production writes additionally require `--confirm-production`:
+Production database writes also require both write flags:
 
 ```bash
 pnpm db:migrate -- --environment=production --apply --confirm-production
 ```
 
-Run `pnpm env:audit` before operational changes. Development and Preview should use `wavespark_dev` with Clerk test keys; Production should use the production database with Clerk live keys.
+Space migrations stop on duplicates, orphans, cross-organization references, or conflicting suspension/access records. Resolve those records manually rather than merging them automatically.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| UI says invite sent but email is missing | Confirm status is `pending`, not `failed`; then resend. |
-| Member signs in but gets 403 | Confirm an active local record exists for the same primary email or Clerk user ID. |
-| Member is active in another organization | Send them through `/org/wavespark/auth/complete`. |
-| Role differs between systems | Save the local role or reconcile; Wavespark is authoritative. |
-| Suspended member was re-added | Verify local state, then inspect webhook and auth-complete logs. |
-| Invitation operation failed | Read `clerkInvitationError`, fix the cause, and retry that member. |
-| Cohort partially failed | Retry failed rows only. |
-| Approval email repeated | Confirm there was a real non-approved to approved transition. |
-| Profile looks complete but access is locked | Review readiness and validation errors. |
-| Webhook appears lost | Confirm the event was not marked processed before handling succeeded. |
-| Production drift needs changes | Review the production JSON report; do not use `--apply`. |
+| Connected user sees only My Spaces | Confirm an active entitlement exists for the intended Space. |
+| Event participant cannot see Main | This is expected until **Add to Main Community** grants Main access. |
+| Main member cannot see an Event | Confirm a separate active Event entitlement. |
+| Past Event disappeared | Confirm it is `ended`, not `archived`. |
+| Admin is absent from People or matching | Explicitly add the Admin to that Space as a participant. |
+| User can read but cannot post or view People | Complete the global core profile. |
+| User has no matches | Check core profile, Space intent, matching opt-in, matching settings, and candidate count in that Space. |
+| Invitation exists but email is missing | Confirm `pending`, then resend if necessary; creation does not prove delivery. |
+| Import row is blocked | Resolve global account or destination-Space conflict in member details. |
+| Notification link is denied | The recipient no longer has effective access to its labeled Space. |
+| Suspended account still has active chips | Global suspension overrides those entitlements without rewriting them. |
 
 ## Release verification checklist
 
-- [ ] `pnpm env:audit`
-- [ ] `pnpm typecheck`
-- [ ] `pnpm lint`
-- [ ] `pnpm test`
-- [ ] `pnpm test:e2e`
-- [ ] `pnpm test:e2e:clerk`
-- [ ] `pnpm build`
-- [ ] Development reconciliation has no unexpected changes.
-- [ ] Production reconciliation report is generated without writes.
-- [ ] Browser console and page errors are clear on desktop and mobile.
-- [ ] Invitation, approval, onboarding, interaction, intro, suspension, restoration, and anonymization paths are verified.
+- [ ] Event-only, Main-only, multi-Event, Main-plus-Event, Admin, removed, archived, and globally suspended access are verified.
+- [ ] Feed, post links, People, Knowledge, saved posts, notifications, follows, intros, and matching cannot leak across Spaces.
+- [ ] CSV/XLSX import requires and reports one destination Space.
+- [ ] Add to Main is idempotent and preserves Event access.
+- [ ] Ended Events remain interactive; archived Events are hidden from members.
+- [ ] Global Admin audit access does not create social participation.
+- [ ] Clerk webhooks and reconciliation never create Space access.
+- [ ] `pnpm typecheck`, `pnpm lint`, `pnpm test`, and `pnpm build` pass.

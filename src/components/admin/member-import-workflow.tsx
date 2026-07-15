@@ -40,8 +40,17 @@ import type {
 import { cn } from "@/lib/utils";
 
 export interface MemberImportWorkflowProps {
-  cohorts: Array<{ id: string; name: string }>;
+  spaces?: Array<{
+    id: string;
+    name: string;
+    kind: "main" | "event";
+    lifecycle: string;
+  }>;
+  /** @deprecated Use `spaces`. */
+  cohorts?: Array<{ id: string; name: string }>;
   defaultAccessStatus: MemberImportAccessStatus;
+  defaultDestinationSpaceId?: string;
+  /** @deprecated Use `defaultDestinationSpaceId`. */
   defaultCohortId?: string;
   invitationsEnabled?: boolean;
   slug: string;
@@ -69,12 +78,13 @@ const classificationLabels: Record<MemberImportClassification, string> = {
   existing_member: "Existing member",
   duplicate: "Duplicate",
   invalid: "Invalid",
-  inactive_conflict: "Rejected / suspended conflict",
+  inactive_conflict: "Account / Space conflict",
 };
 
 const resultLabels: Record<MemberImportResultStatus, string> = {
   invited: "Invitation created",
   connected: "Connected",
+  space_added: "Space access added",
   cohort_added: "Added to cohort",
   skipped: "Skipped",
   failed: "Failed",
@@ -105,12 +115,15 @@ function summarizeResult(rows: MemberImportResultRow[]): MemberImportResult["sum
     (summary, row) => {
       if (row.status === "invited") summary.invited += 1;
       if (row.status === "connected") summary.connected += 1;
-      if (row.status === "cohort_added") summary.cohortAdded += 1;
+      if (row.status === "space_added" || row.status === "cohort_added") {
+        summary.spaceAdded = (summary.spaceAdded ?? 0) + 1;
+        summary.cohortAdded += 1;
+      }
       if (row.status === "skipped") summary.skipped += 1;
       if (row.status === "failed") summary.failed += 1;
       return summary;
     },
-    { invited: 0, connected: 0, cohortAdded: 0, skipped: 0, failed: 0 },
+    { invited: 0, connected: 0, spaceAdded: 0, cohortAdded: 0, skipped: 0, failed: 0 },
   );
 }
 
@@ -119,12 +132,21 @@ function errorMessage(error: unknown) {
 }
 
 export function MemberImportWorkflow({
+  spaces,
   cohorts,
   defaultAccessStatus,
+  defaultDestinationSpaceId,
   defaultCohortId,
   invitationsEnabled = true,
   slug,
 }: MemberImportWorkflowProps) {
+  const availableSpaces = spaces ?? (cohorts ?? []).map((cohort) => ({
+    ...cohort,
+    kind: "event" as const,
+    lifecycle: "active",
+  }));
+  const initialDestinationSpaceId =
+    defaultDestinationSpaceId ?? defaultCohortId ?? availableSpaces[0]?.id ?? "";
   const [step, setStep] = useState<WorkflowStep>("source");
   const [sourceMode, setSourceMode] = useState<SourceMode>("file");
   const [file, setFile] = useState<File | null>(null);
@@ -135,7 +157,9 @@ export function MemberImportWorkflow({
   const [rows, setRows] = useState<MemberImportRow[]>([]);
   const [accessStatus, setAccessStatus] =
     useState<MemberImportAccessStatus>(defaultAccessStatus);
-  const [cohortId, setCohortId] = useState(defaultCohortId ?? "");
+  const [destinationSpaceId, setDestinationSpaceId] = useState(
+    initialDestinationSpaceId,
+  );
   const [preview, setPreview] = useState<MemberImportPreview | null>(null);
   const [result, setResult] = useState<MemberImportResult | null>(null);
   const [previewDirty, setPreviewDirty] = useState(false);
@@ -145,7 +169,7 @@ export function MemberImportWorkflow({
   const input: MemberImportPreviewInput = {
     rows,
     accessStatus,
-    cohortId: cohortId || undefined,
+    destinationSpaceId,
   };
 
   async function parseSource() {
@@ -199,7 +223,7 @@ export function MemberImportWorkflow({
     const nextInput: MemberImportPreviewInput = {
       rows: nextRows,
       accessStatus,
-      cohortId: cohortId || undefined,
+      destinationSpaceId,
     };
 
     setBusy(true);
@@ -260,24 +284,24 @@ export function MemberImportWorkflow({
 
   function updateBatchSettings(
     nextAccessStatus: MemberImportAccessStatus,
-    nextCohortId: string,
+    nextDestinationSpaceId: string,
   ) {
     setAccessStatus(nextAccessStatus);
-    setCohortId(nextCohortId);
+    setDestinationSpaceId(nextDestinationSpaceId);
     if (step === "preview") {
       setPreviewDirty(true);
     }
   }
 
-  const cohortOnlyCount =
+  const spaceOnlyCount =
     preview?.rows.filter(
       (row) =>
-        row.cohortAction === "add" &&
+        (row.spaceAction === "grant" || row.spaceAction === "activate_waitlist") &&
         ["already_connected", "already_invited", "existing_member"].includes(
           row.classification,
         ),
     ).length ?? 0;
-  const actionableCount = (preview?.canInviteCount ?? 0) + cohortOnlyCount;
+  const actionableCount = (preview?.canInviteCount ?? 0) + spaceOnlyCount;
 
   async function confirmImport() {
     if (!invitationsEnabled || !preview || previewDirty || !actionableCount) {
@@ -345,6 +369,7 @@ export function MemberImportWorkflow({
         rows: mergedRows,
         summary: {
           ...summarizeResult(mergedRows),
+          spaceAdded: result.summary.spaceAdded,
           cohortAdded: result.summary.cohortAdded,
         },
       });
@@ -365,7 +390,7 @@ export function MemberImportWorkflow({
     setNameColumn(null);
     setRows([]);
     setAccessStatus(defaultAccessStatus);
-    setCohortId(defaultCohortId ?? "");
+    setDestinationSpaceId(initialDestinationSpaceId);
     setPreview(null);
     setResult(null);
     setPreviewDirty(false);
@@ -396,7 +421,11 @@ export function MemberImportWorkflow({
             step === "source" || step === "mapping" ? 0 : step === "preview" ? 1 : 2;
           const active = index <= currentIndex;
           return (
-            <li className={active ? "text-[var(--ink)]" : "text-[var(--ink-soft)]"} key={label}>
+            <li
+              aria-current={index === currentIndex ? "step" : undefined}
+              className={active ? "text-[var(--ink)]" : "text-[var(--ink-soft)]"}
+              key={label}
+            >
               <span
                 aria-hidden
                 className={cn(
@@ -591,9 +620,9 @@ export function MemberImportWorkflow({
 
           <BatchSettings
             accessStatus={accessStatus}
-            cohortId={cohortId}
-            cohorts={cohorts}
+            destinationSpaceId={destinationSpaceId}
             onChange={updateBatchSettings}
+            spaces={availableSpaces}
           />
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4">
@@ -613,9 +642,9 @@ export function MemberImportWorkflow({
         <div className="space-y-5">
           <BatchSettings
             accessStatus={accessStatus}
-            cohortId={cohortId}
-            cohorts={cohorts}
+            destinationSpaceId={destinationSpaceId}
             onChange={updateBatchSettings}
+            spaces={availableSpaces}
           />
 
           {previewDirty ? (
@@ -776,8 +805,8 @@ export function MemberImportWorkflow({
               >
                 {busy ? <LoaderCircle aria-hidden className="size-4 animate-spin" /> : null}
                 {preview.canInviteCount
-                  ? `Invite ${preview.canInviteCount} ${preview.canInviteCount === 1 ? "person" : "people"}${cohortOnlyCount ? ` + add ${cohortOnlyCount}` : ""}`
-                  : `Add ${cohortOnlyCount} ${cohortOnlyCount === 1 ? "person" : "people"} to cohort`}
+                  ? `Invite ${preview.canInviteCount} ${preview.canInviteCount === 1 ? "person" : "people"}${spaceOnlyCount ? ` + add access for ${spaceOnlyCount}` : ""}`
+                  : `Add ${spaceOnlyCount} ${spaceOnlyCount === 1 ? "person" : "people"} to ${preview.destinationSpaceName}`}
               </Button>
             )}
           </div>
@@ -822,7 +851,7 @@ export function MemberImportWorkflow({
             {[
               ["Invited", result.summary.invited],
               ["Connected", result.summary.connected],
-              ["Added to cohort", result.summary.cohortAdded],
+              ["Space access added", result.summary.spaceAdded ?? result.summary.cohortAdded],
               ["Skipped", result.summary.skipped],
               ["Failed", result.summary.failed],
             ].map(([label, count]) => (
@@ -889,43 +918,54 @@ export function MemberImportWorkflow({
 
 interface BatchSettingsProps {
   accessStatus: MemberImportAccessStatus;
-  cohortId: string;
-  cohorts: Array<{ id: string; name: string }>;
-  onChange: (accessStatus: MemberImportAccessStatus, cohortId: string) => void;
+  destinationSpaceId: string;
+  spaces: Array<{
+    id: string;
+    name: string;
+    kind: "main" | "event";
+    lifecycle: string;
+  }>;
+  onChange: (accessStatus: MemberImportAccessStatus, destinationSpaceId: string) => void;
 }
 
-function BatchSettings({ accessStatus, cohortId, cohorts, onChange }: BatchSettingsProps) {
+function BatchSettings({
+  accessStatus,
+  destinationSpaceId,
+  spaces,
+  onChange,
+}: BatchSettingsProps) {
   return (
     <fieldset className="grid gap-4 rounded-lg border border-[var(--line)] p-4 sm:grid-cols-2">
       <legend className="px-1 text-sm font-semibold text-[var(--ink)]">Settings for this list</legend>
       <div>
-        <Label htmlFor="member-import-access">Community access</Label>
+        <Label htmlFor="member-import-access">Space access</Label>
         <Select
           id="member-import-access"
           onChange={(event) =>
-            onChange(event.target.value as MemberImportAccessStatus, cohortId)
+            onChange(event.target.value as MemberImportAccessStatus, destinationSpaceId)
           }
           value={accessStatus}
         >
-          <option value="pending">Pending review</option>
           <option value="waitlist">Waitlist</option>
-          <option value="approved">Approved</option>
+          <option value="active">Active access</option>
         </Select>
         <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
-          Applied only when a new membership is created.
+          Existing active access is never downgraded. Conflicts require an explicit decision.
         </p>
       </div>
       <div>
-        <Label htmlFor="member-import-cohort">Cohort (optional)</Label>
+        <Label htmlFor="member-import-space">Destination Space</Label>
         <Select
-          id="member-import-cohort"
+          id="member-import-space"
           onChange={(event) => onChange(accessStatus, event.target.value)}
-          value={cohortId}
+          required
+          value={destinationSpaceId}
         >
-          <option value="">No cohort</option>
-          {cohorts.map((cohort) => (
-            <option key={cohort.id} value={cohort.id}>
-              {cohort.name}
+          <option value="" disabled>Choose a Space</option>
+          {spaces.map((space) => (
+            <option key={space.id} value={space.id}>
+              {space.name} · {space.kind === "main" ? "Main Community" : "Event"}
+              {space.lifecycle === "ended" ? " (Past)" : ""}
             </option>
           ))}
         </Select>

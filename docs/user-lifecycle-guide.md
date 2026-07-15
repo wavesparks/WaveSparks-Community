@@ -1,190 +1,200 @@
-# Wavespark User Lifecycle Guide
+# Wavesparks User Lifecycle Guide
 
-This guide covers the complete member journey, from public reading and invitation through onboarding, community participation, introductions, suspension, and account deletion.
+This guide explains how invitations, My Spaces, Main Community, Events, profiles, matching, and introductions fit together.
 
-All screenshots use synthetic accounts and local test data.
+## The model in one sentence
 
-## How account ownership works
+Your Clerk account connects you to Wavesparks, and a separate invitation controls access to each Main Community or Event Space.
 
-Wavespark and Clerk have separate responsibilities:
-
-| Area | System of record |
+| Area | Scope |
 | --- | --- |
-| Sign-in methods, password, primary email, active session | Clerk |
-| Wavespark organization membership and role | Wavespark Admin, synchronized to Clerk |
-| Application status, profile, posts, matches, and introductions | Wavespark |
-
-Use the account menu to manage your Clerk credentials. Use Wavespark pages for community activity. You do not need to create, delete, or switch organizations in Clerk.
+| Sign-in, password, primary email, session | Clerk account |
+| Global role and safety status | Wavesparks organization account |
+| Main Community access | Main Community only |
+| Event access | That Event only |
+| Core profile | Shared across every Space |
+| Goal, needs, offers, and matching opt-in | Saved separately in each Space |
+| Posts, people, follows, matches, and intros | The current Space |
 
 ## Lifecycle at a glance
 
 ```mermaid
 flowchart LR
-  A["Read the public forum"] --> B["Receive a personal invitation"]
-  B --> C["Open the invitation link"]
-  C --> D["Create or sign in to a Clerk account"]
-  D --> E["Pending or waitlist"]
-  E --> F["Save profile drafts"]
-  F --> G["Admin approval"]
-  G --> H["Complete required profile context"]
-  H --> I["Post, comment, follow, and browse matches"]
-  I --> J["Request or receive an introduction"]
-  J --> K["Recipient accepts"]
-  K --> L["Contact details unlock for both participants"]
+  A["Receive a personal invitation"] --> B["Create or sign in to a Clerk account"]
+  B --> C["Open My Spaces"]
+  C --> D["Read an assigned Event or Main Community"]
+  D --> E["Complete the global core profile"]
+  E --> F["Post, comment, view People, follow, and request intros"]
+  F --> G["Complete intent for this Space"]
+  G --> H["Receive AI matches inside this Space"]
+  H --> I["Optionally receive separate Main Community access"]
 ```
 
-## 1. Read before joining
+## 1. Join by personal invitation
 
-The Forum and public post pages are readable without an account. They remain readable if you are signed in but pending, waitlisted, rejected, suspended, or still completing your profile.
+Wavesparks has no public registration or shared invitation code.
 
-![Public Wavespark forum](assets/guides/user-public-feed.png)
+An Admin assigns your email to Main Community, an Event, or both. If the email is new to Clerk, Clerk sends a private, expiring account invitation. If you already have a Clerk account, Wavesparks connects it directly and sends a sign-in notification.
 
-Public reading does not include member interaction. Posting, commenting, following, the People directory, Matches, Requests, and introductions require an approved membership and a ready profile.
+Open the newest invitation with the exact invited email. A forwarded, revoked, expired, or already-used ticket may not work. If no email arrives, check spam and ask the Admin to inspect the row-level invitation status or resend it.
 
-## 2. Get a personal invitation
+You accept the Clerk organization invitation once. After the account is connected, every active Space entitlement already assigned to you becomes available independently.
 
-Wavespark does not support public registration or shared invitation codes.
+## 2. Start at My Spaces
 
-1. An Admin enters your name, email, role, and initial community status.
-2. If that email is new to Clerk, Clerk sends a personal invitation containing a private, expiring ticket.
-3. If the email already has a Clerk account, Wavespark adds it directly and sends a sign-in notification instead.
-4. Open the latest email. Forwarded, revoked, expired, or already-used Clerk invitation links may not work.
+After sign-in, `/org/wavesparks` opens **My Spaces**. It does not combine posts from different communities.
 
-![Invitation-only account page](assets/guides/user-invitation-required.png)
+The page groups:
 
-If you did not receive an email, check spam first, then ask the Admin to review your invitation status and use **Resend invite**. Do not register with a different email address.
+- **Main Community** — the permanent invitation-only network
+- **Active Events** — upcoming and currently active Events you can enter
+- **Past Events** — ended Events that remain available
 
-## 3. Accept the invitation and sign in
+You may belong to multiple Events and Main Community simultaneously. Each card opens a separate community with its own content, people, and matches.
 
-Open the invitation link from your email. The link leads to the dedicated Wavespark invitation page and then Clerk:
+If you have Event access but not Main access, the Main card shows **Invite only**. It does not reveal Main posts, member names, participant counts, or previews, and it has no self-serve application button.
 
-- If the invited email has no Clerk account, complete account creation.
-- If the email already belongs to a Clerk account, sign in to that account.
-- If you are already active in another Clerk organization, Wavespark automatically activates the Wavespark organization during the handoff.
+There is no anonymous community feed. Signing in without an active entitlement does not unlock content.
 
-After sign-in, Wavespark checks for the local invitation or membership record. An unrelated Clerk account cannot create its own Wavespark membership and receives an access-denied message.
+## 3. Understand independent access
 
-## 4. Understand your membership state
+Effective access requires all of the following:
 
-| State | What it means | What you can do |
-| --- | --- | --- |
-| `pending` | Your application is under Admin review. | Read public content and edit your profile. |
-| `waitlist` | Your application is valid, but access is waiting for an opening or cohort decision. | Read public content and edit your profile. |
-| `approved` | The membership decision is positive. | Complete the required profile, then use member tools. |
-| `rejected` | The current application is closed. | Read public content, review the Admin note, and sign out. |
-| `suspended` | Existing member access is paused. | Read public content, review the access note, and sign out. |
+1. Your Clerk organization account is connected.
+2. Your account is not globally suspended or deprovisioned.
+3. Your entitlement for this exact Space is active.
+4. The Space lifecycle permits member access.
 
-The status page explains the current decision and always provides a clear sign-out action.
+Event access never grants Main Community access. Main access never reveals an Event you did not attend. Removing one entitlement does not affect your other Spaces.
 
-![Pending application state](assets/guides/user-pending-status.png)
+### Event lifecycle
 
-## 5. Build and save your profile
+| Event state | What you experience |
+| --- | --- |
+| Upcoming | You can enter when your active entitlement is available. |
+| Active | Full Event access according to your profile readiness. |
+| Past Event | The date has ended, but content, interaction, and matching continue. |
+| Archived | The Event is hidden and member access is closed; its data is retained by Admins. |
 
-You can save a draft at any time. Drafts do not unlock member interaction until all required activation fields are ready.
+Only archive closes a completed Event. A Past Event is still a working community.
 
-Required fields:
+## 4. Always know which Space you are using
 
-- Preferred name
-- Headline
-- Startup one-liner
-- Startup description
-- At least one **I am looking for** matching type
-- At least one desired role
-- At least one skill tag
-- A valid email for introductions
+Community URLs include the Space explicitly:
 
-Validation rules:
+```text
+/org/:orgSlug/s/:spaceSlug/feed
+/org/:orgSlug/s/:spaceSlug/people
+/org/:orgSlug/s/:spaceSlug/matches
+/org/:orgSlug/s/:spaceSlug/knowledge
+/org/:orgSlug/s/:spaceSlug/opportunities
+/org/:orgSlug/s/:spaceSlug/requests
+```
 
-- Email fields must contain a valid email address.
-- LinkedIn, GitHub, website, and X links must begin with `http://` or `https://`.
-- Numeric values must be whole numbers inside the displayed range.
-- Empty required content cannot be used to unlock the community.
+The header shows the current Space name, whether it is Main Community or an Event, its dates, and its lifecycle. Use the Space switcher to move between Main, Active Events, and Past Events.
 
-When information is missing, Wavespark saves the draft, returns you to the earliest relevant step, and lists the missing fields.
+Compose always displays **Posting to {Space}** before submission. One post belongs to one Space. It is never cross-posted automatically, and its comment thread is not copied elsewhere.
 
-![Profile readiness and onboarding](assets/guides/user-onboarding.png)
+Old organization-level links return to My Spaces unless there is exactly one unambiguous Space you can access.
 
-## 6. Enter the approved community
+## 5. Read first, then complete your core profile
 
-Member interaction requires both conditions:
+As soon as your account is connected and an Event entitlement is active, you can read that Event's content. You do not need to finish onboarding before reading.
 
-1. Membership status is `approved`.
-2. Profile readiness is complete.
+Complete the global core profile before you can:
 
-Once both are true, you can publish posts and comments, follow approved members, search the limited People directory, browse Knowledge and member-only Opportunities, review Matches, and use introduction requests.
+- Publish posts or comments
+- View the People directory or member profile details
+- Follow another member
+- Send an introduction request
+- Participate in AI matching
 
-## 7. Use Matches and People safely
+Core profile information includes your identity, professional context, venture information, skills, experience, work preferences, and private introduction contact details. The Profile page explains that changes apply in every Main Community and Event because there is only one core profile.
 
-Choose matching intent in two separate lists: **I am looking for** controls which recommendations you request, while **I can offer** controls where you may appear as the other side of a recommendation. Leaving an offering type unchecked does not opt you into it.
+Private email and WhatsApp details are never used as public directory fields or embedding input.
 
-Matches combine explicit intent, structured fit, and semantic similarity. Recent active ask and opportunity posts may contribute a small intent signal; ordinary updates, comments, follows, and private contact details do not affect the score. A match is a suggestion, not an automatic introduction.
+## 6. Set intent separately in each Space
 
-![AI-assisted member matches](assets/guides/user-matches.png)
+The Matches page stores a separate Space intent containing:
 
-![AI-assisted member matches on mobile](assets/guides/user-matches-mobile.png)
+- Your current goal in this community
+- What you are looking for here
+- What you can offer here
+- Whether matching is enabled here
 
-Use **Follow** to prioritize a member's activity. Use an introduction request when you have a concrete reason to meet. Include the conversation purpose, why this person is relevant, and a useful first message.
+Completing an intent in one Event does not complete it in another Event or in Main Community. You can opt out of matching in one Space without leaving its content or changing matching elsewhere.
 
-Use **Helpful** to record a positive private quality signal. Use **Not relevant** with a reason to dismiss a recommendation. Dismissed matches remain hidden after recomputation; Admins see only organization-level feedback totals and reason counts in the product.
+Matching begins only when your core profile is complete, the current Space intent is complete, matching is enabled for that Space, and you have opted in.
+
+## 7. Keep community activity in context
+
+Every feed, People directory, Knowledge item, Opportunity, follow, match, feedback record, and pending introduction belongs to a Space.
+
+- **People in {Space}** lists only active participants in that Space.
+- **Matches within {Space}** considers only eligible members in that Space.
+- A person you share across two Spaces may produce different matches and explanations in each.
+- Following someone in an Event does not follow them in Main Community.
+- Adding you to Main does not copy your Event posts, matches, follows, or feedback.
+- A saved-post or notification link checks your access again before showing content.
+
+The same global profile may appear in multiple Spaces, but the local intent and local activity stay separate.
 
 ## 8. Request and accept introductions
 
-An introduction can originate from a match, member profile, post, or Admin-curated connection.
+An introduction starts from a match, member profile, post, or Admin-curated connection and retains its source Space. If the same two people share several Spaces, they can still have only one unresolved request at a time.
 
 Before acceptance:
 
-- Both profiles remain limited.
-- Private email and WhatsApp details stay hidden.
-- The recipient can accept or decline with the original context visible.
+- Private contact details remain hidden.
+- The recipient sees the purpose and context.
+- The request does not grant access to another Space.
 
-After the recipient accepts:
+After acceptance, contact details unlock only for the two participants. The accepted introduction remains in private account history even if one participant later leaves the source Space. It still does not grant Main Community, Event, content, or roster access.
 
-- Contact details unlock for the requester and recipient only.
-- Other members and Admin list views do not receive those private contact fields.
-- Both parties receive an updated request state and notification.
+## 9. Use the global Inbox safely
 
-![Accepted introduction with unlocked contact details](assets/guides/user-introductions.png)
+Profile and Inbox are account-level so you can reach them from any Space. Content, match, and introduction notifications display a Space label.
 
-## 9. Privacy and account controls
+Opening a notification rechecks your current account status, Space entitlement, and Space lifecycle. If access was removed or the Event was archived, the linked content remains unavailable even though the notification once existed.
 
-Use the Clerk account menu to update your primary email, credentials, or account settings. Clerk primary-email changes synchronize back to the matching Wavespark user record.
+## 10. Main Community invitations after an Event
 
-Wavespark keeps contact details gated unless an introduction is accepted. Public forum content remains readable by design.
+An Admin may use **Add to Main Community** after an Event. This creates a separate active Main entitlement immediately; you do not accept a second Clerk organization invitation.
 
-If your Clerk account is deleted:
+Your Event remains unchanged and available according to its own lifecycle. Main starts as a new community boundary with its own feed, people, follows, intent, and matches.
 
-- Your Wavespark user and profile are anonymized.
-- Your display name becomes `Former member`.
-- Your email is replaced by a unique, non-deliverable placeholder.
-- Contact details, Clerk IDs, follows, saves, notifications, matching data, and pending introductions are cleared or terminated.
-- Existing posts and comments remain as anonymous community history.
+## 11. Suspension, removal, and account deletion
 
-## 10. Sign out
+- A Space suspension or removal affects only that Main Community or Event.
+- A global account suspension overrides every Space without merging or deleting their rosters.
+- An archived Event becomes unavailable to participants but retains its data for administrators.
 
-Use **Sign out** in the account or status area. Signing out closes the active Wavespark session but does not delete your Clerk account or community history.
+If your Clerk account is deleted, Wavesparks anonymizes the account rather than rewriting community history. Display identity becomes `Former member`, private contact and authentication data are removed, pending interactions are terminated, and existing posts or comments remain attributed to the anonymized author.
 
 ## Troubleshooting
 
 | Symptom | What to do |
 | --- | --- |
-| Invitation link is invalid | Ask an Admin to confirm the invited email and resend the invitation. |
-| Signed in with the wrong email | Sign out and use the exact invited email address. |
-| Access says no active invitation | The Clerk account has no matching local Wavespark record. Contact an Admin. |
-| You land on another organization | Open the Wavespark sign-in flow again. The handoff should activate Wavespark automatically. |
-| Approved but member tools stay locked | Complete every field listed in Profile readiness. |
-| Pending or waitlisted | Continue editing your profile and wait for the Admin decision. |
-| Suspended or rejected | Review the Admin note. Public reading remains available. |
+| Invitation link is invalid | Ask an Admin to confirm the email and create a fresh invitation. |
+| Signed in with the wrong email | Sign out and use the exact invited email. |
+| My Spaces shows no accessible card | Ask the Admin to verify the destination Space and active entitlement. |
+| Main Community is locked | Main requires a separate Admin invitation; Event access does not include it. |
+| An expected Event is missing | Confirm its entitlement; archived Events are intentionally hidden. |
+| A Past Event is missing | Ask whether the Event was archived rather than ended. |
+| You can read but cannot post or view People | Complete every required core-profile field. |
+| Matches are unavailable | Complete the core profile and this Space's intent, then confirm matching opt-in. |
+| The same person has different matches elsewhere | Matching uses each Space's intent and activity independently. |
+| A notification link is denied | Your effective access to its labeled Space may have changed. |
 | Contact details are missing | The receiving member must accept the introduction first. |
 
-## End-to-end member checklist
+## Member checklist
 
-- [ ] Open the personal invitation email.
-- [ ] Create or sign in to the Clerk account for the invited email.
-- [ ] Confirm the Wavespark handoff reaches your status or profile page.
-- [ ] Save profile drafts and complete every readiness field.
-- [ ] Wait for approval if your state is pending or waitlist.
-- [ ] Publish or comment after access unlocks.
-- [ ] Browse People or Matches and follow useful members.
-- [ ] Send a contextual introduction request.
-- [ ] Confirm contacts stay hidden before acceptance and unlock after acceptance.
-- [ ] Sign out when finished on a shared device.
+- [ ] Open the personal invitation with the exact invited email.
+- [ ] Connect the Clerk account and arrive at My Spaces.
+- [ ] Confirm only assigned Main Community and Events are accessible.
+- [ ] Read the current Space and verify its name in the header.
+- [ ] Complete the global core profile before interacting.
+- [ ] Complete a separate intent in every Space where you want matches.
+- [ ] Confirm posts, follows, matches, and intros stay in their source Space.
+- [ ] Treat Past Events as active communities unless they are archived.
+- [ ] Confirm private contacts stay hidden until an introduction is accepted.

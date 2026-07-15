@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 export type StatusBannerTone = "success" | "warning" | "error" | "info";
 
 export interface StatusBannerProps {
+  spaceName?: string;
   status?: string;
   tone?: StatusBannerTone;
 }
@@ -45,8 +46,67 @@ function inferredTone(status?: string): StatusBannerTone {
   return "success";
 }
 
-export function StatusBanner({ status, tone }: StatusBannerProps) {
-  const copy = getStatusBannerCopy(status);
+function spaceStatusCopy(status: string | undefined, spaceName: string | undefined) {
+  if (!status || !spaceName) return null;
+
+  switch (status) {
+    case "post_created":
+      return {
+        title: `Post published in ${spaceName}`,
+        body: `Only active members of ${spaceName} can see it. It was not shared with another Space.`,
+      };
+    case "intro_requested":
+      return {
+        title: "Space intro request sent",
+        body: `The request stays inside ${spaceName} and can be tracked from this Space’s requests page.`,
+      };
+    case "intro_existing":
+      return {
+        title: "Space intro already exists",
+        body: `You already have an introduction request with this member inside ${spaceName}.`,
+      };
+    case "comment_added":
+      return {
+        title: "Comment added",
+        body: `Your reply is visible only to members who can access ${spaceName}.`,
+      };
+    case "post_saved":
+      return {
+        title: "Post saved",
+        body: `This thread is now in your saved Knowledge view for ${spaceName}.`,
+      };
+    case "post_unsaved":
+      return {
+        title: "Post removed from saved",
+        body: `This thread is no longer in your saved Knowledge view for ${spaceName}.`,
+      };
+    case "member_followed":
+      return {
+        title: `Following in ${spaceName}`,
+        body: "Their activity can now be highlighted to you within this Space only.",
+      };
+    case "member_unfollowed":
+      return {
+        title: `Unfollowed in ${spaceName}`,
+        body: "Their activity will no longer be prioritized for you within this Space.",
+      };
+    case "match_feedback_saved":
+      return {
+        title: "Feedback saved",
+        body: `Your private signal will improve matching quality inside ${spaceName}.`,
+      };
+    case "notifications_read":
+      return {
+        title: "Space notifications marked read",
+        body: `Notifications from ${spaceName} are now cleared. Other Spaces are unchanged.`,
+      };
+    default:
+      return null;
+  }
+}
+
+export function StatusBanner({ spaceName, status, tone }: StatusBannerProps) {
+  const copy = spaceStatusCopy(status, spaceName) ?? getStatusBannerCopy(status);
   const resolvedTone = tone ?? inferredTone(status);
   const Icon =
     resolvedTone === "success"

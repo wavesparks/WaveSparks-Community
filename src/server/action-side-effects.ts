@@ -1,7 +1,10 @@
 import { after } from "next/server";
 
 import type { AnalyticsEvent, Notification } from "@/lib/domain";
-import { sendNotificationEmail } from "@/server/notifications";
+import {
+  hasCurrentSpaceEmailAccess,
+  sendNotificationEmail,
+} from "@/server/notifications";
 import {
   addAnalyticsEvent,
   addNotification,
@@ -35,11 +38,21 @@ export function enqueueNotificationWrite(notification: Notification) {
 
 export function enqueueMembershipEmail(input: {
   membershipId: string;
+  spaceId?: string;
   subject: string;
   html: string;
 }) {
   after(async () => {
     try {
+      if (
+        input.spaceId &&
+        !(await hasCurrentSpaceEmailAccess({
+          membershipId: input.membershipId,
+          spaceId: input.spaceId,
+        }))
+      ) {
+        return;
+      }
       const profile = await getProfileByMembershipId(input.membershipId);
       if (!profile?.emailForIntro) {
         return;

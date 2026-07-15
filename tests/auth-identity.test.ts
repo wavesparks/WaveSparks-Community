@@ -60,11 +60,11 @@ describe("current auth identity", () => {
       {
         name: e2eLocalAuthCookieName,
         value: createE2ELocalAuthToken({
-          email: "avery@wavespark.co",
+          email: "avery@wavesparks.co",
           name: "Avery Tan",
           orgId: "org_e2e_wavespark",
           orgRole: "org:admin",
-          orgSlug: "wavespark",
+          orgSlug: "wavesparks",
         }),
       },
     ]);
@@ -74,9 +74,9 @@ describe("current auth identity", () => {
       canManageOrgMemberships: true,
       clerkOrgId: "org_e2e_wavespark",
       clerkOrgRole: "org:admin",
-      clerkOrgSlug: "wavespark",
-      clerkUserId: "e2e:avery@wavespark.co",
-      email: "avery@wavespark.co",
+      clerkOrgSlug: "wavesparks",
+      clerkUserId: "e2e:avery@wavesparks.co",
+      email: "avery@wavesparks.co",
       imageUrl: undefined,
       name: "Avery Tan",
       provider: "e2e",
@@ -128,7 +128,7 @@ describe("current auth identity", () => {
       o: {
         id: "org_clerk",
         rol: "admin",
-        slg: "wavespark",
+        slg: "wavesparks",
       },
       picture: "https://example.com/clerk.png",
       sub: "clerk_user",
@@ -146,7 +146,7 @@ describe("current auth identity", () => {
       canManageOrgMemberships: true,
       clerkOrgId: "org_clerk",
       clerkOrgRole: "org:admin",
-      clerkOrgSlug: "wavespark",
+      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
@@ -170,7 +170,7 @@ describe("current auth identity", () => {
       name: "Clerk Member",
       org_id: "org_clerk",
       org_role: "org:member",
-      org_slug: "wavespark",
+      org_slug: "wavesparks",
       sub: "clerk_user",
     });
 
@@ -198,7 +198,7 @@ describe("current auth identity", () => {
     verifyTokenMock.mockResolvedValue({
       org_id: "org_clerk",
       org_role: "org:member",
-      org_slug: "wavespark",
+      org_slug: "wavesparks",
       sub: "clerk_user",
     });
     getUserMock.mockResolvedValue({
@@ -224,7 +224,7 @@ describe("current auth identity", () => {
       canManageOrgMemberships: false,
       clerkOrgId: "org_clerk",
       clerkOrgRole: "org:member",
-      clerkOrgSlug: "wavespark",
+      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
@@ -254,7 +254,7 @@ describe("current auth identity", () => {
       has: vi.fn(() => false),
       orgId: "org_clerk",
       orgRole: "org:member",
-      orgSlug: "wavespark",
+      orgSlug: "wavesparks",
       userId: "clerk_user",
       sessionClaims: {
         email: "clerk@example.com",
@@ -269,7 +269,7 @@ describe("current auth identity", () => {
       canManageOrgMemberships: false,
       clerkOrgId: "org_clerk",
       clerkOrgRole: "org:member",
-      clerkOrgSlug: "wavespark",
+      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
@@ -286,7 +286,7 @@ describe("current auth identity", () => {
       has: vi.fn(() => true),
       orgId: "org_clerk",
       orgRole: "org:admin",
-      orgSlug: "wavespark",
+      orgSlug: "wavesparks",
       userId: "clerk_user",
       sessionClaims: {},
     });
@@ -308,7 +308,7 @@ describe("current auth identity", () => {
       canManageOrgMemberships: true,
       clerkOrgId: "org_clerk",
       clerkOrgRole: "org:admin",
-      clerkOrgSlug: "wavespark",
+      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",

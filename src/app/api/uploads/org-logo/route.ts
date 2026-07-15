@@ -17,11 +17,11 @@ export async function POST(request: Request) {
   let slug = requestUrl.searchParams.get("slug")?.trim();
   if (!slug) {
     formData = await request.formData();
-    slug = String(formData.get("slug") ?? "wavespark").trim();
+    slug = String(formData.get("slug") ?? "wavesparks").trim();
   }
 
   const { org, user, membership } = await getViewerRecordByEmailAndSlug(
-    slug || "wavespark",
+    slug || "wavesparks",
     identity.email,
   );
   if (!org) {

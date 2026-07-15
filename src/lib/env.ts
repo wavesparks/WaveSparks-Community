@@ -21,6 +21,21 @@ function nonEmpty(value?: string | null) {
   return trimmed || undefined;
 }
 
+function enabledRolloutFlag(value?: string | null) {
+  const normalized = nonEmpty(value)?.toLowerCase();
+  if (normalized) {
+    return normalized === "true";
+  }
+
+  // Local development and tests keep their existing zero-config behavior. A production
+  // process must opt in explicitly so a missing rollout variable fails closed.
+  return process.env.NODE_ENV !== "production";
+}
+
+function canonicalizeWavesparksOrgUrl(value?: string) {
+  return value?.replace(/\/org\/wavespark(?=\/|$)/, "/org/wavesparks");
+}
+
 const appUrl =
   withHttps(process.env.NEXT_PUBLIC_APP_URL) ??
   withHttps(process.env.VERCEL_PROJECT_PRODUCTION_URL) ??
@@ -35,24 +50,39 @@ const env = {
   clerkSecretKey: nonEmpty(process.env.CLERK_SECRET_KEY),
   clerkWebhookSigningSecret: nonEmpty(process.env.CLERK_WEBHOOK_SIGNING_SECRET),
   clerkSignInUrl:
-    nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL) ?? "/org/wavespark/signin",
+    canonicalizeWavesparksOrgUrl(nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL)) ??
+    "/org/wavesparks/signin",
   clerkSignUpUrl:
-    nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL) ?? "/org/wavespark/sign-up",
+    canonicalizeWavesparksOrgUrl(nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL)) ??
+    "/org/wavesparks/sign-up",
   clerkSignInFallbackRedirectUrl:
-    nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL) ??
-    "/org/wavespark",
+    canonicalizeWavesparksOrgUrl(
+      nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL),
+    ) ??
+    "/org/wavesparks",
   clerkSignUpFallbackRedirectUrl:
-    nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL) ??
-    "/org/wavespark",
+    canonicalizeWavesparksOrgUrl(
+      nonEmpty(process.env.NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL),
+    ) ??
+    "/org/wavesparks",
   databaseUrl: nonEmpty(process.env.DATABASE_URL),
   openAiApiKey: nonEmpty(process.env.OPENAI_API_KEY),
   resendApiKey: nonEmpty(process.env.RESEND_API_KEY),
   resendFromEmail:
-    nonEmpty(process.env.RESEND_FROM_EMAIL) ?? "Wavesparks <hello@wavesparks.co>",
+    nonEmpty(process.env.RESEND_FROM_EMAIL) ?? "Wavesparks <notification@wavesparks.co>",
   cronSecret: nonEmpty(process.env.CRON_SECRET),
   blobReadWriteToken: nonEmpty(process.env.BLOB_READ_WRITE_TOKEN),
   wavesparkAdminEmails: nonEmpty(process.env.WAVESPARK_ADMIN_EMAILS) ?? "",
+  spaceScopedReadsEnabled: enabledRolloutFlag(process.env.SPACE_SCOPED_READS_ENABLED),
 };
+
+export function assertSpaceScopedReadsEnabled() {
+  if (!env.spaceScopedReadsEnabled) {
+    throw new Error(
+      "Space-scoped community access is temporarily disabled. No organization-wide fallback is permitted.",
+    );
+  }
+}
 
 export function isClerkConfigured() {
   return Boolean(env.clerkPublishableKey && env.clerkSecretKey);

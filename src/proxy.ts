@@ -2,44 +2,12 @@ import { clerkMiddleware } from "@clerk/nextjs/server";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { hasPotentialClerkSessionCookie } from "@/lib/clerk-cookies";
-
 const clerkKeysConfigured = Boolean(
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY,
 );
 const clerkFrontendApiProxyConfigured = Boolean(
   process.env.NEXT_PUBLIC_CLERK_PROXY_URL,
 );
-
-const publicFeedPathPattern = /^\/org\/[^/]+\/feed\/?$/;
-const publicReadPathPattern = /^\/org\/[^/]+\/(?:feed|posts\/[^/]+)\/?$/;
-
-function isAnonymousPublicReadRequest(request: NextRequest) {
-  return (
-    publicReadPathPattern.test(request.nextUrl.pathname) &&
-    !hasPotentialClerkSessionCookie(request.cookies.getAll())
-  );
-}
-
-function isAnonymousPageRequest(request: NextRequest) {
-  return (
-    request.method === "GET" &&
-    !request.nextUrl.pathname.startsWith("/api") &&
-    !request.nextUrl.pathname.startsWith("/trpc") &&
-    !request.nextUrl.pathname.startsWith("/__clerk") &&
-    !hasPotentialClerkSessionCookie(request.cookies.getAll())
-  );
-}
-
-function anonymousFeedRewrite(request: NextRequest) {
-  if (!publicFeedPathPattern.test(request.nextUrl.pathname)) {
-    return null;
-  }
-
-  const rewriteUrl = request.nextUrl.clone();
-  rewriteUrl.pathname = `/anon${request.nextUrl.pathname}`;
-  return NextResponse.rewrite(rewriteUrl);
-}
 
 const clerkProxy = clerkMiddleware(
   clerkFrontendApiProxyConfigured
@@ -49,14 +17,6 @@ const clerkProxy = clerkMiddleware(
 
 export default clerkKeysConfigured
   ? function proxy(request: NextRequest, event: Parameters<typeof clerkProxy>[1]) {
-      if (isAnonymousPublicReadRequest(request)) {
-        return anonymousFeedRewrite(request) ?? NextResponse.next();
-      }
-
-      if (isAnonymousPageRequest(request)) {
-        return NextResponse.next();
-      }
-
       return clerkProxy(request, event);
     }
   : function proxy() {

@@ -24,6 +24,7 @@ import {
   getMembershipById,
   getOrganizationBySlug,
   getProfileByMembershipId,
+  getSpaceMembership,
   getStore,
   getUserById,
   importCohortMembers,
@@ -40,7 +41,7 @@ describe("Clerk webhook handling", () => {
     eventRef.current = null;
   });
 
-  it("preserves an existing cohort waitlist membership when an invitation is accepted", async () => {
+  it("preserves active Event access when an organization invitation is accepted", async () => {
     await linkOrganizationToClerkOrg(seedOrganization.id, "org_clerk_wavespark");
     const cohort = await createCohort({
       orgId: seedOrganization.id,
@@ -73,7 +74,10 @@ describe("Clerk webhook handling", () => {
     expect(membership).toMatchObject({
       clerkInvitationId: "inv_webhook_student",
       clerkInvitationStatus: "accepted",
-      status: "waitlist",
+      status: "pending",
+    });
+    await expect(getSpaceMembership(cohort.id, imported.membership.id)).resolves.toMatchObject({
+      accessStatus: "active",
     });
   });
 
@@ -129,7 +133,7 @@ describe("Clerk webhook handling", () => {
         id: "inv_all_states",
         email_address: "invitation.states@example.com",
         organization_id: "org_clerk_wavespark",
-        public_metadata: { membershipId: membership.id, orgSlug: "wavespark" },
+        public_metadata: { membershipId: membership.id, orgSlug: "wavesparks" },
         role: "org:member",
       },
     };
@@ -207,7 +211,7 @@ describe("Clerk webhook handling", () => {
     });
   });
 
-  it("suspends a locally active member when Clerk removes the organization membership", async () => {
+  it("deprovisions the account without changing Space access when Clerk removes the organization membership", async () => {
     await updateMembershipClerkState("mem_jules", {
       clerkMembershipId: "orgmem_removed",
       clerkRole: "org:member",
@@ -228,7 +232,8 @@ describe("Clerk webhook handling", () => {
     await expect(getMembershipById("mem_jules")).resolves.toMatchObject({
       clerkMembershipId: undefined,
       clerkRole: undefined,
-      status: "suspended",
+      accountStatus: "deprovisioned",
+      status: "approved",
     });
   });
 
@@ -247,7 +252,7 @@ describe("Clerk webhook handling", () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(getOrganizationBySlug("wavespark")).resolves.toMatchObject({
+    await expect(getOrganizationBySlug("wavesparks")).resolves.toMatchObject({
       id: seedOrganization.id,
       clerkOrgId: undefined,
     });
@@ -267,7 +272,7 @@ describe("Clerk webhook handling", () => {
       type: "organizationMembership.created",
       data: {
         id: "orgmem_retry",
-        organization: { id: "org_clerk_wavespark", slug: "wavespark" },
+        organization: { id: "org_clerk_wavespark", slug: "wavesparks" },
         public_user_data: { user_id: "user_retry" },
         role: "org:member",
       },

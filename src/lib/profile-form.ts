@@ -296,9 +296,10 @@ export function profileFromFormData({
     formData.get("whatsapp_visible_after_accept"),
   );
   profile.introOptIn = parseBoolean(formData.get("intro_opt_in"));
-  profile.profileVisibleInMatching = parseBoolean(
-    formData.get("profile_visible_in_matching"),
-  );
+  // Matching visibility is now controlled independently by each Space intent.
+  // Keep the legacy field stable during the compatibility window so editing a
+  // global profile cannot silently opt someone out of every Space.
+  profile.profileVisibleInMatching = existingProfile?.profileVisibleInMatching ?? true;
   profile.lastActiveAt = now;
   profile.updatedAt = now;
   const texts = buildMatchingEmbeddingTexts(profile);

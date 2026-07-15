@@ -21,7 +21,7 @@ export default async function AdminSettingsPage({
   const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
-    requireApproved: true,
+    requireConnected: true,
     requireAdmin: true,
   });
 

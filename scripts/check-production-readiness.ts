@@ -6,6 +6,7 @@ const requiredEnv = [
   "OPENAI_API_KEY",
   "CRON_SECRET",
   "WAVESPARK_ADMIN_EMAILS",
+  "SPACE_SCOPED_READS_ENABLED",
 ] as const;
 
 const optionalButExpectedEnv = [
@@ -18,6 +19,26 @@ export interface ProductionReadinessResult {
   errors: string[];
   warnings: string[];
 }
+
+export interface SpaceRolloutAuditRow {
+  check: string;
+  count: number | string;
+}
+
+const spaceRolloutCheckMessages: Record<string, string> = {
+  organizations_without_exactly_one_main:
+    "organization(s) do not have exactly one active Main Community",
+  duplicate_space_memberships: "duplicate Space membership pair(s) exist",
+  invalid_space_relationships: "orphan or cross-organization Space relationship(s) exist",
+  null_posts_space_id: "post(s) have null space_id",
+  null_follows_space_id: "follow(s) have null space_id",
+  null_match_runs_space_id: "match run(s) have null space_id",
+  null_matches_space_id: "match(es) have null space_id",
+  null_match_feedback_space_id: "match feedback row(s) have null space_id",
+  null_intro_requests_space_id: "intro request(s) have null space_id",
+  null_content_notifications_space_id:
+    "content or introduction notification(s) have null space_id",
+};
 
 function readEnv(env: NodeJS.ProcessEnv, key: string) {
   return env[key]?.trim() ?? "";
@@ -100,6 +121,9 @@ function checkPathOrHttpsUrl(env: NodeJS.ProcessEnv, key: string, errors: string
   const value = readEnv(env, key);
   if (!value) {
     return;
+  }
+  if (/\/org\/wavespark(?=\/|$)/.test(value)) {
+    errors.push(`${key} must use the canonical /org/wavesparks route.`);
   }
   if (value.startsWith("/")) {
     return;
@@ -213,6 +237,125 @@ function checkE2ELocalAuthDisabled(env: NodeJS.ProcessEnv, errors: string[]) {
   }
 }
 
+function checkSpaceScopedReadsFlag(env: NodeJS.ProcessEnv, errors: string[]) {
+  const value = readEnv(env, "SPACE_SCOPED_READS_ENABLED").toLowerCase();
+  if (value && value !== "true") {
+    errors.push(
+      "SPACE_SCOPED_READS_ENABLED must be explicitly true in production; false or invalid values fail closed.",
+    );
+  }
+}
+
+export function evaluateSpaceRolloutAuditRows(
+  rows: SpaceRolloutAuditRow[],
+): ProductionReadinessResult {
+  const errors: string[] = [];
+
+  for (const row of rows) {
+    const count = Number(row.count);
+    if (!Number.isFinite(count) || count < 0) {
+      errors.push(`Space rollout audit returned an invalid count for ${row.check}.`);
+      continue;
+    }
+    if (count === 0) continue;
+
+    const message = spaceRolloutCheckMessages[row.check] ?? `${row.check} violation(s) exist`;
+    errors.push(`Space rollout audit: ${count} ${message}.`);
+  }
+
+  return { errors, warnings: [] };
+}
+
+export async function checkSpaceRolloutReadiness(
+  databaseUrl: string,
+): Promise<ProductionReadinessResult> {
+  const postgres = (await import("postgres")).default;
+  const sql = postgres(databaseUrl, { max: 1, prepare: false });
+
+  try {
+    const rows = await sql<SpaceRolloutAuditRow[]>`
+      WITH audit AS (
+        SELECT
+          'organizations_without_exactly_one_main'::text AS "check",
+          count(*)::bigint AS "count"
+        FROM (
+          SELECT o.id
+          FROM organizations o
+          LEFT JOIN spaces s
+            ON s.org_id = o.id
+            AND s.kind = 'main'
+            AND s.lifecycle = 'active'
+          GROUP BY o.id
+          HAVING count(s.id) <> 1
+        ) invalid_main
+
+        UNION ALL
+        SELECT 'duplicate_space_memberships', count(*)::bigint
+        FROM (
+          SELECT space_id, membership_id
+          FROM space_memberships
+          GROUP BY space_id, membership_id
+          HAVING count(*) > 1
+        ) duplicates
+
+        UNION ALL
+        SELECT 'invalid_space_relationships', count(*)::bigint
+        FROM (
+          SELECT sm.id
+          FROM space_memberships sm
+          LEFT JOIN spaces s ON s.id = sm.space_id AND s.org_id = sm.org_id
+          LEFT JOIN memberships m ON m.id = sm.membership_id AND m.org_id = sm.org_id
+          WHERE s.id IS NULL OR m.id IS NULL
+
+          UNION ALL
+
+          SELECT si.id
+          FROM space_intents si
+          LEFT JOIN space_memberships sm
+            ON sm.space_id = si.space_id
+            AND sm.membership_id = si.membership_id
+            AND sm.org_id = si.org_id
+          WHERE sm.id IS NULL
+        ) invalid_relationships
+
+        UNION ALL
+        SELECT 'null_posts_space_id', count(*)::bigint FROM posts WHERE space_id IS NULL
+        UNION ALL
+        SELECT 'null_follows_space_id', count(*)::bigint FROM follows WHERE space_id IS NULL
+        UNION ALL
+        SELECT 'null_match_runs_space_id', count(*)::bigint FROM match_runs WHERE space_id IS NULL
+        UNION ALL
+        SELECT 'null_matches_space_id', count(*)::bigint FROM matches WHERE space_id IS NULL
+        UNION ALL
+        SELECT 'null_match_feedback_space_id', count(*)::bigint
+          FROM match_feedback WHERE space_id IS NULL
+        UNION ALL
+        SELECT 'null_intro_requests_space_id', count(*)::bigint
+          FROM intro_requests WHERE space_id IS NULL
+        UNION ALL
+        SELECT 'null_content_notifications_space_id', count(*)::bigint
+          FROM notifications
+          WHERE space_id IS NULL AND type NOT IN ('membership_approved', 'admin_note')
+      )
+      SELECT "check", "count" FROM audit ORDER BY "check"
+    `;
+
+    return evaluateSpaceRolloutAuditRows(rows);
+  } catch (error) {
+    const code =
+      typeof error === "object" && error && "code" in error
+        ? String(error.code)
+        : undefined;
+    const message =
+      code === "42P01" || code === "42703"
+        ? "Space rollout audit could not run because migrations 0009/0010 are not fully applied."
+        : "Space rollout audit could not query the production database.";
+    return { errors: [message], warnings: [] };
+  } finally {
+    await sql.end();
+  }
+}
+
 export function checkProductionReadiness(
   env: NodeJS.ProcessEnv = process.env,
 ): ProductionReadinessResult {
@@ -247,6 +390,7 @@ export function checkProductionReadiness(
   checkDatabaseUrl(env, errors);
   checkEmailList(env, "WAVESPARK_ADMIN_EMAILS", errors);
   checkE2ELocalAuthDisabled(env, errors);
+  checkSpaceScopedReadsFlag(env, errors);
   checkPairedConfig(env, ["RESEND_API_KEY", "RESEND_FROM_EMAIL"], errors, "Resend email");
 
   return { errors, warnings };
@@ -255,7 +399,15 @@ export function checkProductionReadiness(
 async function main() {
   const { loadScriptEnv } = await import("./load-script-env");
   loadScriptEnv("production");
-  const { errors, warnings } = checkProductionReadiness();
+  const result = checkProductionReadiness();
+  const databaseUrl = readEnv(process.env, "DATABASE_URL");
+  const envOnly = process.argv.includes("--env-only");
+  if (!envOnly && !result.errors.length && databaseUrl) {
+    const spaceResult = await checkSpaceRolloutReadiness(databaseUrl);
+    result.errors.push(...spaceResult.errors);
+    result.warnings.push(...spaceResult.warnings);
+  }
+  const { errors, warnings } = result;
 
   if (warnings.length) {
     console.warn("Production readiness warnings:");
@@ -272,7 +424,11 @@ async function main() {
     process.exit(1);
   }
 
-  console.info("Production readiness checks passed.");
+  console.info(
+    envOnly
+      ? "Production environment checks passed. Run the full readiness check after migrations."
+      : "Production readiness checks passed, including the Space data audit.",
+  );
 }
 
 if (process.env.NODE_ENV !== "test") {

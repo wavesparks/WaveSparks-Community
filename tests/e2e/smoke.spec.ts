@@ -1,7 +1,9 @@
 import { clerkSetup, setupClerkTestingToken } from "@clerk/testing/playwright";
-import { test, expect } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const usesClerk = process.env.E2E_AUTH_MODE === "clerk";
+const privatePostTitle =
+  "Looking for a technical co-founder who cares about climate adaptation";
 
 test.beforeAll(async () => {
   if (usesClerk) {
@@ -15,76 +17,68 @@ test.beforeEach(async ({ page }) => {
   }
 });
 
-test("public forum loads without sign-in", async ({ page }) => {
-  await page.goto("/");
-  await expect(page).toHaveURL(/\/org\/wavespark\/feed/);
-  await expect(page.getByRole("heading", { name: "Wavespark Forum" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
-  await expect(page.getByText("Unlock interaction")).toHaveCount(0);
+async function expectPrivateRouteToRequireSignIn(page: Page, path: string) {
+  await page.goto(path);
+  await expect(page).toHaveURL(/\/org\/wavesparks\/signin$/);
+  await expect(
+    page.getByRole("heading", { name: "Enter the Wavesparks application flow" }),
+  ).toBeVisible();
+  await expect(page.getByText(privatePostTitle, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Wavesparks Forum" })).toHaveCount(0);
+  await expect(page.getByText("Post published", { exact: true })).toHaveCount(0);
+}
 
-  const forumNav = page.getByRole("navigation", { name: "Forum navigation" });
-  await expect(forumNav.getByRole("link", { name: "Forum" })).toHaveAttribute(
-    "href",
-    "/org/wavespark/feed",
+test("anonymous root reveals no Space and redirects to sign-in", async ({ page }) => {
+  await expectPrivateRouteToRequireSignIn(page, "/");
+});
+
+test("anonymous legacy feed reveals no content and redirects to sign-in", async ({ page }) => {
+  await expectPrivateRouteToRequireSignIn(
+    page,
+    "/org/wavesparks/feed?status=post_created",
   );
-
-  for (const label of ["People", "Knowledge", "Opportunities", "Matches", "Requests"]) {
-    await expect(forumNav.getByRole("link", { name: label })).toHaveAttribute(
-      "href",
-      "/org/wavespark/signin",
-    );
-  }
-
-  await expect(
-    page.getByText("Looking for a technical co-founder who cares about climate adaptation"),
-  ).toBeVisible();
 });
 
-test("public thread is readable while interaction stays gated", async ({ page }) => {
-  await page.goto("/org/wavespark/posts/pst_1");
-  await expect(
-    page.getByRole("heading", {
-      name: "Looking for a technical co-founder who cares about climate adaptation",
-    }),
-  ).toBeVisible();
-  await expect(page.getByText("Sign in required")).toHaveCount(2);
-  await expect(page.getByRole("button", { name: "Add comment" })).toHaveCount(0);
+test("anonymous direct post reveals neither its Space nor content", async ({ page }) => {
+  await expectPrivateRouteToRequireSignIn(page, "/org/wavesparks/posts/pst_1");
 });
 
-test("sign-in surface loads", async ({ page }) => {
-  await page.goto("/org/wavespark/signin");
-  await expect(page.getByRole("heading", { name: "Enter the Wavespark application flow" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to forum" })).toBeVisible();
+test("sign-in surface explains private Space access", async ({ page }) => {
+  await page.goto("/org/wavesparks/signin");
   await expect(
-    page.getByRole("heading", { name: /Sign in to Wavespark|Clerk is not configured/ }),
+    page.getByRole("heading", { name: "Enter the Wavesparks application flow" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to My Spaces" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Sign in to Wavesparks|Clerk is not configured/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Sign in is required before any community content or member information is shown."),
   ).toBeVisible();
   await expect(page.getByText("Email sign in")).toHaveCount(0);
   await expect(page.getByText("Preview accounts use")).toHaveCount(0);
 });
 
 test("sign-up is invitation-only and exposes no account creation form", async ({ page }) => {
-  await page.goto("/org/wavespark/sign-up");
-  await expect(page.getByRole("heading", { name: "Join Wavespark by invitation" })).toBeVisible();
+  await page.goto("/org/wavesparks/sign-up");
+  await expect(page.getByRole("heading", { name: "Join Wavesparks by invitation" })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Check your invitation email" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to forum" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to My Spaces" })).toBeVisible();
   await expect(page.getByLabel("Invitation code")).toHaveCount(0);
-  await expect(page.getByText("Direct public registration and shared invite codes are closed")).toBeVisible();
+  await expect(
+    page.getByText("Direct public registration and shared invite codes are closed"),
+  ).toBeVisible();
 
-  await page.goto("/org/wavespark/accept-invitation");
+  await page.goto("/org/wavesparks/accept-invitation");
   await expect(page.getByRole("heading", { name: "Invitation link required" })).toBeVisible();
   await expect(page.getByText("Create your account")).toHaveCount(0);
 });
 
-test("anonymous protected pages redirect to sign-in", async ({ page }) => {
-  await page.goto("/org/wavespark/profile?status=profile_saved");
-  await expect(page).toHaveURL(/\/org\/wavespark\/signin$/);
-  await expect(page.getByRole("heading", { name: "Enter the Wavespark application flow" })).toBeVisible();
-});
-
-test("public status banners render on completed-action destinations", async ({ page }) => {
-  await page.goto("/org/wavespark/feed?status=post_created");
-  await expect(page.getByText("Post published")).toBeVisible();
-  await expect(page).toHaveURL(/\/org\/wavespark\/feed$/);
+test("anonymous account pages redirect before rendering member data", async ({ page }) => {
+  await expectPrivateRouteToRequireSignIn(
+    page,
+    "/org/wavesparks/profile?status=profile_saved",
+  );
 });

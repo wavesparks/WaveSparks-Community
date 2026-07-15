@@ -50,7 +50,7 @@ describe("permission guards", () => {
     expect(membership).toMatchObject({
       role: "org_admin",
       status: "approved",
-      programName: "Wavespark Admin",
+      programName: "Wavesparks Admin",
     });
     expect(canViewAdminRoute(user, membership)).toBe(true);
   });
@@ -97,7 +97,7 @@ describe("permission guards", () => {
     expect(promoted).toMatchObject({
       role: "org_admin",
       status: "approved",
-      approvalNote: "Approved by WAVESPARK_ADMIN_EMAILS bootstrap.",
+      approvalNote: "Approved by bootstrap admin configuration.",
     });
     expect(canViewAdminRoute(user, promoted)).toBe(true);
   });

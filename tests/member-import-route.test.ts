@@ -52,7 +52,7 @@ describe("member import parse route", () => {
       provider: "clerk",
     });
     getViewerRecordByEmailAndSlugMock.mockResolvedValue({
-      org: { id: "org_1", slug: "wavespark" },
+      org: { id: "org_1", slug: "wavesparks" },
       user: { id: "user_1" },
       membership: { id: "membership_1" },
     });

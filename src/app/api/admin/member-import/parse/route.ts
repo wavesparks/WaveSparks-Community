@@ -39,8 +39,8 @@ export async function POST(request: Request) {
   const requestUrl = new URL(request.url);
   const orgSlug =
     requestUrl.searchParams.get("slug")?.trim() ||
-    String(formData.get("slug") ?? formData.get("orgSlug") ?? "wavespark").trim() ||
-    "wavespark";
+    String(formData.get("slug") ?? formData.get("orgSlug") ?? "wavesparks").trim() ||
+    "wavesparks";
   const viewerRecord = await getViewerRecordByEmailAndSlug(orgSlug, identity.email);
 
   if (!viewerRecord.org) {

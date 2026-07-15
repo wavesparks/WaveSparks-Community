@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { and, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
@@ -18,7 +20,7 @@ async function main() {
   loadScriptEnv(target.environment);
   const { seedOrganization } = await import("@/data/seed-data");
   const { getDb, getSqlClient } = await import("@/db/client");
-  const { memberships, organizations, users } = await import("@/db/schema");
+  const { memberships, organizations, spaces, users } = await import("@/db/schema");
   const { env, getBootstrapAdminEmails } = await import("@/lib/env");
 
   if (!env.databaseUrl) {
@@ -56,7 +58,55 @@ async function main() {
       status: seedOrganization.status,
       createdAt: new Date(seedOrganization.createdAt),
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: organizations.id,
+      set: {
+        allowedDomains: seedOrganization.allowedDomains,
+        name: seedOrganization.name,
+        slug: seedOrganization.slug,
+      },
+    });
+
+  const mainSpaceId = `spc_main_${createHash("md5")
+    .update(seedOrganization.id)
+    .digest("hex")}`;
+  const existingMainSpaces = await db
+    .select()
+    .from(spaces)
+    .where(and(eq(spaces.orgId, seedOrganization.id), eq(spaces.kind, "main")));
+  if (existingMainSpaces.length > 1) {
+    throw new Error("Production bootstrap found more than one Main Community Space.");
+  }
+  const existingMainSpace = existingMainSpaces[0];
+  if (existingMainSpace && existingMainSpace.lifecycle !== "active") {
+    throw new Error("Production bootstrap found an invalid Main Community lifecycle.");
+  }
+  if (!existingMainSpace) {
+    const [idCollision] = await db
+      .select({ id: spaces.id, orgId: spaces.orgId, kind: spaces.kind })
+      .from(spaces)
+      .where(eq(spaces.id, mainSpaceId))
+      .limit(1);
+    if (idCollision) {
+      throw new Error(
+        "Production bootstrap found a deterministic Main Space id collision; resolve it explicitly.",
+      );
+    }
+
+    await db.insert(spaces).values({
+      id: mainSpaceId,
+      orgId: seedOrganization.id,
+      slug: "main",
+      kind: "main",
+      lifecycle: "active",
+      name: "Main Community",
+      description: seedOrganization.description,
+      eventLabel: "Permanent community",
+      matchingEnabled: true,
+      createdAt: new Date(seedOrganization.createdAt),
+      updatedAt: now,
+    });
+  }
 
   for (const email of emails) {
     const [existingUser] = await db
@@ -117,7 +167,7 @@ async function main() {
       affiliationType: "current participant",
       status: "approved",
       archetypes: ["mentor"],
-      programName: "Wavespark Admin",
+      programName: "Wavesparks Admin",
       cohortNameOrYear: "Core",
       approvalNote: "Approved by production bootstrap.",
       approvedAt: now,

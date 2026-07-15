@@ -7,7 +7,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     orgSlug?: string;
   };
-  const orgSlug = body.orgSlug?.trim() || "wavespark";
+  const orgSlug = body.orgSlug?.trim() || "wavesparks";
 
   const identity = await getCurrentAuthIdentity();
   if (!identity) {

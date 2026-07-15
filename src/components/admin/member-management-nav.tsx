@@ -3,21 +3,23 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 export interface MemberManagementNavProps {
-  active: "members" | "cohorts";
+  active: "members" | "spaces" | "cohorts";
   slug: string;
 }
 
 const items = [
   { key: "members", label: "Members", path: "members" },
-  { key: "cohorts", label: "Cohorts", path: "cohorts" },
+  { key: "spaces", label: "Spaces", path: "spaces" },
 ] as const;
 
 export function MemberManagementNav({ active, slug }: MemberManagementNavProps) {
+  const normalizedActive = active === "cohorts" ? "spaces" : active;
+
   return (
     <nav aria-label="Member management" className="border-b border-[var(--line)]">
       <div className="flex gap-6">
         {items.map((item) => {
-          const isActive = active === item.key;
+          const isActive = normalizedActive === item.key;
 
           return (
             <Link

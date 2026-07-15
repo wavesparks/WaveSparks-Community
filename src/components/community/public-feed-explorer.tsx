@@ -336,7 +336,7 @@ export function PublicFeedExplorer({
           <SectionHeading
             eyebrow="Community signal"
             level={1}
-            title="Wavespark Forum"
+            title="Wavesparks Forum"
             description="Founder asks, updates, resources, opportunities, and warm-intro signals from the approved network."
           />
         </div>

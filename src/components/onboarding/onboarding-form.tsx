@@ -38,12 +38,14 @@ export function OnboardingForm({
   links,
   matchTypeConfigs,
   initialStep = 0,
+  returnTo,
 }: {
   action: (formData: FormData) => void;
   profile: Profile;
   links: ProfileLink[];
   matchTypeConfigs: MatchTypeConfig[];
   initialStep?: number;
+  returnTo?: string;
 }) {
   const [step, setStep] = useState(Math.max(0, Math.min(initialStep, onboardingSteps.length - 1)));
   const [readiness, setReadiness] = useState(() => getProfileReadiness(profile));
@@ -61,6 +63,7 @@ export function OnboardingForm({
     <form
       action={action}
       className="space-y-6"
+      noValidate
       onInput={(event) => {
         setValidationNotice(null);
         updateReadiness(event.currentTarget);
@@ -87,6 +90,7 @@ export function OnboardingForm({
         );
       }}
     >
+      {returnTo ? <input name="return_to" type="hidden" value={returnTo} /> : null}
       <input name="matching_intent_version" type="hidden" value="2" />
       <div
         aria-live="polite"
@@ -103,7 +107,8 @@ export function OnboardingForm({
                 : "Add the minimum context before saving"}
             </h2>
             <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-              Saving updates your match ranking, feed recommendations, and intro context.
+              Saving updates your core profile everywhere. Each Space combines it with that
+              Space’s own goals and matching preference.
             </p>
           </div>
           <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-right">
@@ -666,11 +671,6 @@ export function OnboardingForm({
               name: "intro_opt_in",
               label: "Stay open to intro requests",
               checked: profile.introOptIn,
-            },
-            {
-              name: "profile_visible_in_matching",
-              label: "Allow AI matching to surface my profile",
-              checked: profile.profileVisibleInMatching,
             },
           ].map((item) => (
             <label className="flex items-center gap-3" key={item.name}>

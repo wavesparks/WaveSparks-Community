@@ -91,8 +91,9 @@ const membership: Membership = {
   id: "mem_test",
   orgId: org.id,
   userId: user.id,
-  role: "member",
-  affiliationType: "current participant",
+      role: "member",
+      accountStatus: "connected",
+      affiliationType: "current participant",
   status: "approved",
   archetypes: [],
   programName: "Test",
@@ -177,7 +178,7 @@ describe("organization viewer context", () => {
     expect(context.viewer?.membership.role).toBe("member");
   });
 
-  it("keeps the Wavespark role when another Clerk organization is active", async () => {
+  it("keeps the Wavesparks role when another Clerk organization is active", async () => {
     mockState.org = Promise.resolve({
       ...org,
       clerkOrgId: "org_clerk_other",

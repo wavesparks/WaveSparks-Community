@@ -26,9 +26,9 @@ export default async function SignInPage({
     <main className="ws-page-shell px-4 py-6 sm:px-6 lg:px-8">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-5xl flex-col justify-center gap-5">
         <div className="flex items-center justify-between gap-3">
-          <LinkButton href={`/org/${slug}/feed`} size="sm" variant="ghost">
+          <LinkButton href={`/org/${slug}`} size="sm" variant="ghost">
             <ArrowLeft className="size-4" />
-            Back to forum
+            Back to My Spaces
           </LinkButton>
         </div>
 
@@ -41,12 +41,12 @@ export default async function SignInPage({
                   description="Use the account your admin invited to this community."
                   eyebrow="Sign in"
                   level={1}
-                  title="Enter the Wavespark application flow"
+                  title="Enter the Wavesparks application flow"
                   tone="inverse"
                 />
                 <div className="mt-6 grid gap-3 text-sm text-[var(--surface)]/80">
-                  <p>Browse first; interact only when you are ready.</p>
-                  <p>Profiles surface through posts, match cards, and accepted intros.</p>
+                  <p>Every Event and Main Community is a separate private Space.</p>
+                  <p>You will only see content, people, and matches from Spaces assigned to you.</p>
                   <p>Contact details stay hidden until both sides agree.</p>
                 </div>
               </div>
@@ -57,9 +57,9 @@ export default async function SignInPage({
             {clerkConfigured ? (
               <Card className="space-y-5">
                 <SectionHeading
-                  description="Use Clerk to access your Wavespark community account."
+                  description="Use Clerk to access your Wavesparks community account."
                   eyebrow="Managed identity"
-                  title="Sign in to Wavespark"
+                  title="Sign in to Wavesparks"
                 />
                 <div className="flex min-h-[360px] justify-center">
                   <SignIn
@@ -80,13 +80,13 @@ export default async function SignInPage({
               </Card>
             )}
             <Card className="text-sm leading-6 text-[var(--ink-soft)]">
-              Members can browse first. Sign in is only needed to post, reply, follow, or request intros.
+              Sign in is required before any community content or member information is shown.
             </Card>
             {clerkConfigured ? (
               <Card className="space-y-2 text-sm leading-6 text-[var(--ink-soft)]">
                 <p className="font-semibold text-[var(--ink)]">Invitation required</p>
                 <p>
-                  New member accounts are created from a Wavespark admin invitation.
+                  New member accounts are created from a Wavesparks admin invitation.
                   Ask your community admin to send an invite to your email address.
                 </p>
               </Card>

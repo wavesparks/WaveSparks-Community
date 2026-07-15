@@ -32,7 +32,7 @@ describe("main community access routing", () => {
   });
 
   it("keeps anonymous public reading open", () => {
-    expect(mainCommunityRedirectForViewer("wavespark", null)).toBeUndefined();
+    expect(mainCommunityRedirectForViewer("wavesparks", null)).toBeUndefined();
   });
 
   it("sends pending and waitlist members to pending access", async () => {
@@ -46,11 +46,11 @@ describe("main community access routing", () => {
     });
     const waitlistViewer = await viewerForMembership(membership.id);
 
-    expect(mainCommunityRedirectForViewer("wavespark", pendingViewer)).toBe(
-      "/org/wavespark/pending",
+    expect(mainCommunityRedirectForViewer("wavesparks", pendingViewer)).toBe(
+      "/org/wavesparks/pending",
     );
-    expect(mainCommunityRedirectForViewer("wavespark", waitlistViewer)).toBe(
-      "/org/wavespark/pending",
+    expect(mainCommunityRedirectForViewer("wavesparks", waitlistViewer)).toBe(
+      "/org/wavesparks/pending",
     );
   });
 
@@ -58,19 +58,19 @@ describe("main community access routing", () => {
     const viewer = await viewerForMembership("mem_jules");
 
     expect(
-      mainCommunityRedirectForViewer("wavespark", {
+      mainCommunityRedirectForViewer("wavesparks", {
         ...viewer,
         profile: viewer.profile
           ? { ...viewer.profile, onboardingComplete: false }
           : viewer.profile,
       }),
-    ).toBe("/org/wavespark/onboarding");
+    ).toBe("/org/wavesparks/onboarding");
   });
 
   it("allows approved members with onboarding complete", async () => {
     await expect(
       mainCommunityRedirectForViewer(
-        "wavespark",
+        "wavesparks",
         await viewerForMembership("mem_jules"),
       ),
     ).toBeUndefined();

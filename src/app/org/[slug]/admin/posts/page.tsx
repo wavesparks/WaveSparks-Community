@@ -8,6 +8,7 @@ import { SubmitButton } from "@/components/ui/submit-button";
 import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { getAdminPostModerationDashboard } from "@/server/view-models";
+import { listSpacesForOrg } from "@/server/store";
 
 export default async function AdminPostsPage({
   params,
@@ -20,7 +21,7 @@ export default async function AdminPostsPage({
   const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
-    requireApproved: true,
+    requireConnected: true,
     requireAdmin: true,
   });
 
@@ -28,7 +29,13 @@ export default async function AdminPostsPage({
     return null;
   }
 
-  const dashboard = await getAdminPostModerationDashboard(viewer.org.id);
+  const [dashboard, spaces] = await Promise.all([
+    getAdminPostModerationDashboard(viewer.org.id),
+    listSpacesForOrg(viewer.org.id),
+  ]);
+  const spaceNameById = new Map(spaces.map((space) => [space.id, space.name]));
+  const spaceLabel = (spaceId?: string) =>
+    (spaceId && spaceNameById.get(spaceId)) || "Unscoped migration row";
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/posts`} viewer={viewer}>
@@ -37,7 +44,7 @@ export default async function AdminPostsPage({
           eyebrow="Admin · Posts"
           level={1}
           title="Moderate feed content and comments"
-          description="Feature important posts, hide low-trust content, and lock comment threads when necessary."
+          description="Organization-wide audit across all Spaces. Every row identifies its owning Space; use a Space detail page for an isolated view."
         />
         <StatusBanner status={singleQueryValue(query.status)} />
 
@@ -52,6 +59,9 @@ export default async function AdminPostsPage({
                     <p className="text-sm text-[var(--ink-soft)]">
                       {post.authorName} · {post.type.replaceAll("_", " ")}
                     </p>
+                    <Badge className="mt-2" variant={post.spaceId ? "muted" : "default"}>
+                      {spaceLabel(post.spaceId)}
+                    </Badge>
                   </div>
                   <div className="flex gap-2">
                     {post.featured ? <Badge variant="accent">featured</Badge> : null}
@@ -118,6 +128,9 @@ export default async function AdminPostsPage({
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-sm font-semibold text-[var(--ink)]">{comment.authorName}</p>
                     <Badge>{comment.status}</Badge>
+                    <Badge variant={comment.spaceId ? "muted" : "default"}>
+                      {spaceLabel(comment.spaceId)}
+                    </Badge>
                   </div>
                   <p className="text-xs text-[var(--ink-soft)]">On {comment.postTitle}</p>
                   <p className="text-sm text-[var(--ink-soft)]">{comment.body}</p>

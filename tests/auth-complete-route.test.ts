@@ -27,7 +27,7 @@ describe("auth completion route", () => {
 
   it("rejects requests without Clerk credentials before resolving viewer context", async () => {
     const response = await GET(
-      new NextRequest("http://localhost/api/internal/auth/complete?orgSlug=wavespark"),
+      new NextRequest("http://localhost/api/internal/auth/complete?orgSlug=wavesparks"),
     );
 
     expect(response.status).toBe(401);
@@ -46,7 +46,7 @@ describe("auth completion route", () => {
     });
 
     const response = await GET(
-      new NextRequest("http://localhost/api/internal/auth/complete?orgSlug=wavespark", {
+      new NextRequest("http://localhost/api/internal/auth/complete?orgSlug=wavesparks", {
         headers: {
           authorization: "Bearer session_token",
         },
@@ -56,11 +56,11 @@ describe("auth completion route", () => {
     await expect(response.json()).resolves.toEqual({
       clerkOrgId: "org_clerk_wavespark",
       state: "ready",
-      target: "/org/wavespark/feed",
+      target: "/org/wavesparks",
     });
     expect(response.status).toBe(200);
     expect(getAuthCompletionViewerContextMock).toHaveBeenCalledWith(
-      "wavespark",
+      "wavesparks",
       { clerkSessionToken: "session_token" },
     );
   });
@@ -72,14 +72,14 @@ describe("auth completion route", () => {
     });
 
     const response = await GET(
-      new NextRequest("http://localhost/api/internal/auth/complete?orgSlug=wavespark", {
+      new NextRequest("http://localhost/api/internal/auth/complete?orgSlug=wavesparks", {
         headers: { authorization: "Bearer session_token" },
       }),
     );
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
-      error: "This account does not have a Wavespark invitation.",
+      error: "This account does not have a Wavesparks invitation.",
     });
   });
 });

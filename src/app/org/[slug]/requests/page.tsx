@@ -1,4 +1,6 @@
-import { markNotificationsReadAction, respondIntroAction } from "@/actions/member";
+import Link from "next/link";
+
+import { markAccountNotificationsReadAction } from "@/actions/member";
 import { IntroRequestCard } from "@/components/community/intro-request-card";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -8,10 +10,16 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { getViewerContext } from "@/lib/auth";
-import { singleQueryValue } from "@/lib/feed-filters";
 import type { IntroStatus } from "@/lib/domain";
-import { hasUnreadNotificationsForMembership } from "@/server/store";
-import { getIntroRequestViews, getNotificationViews } from "@/server/view-models";
+import { singleQueryValue } from "@/lib/feed-filters";
+import {
+  hasUnreadNotificationsForMembershipWithSpaceAccess,
+  listVisibleSpacesForMembership,
+} from "@/server/store";
+import {
+  getAccountInboxNotificationViews,
+  getAccountIntroHistoryViews,
+} from "@/server/view-models";
 
 type RequestDirection = "incoming" | "outgoing";
 
@@ -42,35 +50,30 @@ function requestStatusFromQuery(value?: string) {
 
 function requestQueueHref(slug: string, queue: (typeof requestQueues)[number]) {
   const params = new URLSearchParams();
-  if (queue.direction) {
-    params.set("request_direction", queue.direction);
-  }
-  if (queue.status) {
-    params.set("request_status", queue.status);
-  }
-
+  if (queue.direction) params.set("request_direction", queue.direction);
+  if (queue.status) params.set("request_status", queue.status);
   const query = params.toString();
   return `/org/${slug}/requests${query ? `?${query}` : ""}`;
 }
 
-export default async function RequestsPage({
+function safeNotificationHref(slug: string, link: string) {
+  const orgRoot = `/org/${slug}`;
+  return link === orgRoot || link.startsWith(`${orgRoot}/`) ? link : undefined;
+}
+
+export default async function AccountInboxPage({
   params,
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { slug } = await params;
-  const query = await searchParams;
+  const [{ slug }, query] = await Promise.all([params, searchParams]);
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
-    requireApproved: true,
-    requireCompleteProfile: true,
+    requireConnected: true,
   });
-
-  if (!viewer) {
-    return null;
-  }
+  if (!viewer) return null;
 
   const selectedRequestDirection = requestDirectionFromQuery(
     singleQueryValue(query.request_direction),
@@ -78,24 +81,34 @@ export default async function RequestsPage({
   const selectedRequestStatus = requestStatusFromQuery(
     singleQueryValue(query.request_status),
   );
+  const accessRecords = await listVisibleSpacesForMembership(viewer.membership.id);
+  const accessibleSpaces = accessRecords.map(({ space }) => space);
+  const accessibleSpaceIds = accessibleSpaces.map((space) => space.id);
+  const accessibleSpaceIdSet = new Set(accessibleSpaceIds);
   const [requests, notifications, hasUnreadNotifications] = await Promise.all([
-    getIntroRequestViews(viewer.membership.id, viewer.org.id, {
+    getAccountIntroHistoryViews(viewer.membership.id, viewer.org.id, accessibleSpaces, {
       direction: selectedRequestDirection,
       limit: 24,
       status: selectedRequestStatus,
     }),
-    getNotificationViews(viewer.membership.id, { limit: 8 }),
-    hasUnreadNotificationsForMembership(viewer.membership.id),
+    getAccountInboxNotificationViews(viewer.membership.id, accessibleSpaces, {
+      limit: 12,
+    }),
+    hasUnreadNotificationsForMembershipWithSpaceAccess(
+      viewer.membership.id,
+      accessibleSpaceIds,
+    ),
   ]);
+  const profileReady = Boolean(viewer.profile?.onboardingComplete);
 
   return (
     <AppShell currentPath={`/org/${slug}/requests`} viewer={viewer}>
       <div className="space-y-8">
         <SectionHeading
-          eyebrow="Requests"
+          description="Your private introduction history and notifications across Spaces. Every Space-scoped item is labeled, and opening it re-checks your current access."
+          eyebrow="Account Inbox"
           level={1}
-          title="Manage introductions and notifications"
-          description="Accepted intros reveal contact details. Declines stay polite. Pending requests keep context visible without exposing private contact fields."
+          title="Introductions and notifications"
         />
         <StatusBanner status={singleQueryValue(query.status)} />
 
@@ -106,7 +119,6 @@ export default async function RequestsPage({
                 const active =
                   queue.direction === selectedRequestDirection &&
                   queue.status === selectedRequestStatus;
-
                 return (
                   <LinkButton
                     href={requestQueueHref(slug, queue)}
@@ -119,93 +131,115 @@ export default async function RequestsPage({
                 );
               })}
             </div>
-            {requests.map((request) => (
-              <IntroRequestCard
-                actions={
-                  request.isIncoming && request.status === "pending" ? (
-                    <div className="flex gap-3">
-                      <form
-                        action={respondIntroAction.bind(
-                          null,
-                          slug,
-                          request.id,
-                          viewer.membership.id,
-                          "accepted",
-                        )}
-                      >
-                        <SubmitButton pendingLabel="Accepting">Accept</SubmitButton>
-                      </form>
-                      <form
-                        action={respondIntroAction.bind(
-                          null,
-                          slug,
-                          request.id,
-                          viewer.membership.id,
-                          "declined",
-                        )}
-                      >
-                        <SubmitButton pendingLabel="Declining" variant="secondary">
-                          Decline
-                        </SubmitButton>
-                      </form>
-                    </div>
-                  ) : null
-                }
-                key={request.id}
-                request={request}
-              />
-            ))}
+
+            {requests.map((request) => {
+              const canOpenSource = Boolean(
+                request.spaceId &&
+                  request.spaceSlug &&
+                  accessibleSpaceIdSet.has(request.spaceId),
+              );
+              const sourceRequestsPath = canOpenSource
+                ? `/org/${slug}/s/${request.spaceSlug}/requests`
+                : undefined;
+              const needsProfile =
+                request.isIncoming && request.status === "pending" && !profileReady;
+              const actionHref = needsProfile && request.spaceSlug
+                ? `/org/${slug}/onboarding?space=${encodeURIComponent(request.spaceSlug)}`
+                : sourceRequestsPath;
+
+              return (
+                <IntroRequestCard
+                  actions={
+                    actionHref ? (
+                      <LinkButton href={actionHref} size="sm" variant="secondary">
+                        {needsProfile
+                          ? "Complete profile to respond"
+                          : request.isIncoming && request.status === "pending"
+                            ? `Respond in ${request.spaceName ?? "Space"}`
+                            : `Open ${request.spaceName ?? "Space"}`}
+                      </LinkButton>
+                    ) : null
+                  }
+                  key={request.id}
+                  request={request}
+                />
+              );
+            })}
+
             {!requests.length ? (
               <Card>
-                <p className="text-sm font-semibold text-[var(--ink)]">No intro requests yet</p>
-                <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                  Requests from matches and posts will appear here with their context.
+                <p className="font-semibold text-[var(--ink)]">No intro requests yet</p>
+                <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+                  Requests started in a Space appear here with their source label. Accepted
+                  connection history remains private to your account.
                 </p>
               </Card>
             ) : null}
           </div>
 
-          <div className="space-y-6">
-            <Card className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <SectionHeading eyebrow="Inbox" title="Latest notifications" />
-                {hasUnreadNotifications ? (
-                  <form
-                    action={markNotificationsReadAction.bind(
-                      null,
-                      slug,
-                      viewer.membership.id,
-                    )}
+          <Card className="h-fit space-y-4 xl:sticky xl:top-24">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <SectionHeading eyebrow="Inbox" title="Latest notifications" />
+              {hasUnreadNotifications ? (
+                <form
+                  action={markAccountNotificationsReadAction.bind(
+                    null,
+                    slug,
+                    viewer.membership.id,
+                  )}
+                >
+                  <SubmitButton pendingLabel="Marking read" size="sm" variant="secondary">
+                    Mark all read
+                  </SubmitButton>
+                </form>
+              ) : null}
+            </div>
+
+            <div className="space-y-3">
+              {notifications.map((notification) => {
+                const href = safeNotificationHref(slug, notification.link);
+                const content = (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="muted">
+                        {notification.spaceName ?? "Account"}
+                      </Badge>
+                      {!notification.readAt ? <Badge variant="accent">new</Badge> : null}
+                    </div>
+                    <p className="mt-3 font-semibold text-[var(--ink)]">
+                      {notification.title}
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+                      {notification.body}
+                    </p>
+                  </>
+                );
+
+                return href ? (
+                  <Link
+                    className="block rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 transition hover:border-[var(--accent)]/40"
+                    href={href}
+                    key={notification.id}
                   >
-                    <SubmitButton pendingLabel="Marking read" size="sm" variant="secondary">
-                      Mark all read
-                    </SubmitButton>
-                  </form>
-                ) : null}
-              </div>
-              <div className="space-y-3">
-                {notifications.map((notification) => (
+                    {content}
+                  </Link>
+                ) : (
                   <div
                     className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4"
                     key={notification.id}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-[var(--ink)]">{notification.title}</p>
-                        <p className="mt-1 text-sm text-[var(--ink-soft)]">{notification.body}</p>
-                      </div>
-                      {!notification.readAt ? <Badge variant="accent">new</Badge> : null}
-                    </div>
+                    {content}
                   </div>
-                ))}
-                {!notifications.length ? (
-                  <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
-                    <p className="text-sm text-[var(--ink-soft)]">No notifications yet.</p>
-                  </div>
-                ) : null}
-              </div>
-            </Card>
-          </div>
+                );
+              })}
+
+              {!notifications.length ? (
+                <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                  <p className="text-sm text-[var(--ink-soft)]">No notifications yet.</p>
+                </div>
+              ) : null}
+            </div>
+          </Card>
         </div>
       </div>
     </AppShell>

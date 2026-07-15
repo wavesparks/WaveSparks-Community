@@ -200,12 +200,19 @@ async function main() {
           orderBy: "none",
         }) as Promise<ReconcileLocalRecord[]>),
   ]);
-  let clerkOrg = organizationList.data.find(
-    (organization) => organization.slug === seedOrganization.slug,
-  );
+  let clerkOrg =
+    (localOrg.clerkOrgId
+      ? organizationList.data.find((organization) => organization.id === localOrg.clerkOrgId)
+      : undefined) ??
+    organizationList.data.find((organization) => organization.slug === seedOrganization.slug) ??
+    organizationList.data.find((organization) => organization.slug === "wavespark");
   const extraOrganizations = organizationList.data
-    .filter((organization) => organization.slug !== seedOrganization.slug)
-    .map((organization) => ({ id: organization.id, name: organization.name, slug: organization.slug }));
+    .filter((organization) => organization.id !== clerkOrg?.id)
+    .map((organization) => ({
+      id: organization.id,
+      name: organization.name,
+      slug: organization.slug,
+    }));
 
   const [clerkMemberships, clerkInvitations] = clerkOrg
     ? await Promise.all([

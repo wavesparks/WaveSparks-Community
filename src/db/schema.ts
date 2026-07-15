@@ -1,6 +1,10 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   customType,
+  foreignKey,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -28,6 +32,12 @@ const vector = customType<{ data: number[]; driverData: string; config: { dimens
 });
 
 export const membershipRoleEnum = pgEnum("membership_role", ["org_admin", "member"]);
+export const accountStatusEnum = pgEnum("account_status", [
+  "invited",
+  "connected",
+  "suspended",
+  "deprovisioned",
+]);
 export const membershipStatusEnum = pgEnum("membership_status", [
   "pending",
   "approved",
@@ -72,6 +82,28 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "admin_note",
 ]);
 export const platformRoleEnum = pgEnum("platform_role", ["platform_owner", "standard"]);
+export const spaceKindEnum = pgEnum("space_kind", ["main", "event"]);
+export const spaceLifecycleEnum = pgEnum("space_lifecycle", [
+  "draft",
+  "upcoming",
+  "active",
+  "ended",
+  "archived",
+]);
+export const spaceAccessStatusEnum = pgEnum("space_access_status", [
+  "active",
+  "waitlist",
+  "rejected",
+  "suspended",
+  "removed",
+]);
+export const spaceJoinSourceEnum = pgEnum("space_join_source", [
+  "invite",
+  "import",
+  "promotion",
+  "direct",
+  "migration",
+]);
 
 export const users = pgTable(
   "users",
@@ -145,6 +177,7 @@ export const memberships = pgTable("memberships", {
   orgId: text("org_id").notNull(),
   userId: text("user_id").notNull(),
   role: membershipRoleEnum("role").notNull().default("member"),
+  accountStatus: accountStatusEnum("account_status").notNull().default("invited"),
   affiliationType: text("affiliation_type").notNull(),
   status: membershipStatusEnum("status").notNull().default("pending"),
   archetypes: text("archetypes").array().notNull(),
@@ -160,6 +193,7 @@ export const memberships = pgTable("memberships", {
     table.orgId,
     table.userId,
   ),
+  idOrgIdx: uniqueIndex("memberships_id_org_idx").on(table.id, table.orgId),
   clerkMembershipIdx: uniqueIndex("memberships_clerk_membership_id_idx").on(
     table.clerkMembershipId,
   ),
@@ -167,6 +201,171 @@ export const memberships = pgTable("memberships", {
     table.clerkInvitationId,
   ),
 }));
+
+export const spaces = pgTable(
+  "spaces",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    slug: text("slug").notNull(),
+    kind: spaceKindEnum("kind").notNull(),
+    lifecycle: spaceLifecycleEnum("lifecycle").notNull().default("draft"),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    eventLabel: text("event_label").notNull().default(""),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    matchingEnabled: boolean("matching_enabled").notNull().default(true),
+    createdByMembershipId: text("created_by_membership_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    orgSlugIdx: uniqueIndex("spaces_org_slug_idx").on(table.orgId, table.slug),
+    idOrgIdx: uniqueIndex("spaces_id_org_idx").on(table.id, table.orgId),
+    oneMainPerOrgIdx: uniqueIndex("spaces_one_main_per_org_idx")
+      .on(table.orgId)
+      .where(sql`${table.kind} = 'main'`),
+    orgLifecycleIdx: index("spaces_org_lifecycle_idx").on(table.orgId, table.lifecycle),
+    orgFk: foreignKey({
+      columns: [table.orgId],
+      foreignColumns: [organizations.id],
+      name: "spaces_org_fk",
+    }).onDelete("cascade"),
+    creatorFk: foreignKey({
+      columns: [table.createdByMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "spaces_creator_fk",
+    }).onDelete("restrict"),
+    mainLifecycleCheck: check(
+      "spaces_main_lifecycle_check",
+      sql`${table.kind} <> 'main' OR ${table.lifecycle} = 'active'`,
+    ),
+    eventDatesCheck: check(
+      "spaces_event_dates_check",
+      sql`${table.endsAt} IS NULL OR ${table.startsAt} IS NULL OR ${table.endsAt} >= ${table.startsAt}`,
+    ),
+  }),
+);
+
+export const spaceMemberships = pgTable(
+  "space_memberships",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id").notNull(),
+    membershipId: text("membership_id").notNull(),
+    accessStatus: spaceAccessStatusEnum("access_status").notNull().default("active"),
+    joinedVia: spaceJoinSourceEnum("joined_via").notNull().default("direct"),
+    invitedByMembershipId: text("invited_by_membership_id"),
+    sourceSpaceId: text("source_space_id"),
+    decisionNote: text("decision_note"),
+    grantedAt: timestamp("granted_at", { withTimezone: true }),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    spaceMembershipIdx: uniqueIndex("space_memberships_space_membership_idx").on(
+      table.spaceId,
+      table.membershipId,
+    ),
+    spaceMembershipOrgIdx: uniqueIndex("space_memberships_space_membership_org_idx").on(
+      table.spaceId,
+      table.membershipId,
+      table.orgId,
+    ),
+    membershipAccessIdx: index("space_memberships_membership_access_idx").on(
+      table.membershipId,
+      table.accessStatus,
+    ),
+    spaceAccessIdx: index("space_memberships_space_access_idx").on(
+      table.spaceId,
+      table.accessStatus,
+    ),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "space_memberships_space_org_fk",
+    }).onDelete("cascade"),
+    membershipOrgFk: foreignKey({
+      columns: [table.membershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "space_memberships_membership_org_fk",
+    }).onDelete("cascade"),
+    inviterFk: foreignKey({
+      columns: [table.invitedByMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "space_memberships_inviter_fk",
+    }).onDelete("restrict"),
+    sourceSpaceFk: foreignKey({
+      columns: [table.sourceSpaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "space_memberships_source_space_fk",
+    }).onDelete("restrict"),
+    removedAtCheck: check(
+      "space_memberships_removed_at_check",
+      sql`${table.accessStatus} = 'removed' OR ${table.removedAt} IS NULL`,
+    ),
+  }),
+);
+
+export const spaceIntents = pgTable(
+  "space_intents",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id").notNull(),
+    membershipId: text("membership_id").notNull(),
+    currentGoal: text("current_goal").notNull().default(""),
+    lookingFor: text("looking_for").array().notNull().default(sql`ARRAY[]::text[]`),
+    offers: text("offers").array().notNull().default(sql`ARRAY[]::text[]`),
+    matchingOptIn: boolean("matching_opt_in").notNull().default(true),
+    intentComplete: boolean("intent_complete").notNull().default(false),
+    seekingText: text("seeking_text").notNull().default(""),
+    offeringText: text("offering_text").notNull().default(""),
+    seekingEmbedding: vector("seeking_embedding", { dimensions: 1024 }),
+    offeringEmbedding: vector("offering_embedding", { dimensions: 1024 }),
+    embeddingModel: text("embedding_model"),
+    embeddingSourceHash: text("embedding_source_hash"),
+    embeddingStatus: text("embedding_status").notNull().default("pending"),
+    embeddingError: text("embedding_error"),
+    embeddingUpdatedAt: timestamp("embedding_updated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    spaceMembershipIdx: uniqueIndex("space_intents_space_membership_idx").on(
+      table.spaceId,
+      table.membershipId,
+    ),
+    matchingIdx: index("space_intents_space_matching_idx").on(
+      table.spaceId,
+      table.matchingOptIn,
+      table.intentComplete,
+    ),
+    membershipFk: foreignKey({
+      columns: [table.spaceId, table.membershipId, table.orgId],
+      foreignColumns: [
+        spaceMemberships.spaceId,
+        spaceMemberships.membershipId,
+        spaceMemberships.orgId,
+      ],
+      name: "space_intents_space_membership_fk",
+    }).onDelete("cascade"),
+    orgFk: foreignKey({
+      columns: [table.orgId],
+      foreignColumns: [organizations.id],
+      name: "space_intents_org_fk",
+    }).onDelete("cascade"),
+    embeddingStatusCheck: check(
+      "space_intents_embedding_status_check",
+      sql`${table.embeddingStatus} IN ('pending', 'ready', 'failed')`,
+    ),
+  }),
+);
 
 export const cohorts = pgTable("cohorts", {
   id: text("id").primaryKey(),
@@ -338,40 +537,75 @@ export const profileLinks = pgTable("profile_links", {
   url: text("url").notNull(),
 });
 
-export const posts = pgTable("posts", {
-  id: text("id").primaryKey(),
-  orgId: text("org_id").notNull(),
-  authorMembershipId: text("author_membership_id").notNull(),
-  type: postTypeEnum("type").notNull(),
-  opportunitySource: opportunitySourceEnum("opportunity_source"),
-  title: text("title").notNull(),
-  body: text("body").notNull(),
-  tags: text("tags").array().notNull(),
-  relatedStartupName: text("related_startup_name"),
-  relatedRolesNeeded: text("related_roles_needed").array().notNull(),
-  visibility: text("visibility").notNull().default("org_only"),
-  status: postStatusEnum("status").notNull().default("active"),
-  featured: boolean("featured").notNull().default(false),
-  hidden: boolean("hidden").notNull().default(false),
-  commentsLocked: boolean("comments_locked").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-});
+export const posts = pgTable(
+  "posts",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
+    authorMembershipId: text("author_membership_id").notNull(),
+    type: postTypeEnum("type").notNull(),
+    opportunitySource: opportunitySourceEnum("opportunity_source"),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    tags: text("tags").array().notNull(),
+    relatedStartupName: text("related_startup_name"),
+    relatedRolesNeeded: text("related_roles_needed").array().notNull(),
+    visibility: text("visibility").notNull().default("org_only"),
+    status: postStatusEnum("status").notNull().default("active"),
+    featured: boolean("featured").notNull().default(false),
+    hidden: boolean("hidden").notNull().default(false),
+    commentsLocked: boolean("comments_locked").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    idOrgIdx: uniqueIndex("posts_id_org_idx").on(table.id, table.orgId),
+    spaceCreatedIdx: index("posts_space_created_idx").on(table.spaceId, table.createdAt),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "posts_space_org_fk",
+    }).onDelete("restrict"),
+    authorOrgFk: foreignKey({
+      columns: [table.authorMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "posts_author_org_fk",
+    }).onDelete("restrict"),
+  }),
+);
 
 export const follows = pgTable(
   "follows",
   {
     id: text("id").primaryKey(),
     orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
     followerMembershipId: text("follower_membership_id").notNull(),
     followedMembershipId: text("followed_membership_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
   (table) => ({
-    followerFollowedIdx: uniqueIndex("follows_follower_followed_idx").on(
+    spaceFollowerFollowedIdx: uniqueIndex("follows_space_follower_followed_idx").on(
+      table.spaceId,
       table.followerMembershipId,
       table.followedMembershipId,
     ),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "follows_space_org_fk",
+    }).onDelete("restrict"),
+    followerOrgFk: foreignKey({
+      columns: [table.followerMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "follows_follower_org_fk",
+    }).onDelete("restrict"),
+    followedOrgFk: foreignKey({
+      columns: [table.followedMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "follows_followed_org_fk",
+    }).onDelete("restrict"),
   }),
 );
 
@@ -389,6 +623,16 @@ export const postSaves = pgTable(
       table.membershipId,
       table.postId,
     ),
+    membershipOrgFk: foreignKey({
+      columns: [table.membershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "post_saves_membership_org_fk",
+    }).onDelete("cascade"),
+    postOrgFk: foreignKey({
+      columns: [table.postId, table.orgId],
+      foreignColumns: [posts.id, posts.orgId],
+      name: "post_saves_post_org_fk",
+    }).onDelete("cascade"),
   }),
 );
 
@@ -402,18 +646,31 @@ export const comments = pgTable("comments", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 });
 
-export const matchRuns = pgTable("match_runs", {
-  id: text("id").primaryKey(),
-  orgId: text("org_id").notNull(),
-  startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-  status: text("status").notNull(),
-  metadataJson: jsonb("metadata_json").$type<Record<string, unknown>>().notNull(),
-});
+export const matchRuns = pgTable(
+  "match_runs",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    status: text("status").notNull(),
+    metadataJson: jsonb("metadata_json").$type<Record<string, unknown>>().notNull(),
+  },
+  (table) => ({
+    spaceStartedIdx: index("match_runs_space_started_idx").on(table.spaceId, table.startedAt),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "match_runs_space_org_fk",
+    }).onDelete("restrict"),
+  }),
+);
 
 export const matches = pgTable("matches", {
   id: text("id").primaryKey(),
   orgId: text("org_id").notNull(),
+  spaceId: text("space_id"),
   sourceProfileId: text("source_profile_id").notNull(),
   targetProfileId: text("target_profile_id").notNull(),
   matchType: text("match_type").notNull(),
@@ -433,12 +690,17 @@ export const matches = pgTable("matches", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
 }, (table) => ({
-  sourceTargetTypeIdx: uniqueIndex("matches_source_target_type_idx").on(
-    table.orgId,
+  sourceTargetTypeIdx: uniqueIndex("matches_space_source_target_type_idx").on(
+    table.spaceId,
     table.sourceProfileId,
     table.targetProfileId,
     table.matchType,
   ),
+  spaceOrgFk: foreignKey({
+    columns: [table.spaceId, table.orgId],
+    foreignColumns: [spaces.id, spaces.orgId],
+    name: "matches_space_org_fk",
+  }).onDelete("restrict"),
 }));
 
 export const matchFeedback = pgTable(
@@ -446,6 +708,7 @@ export const matchFeedback = pgTable(
   {
     id: text("id").primaryKey(),
     orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
     matchId: text("match_id").notNull(),
     sourceProfileId: text("source_profile_id").notNull(),
     matchType: text("match_type").notNull(),
@@ -461,65 +724,178 @@ export const matchFeedback = pgTable(
       table.matchId,
       table.sourceProfileId,
     ),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "match_feedback_space_org_fk",
+    }).onDelete("restrict"),
   }),
 );
 
-export const introRequests = pgTable("intro_requests", {
-  id: text("id").primaryKey(),
-  orgId: text("org_id").notNull(),
-  requesterMembershipId: text("requester_membership_id").notNull(),
-  receiverMembershipId: text("receiver_membership_id").notNull(),
-  sourceType: introSourceTypeEnum("source_type").notNull(),
-  sourceId: text("source_id").notNull(),
-  introPurpose: text("intro_purpose").notNull(),
-  note: text("note").notNull(),
-  status: introStatusEnum("status").notNull().default("pending"),
-  respondedAt: timestamp("responded_at", { withTimezone: true }),
-  contactRevealedAt: timestamp("contact_revealed_at", { withTimezone: true }),
-  suggestedFirstMessage: text("suggested_first_message").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-});
+export const introRequests = pgTable(
+  "intro_requests",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
+    requesterMembershipId: text("requester_membership_id").notNull(),
+    receiverMembershipId: text("receiver_membership_id").notNull(),
+    sourceType: introSourceTypeEnum("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    introPurpose: text("intro_purpose").notNull(),
+    note: text("note").notNull(),
+    status: introStatusEnum("status").notNull().default("pending"),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    contactRevealedAt: timestamp("contact_revealed_at", { withTimezone: true }),
+    suggestedFirstMessage: text("suggested_first_message").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pendingPairIdx: uniqueIndex("intro_requests_org_pending_pair_idx")
+      .on(
+        table.orgId,
+        sql`least(${table.requesterMembershipId}, ${table.receiverMembershipId})`,
+        sql`greatest(${table.requesterMembershipId}, ${table.receiverMembershipId})`,
+      )
+      .where(sql`${table.status} = 'pending'`),
+    membershipCreatedIdx: index("intro_requests_space_created_idx").on(
+      table.spaceId,
+      table.createdAt,
+    ),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "intro_requests_space_org_fk",
+    }).onDelete("restrict"),
+    requesterOrgFk: foreignKey({
+      columns: [table.requesterMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "intro_requests_requester_org_fk",
+    }).onDelete("restrict"),
+    receiverOrgFk: foreignKey({
+      columns: [table.receiverMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "intro_requests_receiver_org_fk",
+    }).onDelete("restrict"),
+  }),
+);
 
-export const reports = pgTable("reports", {
-  id: text("id").primaryKey(),
-  orgId: text("org_id").notNull(),
-  reporterMembershipId: text("reporter_membership_id").notNull(),
-  targetType: text("target_type").notNull(),
-  targetId: text("target_id").notNull(),
-  reason: text("reason").notNull(),
-  status: text("status").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-});
+export const reports = pgTable(
+  "reports",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
+    reporterMembershipId: text("reporter_membership_id").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id").notNull(),
+    reason: text("reason").notNull(),
+    status: text("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    spaceStatusIdx: index("reports_space_status_idx").on(table.spaceId, table.status),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "reports_space_org_fk",
+    }).onDelete("restrict"),
+    reporterOrgFk: foreignKey({
+      columns: [table.reporterMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "reports_reporter_org_fk",
+    }).onDelete("restrict"),
+  }),
+);
 
-export const adminActions = pgTable("admin_actions", {
-  id: text("id").primaryKey(),
-  orgId: text("org_id").notNull(),
-  adminMembershipId: text("admin_membership_id").notNull(),
-  actionType: text("action_type").notNull(),
-  targetType: text("target_type").notNull(),
-  targetId: text("target_id").notNull(),
-  payloadJson: jsonb("payload_json").$type<Record<string, unknown>>().notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-});
+export const adminActions = pgTable(
+  "admin_actions",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
+    adminMembershipId: text("admin_membership_id").notNull(),
+    actionType: text("action_type").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id").notNull(),
+    payloadJson: jsonb("payload_json").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    spaceCreatedIdx: index("admin_actions_space_created_idx").on(table.spaceId, table.createdAt),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "admin_actions_space_org_fk",
+    }).onDelete("restrict"),
+    adminOrgFk: foreignKey({
+      columns: [table.adminMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "admin_actions_admin_org_fk",
+    }).onDelete("restrict"),
+  }),
+);
 
-export const analyticsEvents = pgTable("analytics_events", {
-  id: text("id").primaryKey(),
-  orgId: text("org_id").notNull(),
-  membershipId: text("membership_id"),
-  eventName: text("event_name").notNull(),
-  payloadJson: jsonb("payload_json").$type<Record<string, unknown>>().notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-});
+export const analyticsEvents = pgTable(
+  "analytics_events",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
+    membershipId: text("membership_id"),
+    eventName: text("event_name").notNull(),
+    payloadJson: jsonb("payload_json").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    spaceEventCreatedIdx: index("analytics_events_space_event_created_idx").on(
+      table.spaceId,
+      table.eventName,
+      table.createdAt,
+    ),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "analytics_events_space_org_fk",
+    }).onDelete("restrict"),
+    membershipOrgFk: foreignKey({
+      columns: [table.membershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "analytics_events_membership_org_fk",
+    }).onDelete("restrict"),
+  }),
+);
 
-export const notifications = pgTable("notifications", {
-  id: text("id").primaryKey(),
-  orgId: text("org_id").notNull(),
-  membershipId: text("membership_id").notNull(),
-  type: notificationTypeEnum("type").notNull(),
-  title: text("title").notNull(),
-  body: text("body").notNull(),
-  link: text("link").notNull(),
-  readAt: timestamp("read_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-});
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id"),
+    membershipId: text("membership_id").notNull(),
+    type: notificationTypeEnum("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    link: text("link").notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    membershipSpaceCreatedIdx: index("notifications_membership_space_created_idx").on(
+      table.membershipId,
+      table.spaceId,
+      table.createdAt,
+    ),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "notifications_space_org_fk",
+    }).onDelete("restrict"),
+    membershipOrgFk: foreignKey({
+      columns: [table.membershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "notifications_membership_org_fk",
+    }).onDelete("cascade"),
+  }),
+);

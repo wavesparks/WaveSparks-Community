@@ -22,7 +22,10 @@ if (!runClerkBrowserTests) {
 }
 const baseEnv = definedEnv(process.env);
 const webServerEnv = runClerkBrowserTests
-  ? baseEnv
+  ? {
+      ...baseEnv,
+      SPACE_SCOPED_READS_ENABLED: "true",
+    }
   : {
       ...baseEnv,
       CLERK_SECRET_KEY: "",
@@ -30,6 +33,7 @@ const webServerEnv = runClerkBrowserTests
       E2E_LOCAL_AUTH_ENABLED: "1",
       E2E_LOCAL_AUTH_SECRET: localE2EAuthSecret,
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "",
+      SPACE_SCOPED_READS_ENABLED: "true",
     };
 
 if (runClerkBrowserTests) {

@@ -8,7 +8,10 @@ import { absoluteAppUrl } from "@/lib/urls";
 import { resolveClerkOrganizationId } from "@/server/clerk-sync";
 import { updateMembershipClerkState, upsertSessionUser } from "@/server/store";
 
-const activeStatuses = new Set(["pending", "waitlist", "approved"]);
+const inviteableAccountStatuses = new Set<Membership["accountStatus"]>([
+  "invited",
+  "connected",
+]);
 
 export type MembershipInvitationInput = {
   forceNew?: boolean;
@@ -117,8 +120,8 @@ async function attachExistingClerkUser(input: {
 }
 
 export async function sendMembershipInvitation(input: MembershipInvitationInput) {
-  if (!activeStatuses.has(input.membership.status)) {
-    throw new Error("Inactive members cannot be invited.");
+  if (!inviteableAccountStatuses.has(input.membership.accountStatus)) {
+    throw new Error("Suspended or deprovisioned accounts cannot be invited.");
   }
   if (isE2ELocalAuthEnabled() && !isClerkConfigured()) {
     const localMembership = await updateMembershipClerkState(input.membership.id, {
@@ -136,7 +139,7 @@ export async function sendMembershipInvitation(input: MembershipInvitationInput)
   try {
     const organizationId = await resolveClerkOrganizationId(input.org);
     if (!organizationId) {
-      throw new Error("The Wavespark Clerk organization is not linked.");
+      throw new Error("The Wavesparks Clerk organization is not linked.");
     }
     const clerkUser = await resolveClerkUser(input.user);
     if (clerkUser) {
@@ -277,8 +280,11 @@ export async function sendMembershipInvitationsBulk(
 
   const activeInputs: MembershipInvitationInput[] = [];
   for (const input of inputs) {
-    if (!activeStatuses.has(input.membership.status)) {
-      await recordFailure(input, new Error("Inactive members cannot be invited."));
+    if (!inviteableAccountStatuses.has(input.membership.accountStatus)) {
+      await recordFailure(
+        input,
+        new Error("Suspended or deprovisioned accounts cannot be invited."),
+      );
       continue;
     }
     activeInputs.push(input);
@@ -329,7 +335,7 @@ export async function sendMembershipInvitationsBulk(
   }
   if (!organizationId) {
     for (const input of activeInputs) {
-      await recordFailure(input, new Error("The Wavespark Clerk organization is not linked."));
+      await recordFailure(input, new Error("The Wavesparks Clerk organization is not linked."));
     }
     return inputs.map((input) => outcomes.get(input.membership.id)!);
   }
@@ -498,7 +504,7 @@ export async function removeMembershipFromClerk(input: {
   try {
     const organizationId = await resolveClerkOrganizationId(input.org);
     if (!organizationId) {
-      throw new Error("The Wavespark Clerk organization is not linked.");
+      throw new Error("The Wavesparks Clerk organization is not linked.");
     }
     const client = await getClient();
     const clerkUser = await resolveClerkUser(input.user);
@@ -553,7 +559,7 @@ export async function revokeMembershipInvitation(input: {
   try {
     const organizationId = await resolveClerkOrganizationId(input.org);
     if (!organizationId) {
-      throw new Error("The Wavespark Clerk organization is not linked.");
+      throw new Error("The Wavesparks Clerk organization is not linked.");
     }
     const invitation = await findPendingInvitation(organizationId, input.user.email);
     if (invitation) {
@@ -583,7 +589,7 @@ export async function syncMembershipClerkLifecycle(input: {
   org: Organization;
   user: User;
 }) {
-  return activeStatuses.has(input.membership.status)
+  return inviteableAccountStatuses.has(input.membership.accountStatus)
     ? sendMembershipInvitation({
         forceNew: input.forceInvitation,
         inviterUserId: input.actorUserId,

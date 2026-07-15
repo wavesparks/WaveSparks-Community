@@ -8,27 +8,36 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
-import type { MembershipRole, MembershipStatus } from "@/lib/domain";
+import type { MembershipRole } from "@/lib/domain";
+import type { MemberImportAccessStatus } from "@/lib/member-import";
 
 export interface InviteOnePersonFormProps {
-  cohorts: Array<{ id: string; name: string }>;
-  defaultAccessStatus: Extract<MembershipStatus, "pending" | "waitlist" | "approved">;
-  defaultCohortId?: string;
+  spaces: Array<{
+    id: string;
+    name: string;
+    kind: "main" | "event";
+    lifecycle: string;
+  }>;
+  defaultAccessStatus: MemberImportAccessStatus;
+  defaultDestinationSpaceId?: string;
   invitationsEnabled?: boolean;
-  returnToCohortId?: string;
+  returnToSpaceId?: string;
   slug: string;
 }
 
 export function InviteOnePersonForm({
-  cohorts,
+  spaces,
   defaultAccessStatus,
-  defaultCohortId,
+  defaultDestinationSpaceId,
   invitationsEnabled = true,
-  returnToCohortId,
+  returnToSpaceId,
   slug,
 }: InviteOnePersonFormProps) {
   const [role, setRole] = useState<MembershipRole>("member");
   const [accessStatus, setAccessStatus] = useState(defaultAccessStatus);
+  const [destinationSpaceId, setDestinationSpaceId] = useState(
+    defaultDestinationSpaceId ?? spaces[0]?.id ?? "",
+  );
   const isAdmin = role === "org_admin";
 
   return (
@@ -36,8 +45,8 @@ export function InviteOnePersonForm({
       action={createManagedAccountAction.bind(null, slug)}
       className="grid gap-4 sm:grid-cols-2"
     >
-      {returnToCohortId ? (
-        <input name="return_to_cohort_id" type="hidden" value={returnToCohortId} />
+      {returnToSpaceId ? (
+        <input name="return_to_space_id" type="hidden" value={returnToSpaceId} />
       ) : null}
       <div>
         <Label htmlFor="invite-person-name">Name</Label>
@@ -68,7 +77,9 @@ export function InviteOnePersonForm({
             const nextRole = event.target.value as MembershipRole;
             setRole(nextRole);
             if (nextRole === "org_admin") {
-              setAccessStatus("approved");
+              setDestinationSpaceId("");
+            } else if (!destinationSpaceId) {
+              setDestinationSpaceId(defaultDestinationSpaceId ?? spaces[0]?.id ?? "");
             }
           }}
           value={role}
@@ -78,36 +89,42 @@ export function InviteOnePersonForm({
         </Select>
       </div>
       <div>
-        <Label htmlFor="invite-person-status">Community access</Label>
+        <Label htmlFor="invite-person-status">Space access</Label>
         <Select
-          disabled={isAdmin}
           id="invite-person-status"
           onChange={(event) =>
-            setAccessStatus(
-              event.target.value as Extract<
-                MembershipStatus,
-                "pending" | "waitlist" | "approved"
-              >,
-            )
+            setAccessStatus(event.target.value as MemberImportAccessStatus)
           }
           value={accessStatus}
         >
-          <option value="pending">Pending review</option>
           <option value="waitlist">Waitlist</option>
-          <option value="approved">Approved</option>
+          <option value="active">Active access</option>
         </Select>
-        <input name="status" type="hidden" value={isAdmin ? "approved" : accessStatus} />
+        <input name="space_access_status" type="hidden" value={accessStatus} />
       </div>
       <div className="sm:col-span-2">
-        <Label htmlFor="invite-person-cohort">Cohort (optional)</Label>
-        <Select defaultValue={defaultCohortId ?? ""} id="invite-person-cohort" name="cohort_id">
-          <option value="">No cohort</option>
-          {cohorts.map((cohort) => (
-            <option key={cohort.id} value={cohort.id}>
-              {cohort.name}
+        <Label htmlFor="invite-person-space">Destination Space</Label>
+        <Select
+          id="invite-person-space"
+          name="destination_space_id"
+          onChange={(event) => setDestinationSpaceId(event.target.value)}
+          required={!isAdmin}
+          value={destinationSpaceId}
+        >
+          <option value="">
+            {isAdmin ? "No Space access" : "Choose a Space"}
+          </option>
+          {spaces.map((space) => (
+            <option key={space.id} value={space.id}>
+              {space.name} · {space.kind === "main" ? "Main Community" : "Event"}
             </option>
           ))}
         </Select>
+        <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
+          {isAdmin
+            ? "Global admin access does not add this person to Main or any Event. Choose a Space only if they should participate socially."
+            : "Account connection and access to this Space are created independently."}
+        </p>
       </div>
 
       {isAdmin ? (
@@ -117,8 +134,8 @@ export function InviteOnePersonForm({
             <div>
               <p className="text-sm font-semibold text-[var(--ink)]">Administrator access</p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                This person will be approved immediately and can manage members, settings, and
-                community content.
+                This person can manage accounts and every Space. They will not appear in a
+                participant roster or matching pool unless a destination Space is selected.
               </p>
               <label className="mt-3 flex items-start gap-2 text-sm font-medium text-[var(--ink)]">
                 <input

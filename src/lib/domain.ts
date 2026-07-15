@@ -1,5 +1,6 @@
 export type PlatformRole = "platform_owner" | "standard";
 export type MembershipRole = "org_admin" | "member";
+export type AccountStatus = "invited" | "connected" | "suspended" | "deprovisioned";
 export type ClerkOrgRole = "org:admin" | "org:member" | (string & {});
 export type MembershipStatus =
   | "pending"
@@ -53,6 +54,11 @@ export type NotificationType =
 export type ProfileLinkType = "linkedin" | "github" | "website" | "x";
 export type CohortStatus = "active" | "archived";
 export type CohortMemberStatus = "invited" | "promoted";
+export type SpaceKind = "main" | "event";
+export type SpaceLifecycle = "draft" | "upcoming" | "active" | "ended" | "archived";
+export type SpaceAccessStatus = "active" | "waitlist" | "rejected" | "suspended" | "removed";
+export type SpaceJoinSource = "invite" | "import" | "promotion" | "direct" | "migration";
+export type SpaceIntentEmbeddingStatus = "pending" | "ready" | "failed";
 
 export interface Organization {
   id: string;
@@ -115,6 +121,7 @@ export interface Membership {
   orgId: string;
   userId: string;
   role: MembershipRole;
+  accountStatus: AccountStatus;
   affiliationType: AffiliationType;
   status: MembershipStatus;
   archetypes: string[];
@@ -123,6 +130,64 @@ export interface Membership {
   invitedByUserId?: string;
   approvalNote?: string;
   approvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Space {
+  id: string;
+  orgId: string;
+  slug: string;
+  kind: SpaceKind;
+  lifecycle: SpaceLifecycle;
+  name: string;
+  description: string;
+  eventLabel: string;
+  startsAt?: string;
+  endsAt?: string;
+  endedAt?: string;
+  archivedAt?: string;
+  matchingEnabled: boolean;
+  createdByMembershipId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SpaceMembership {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  membershipId: string;
+  accessStatus: SpaceAccessStatus;
+  joinedVia: SpaceJoinSource;
+  invitedByMembershipId?: string;
+  sourceSpaceId?: string;
+  decisionNote?: string;
+  grantedAt?: string;
+  removedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SpaceIntent {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  membershipId: string;
+  currentGoal: string;
+  lookingFor: string[];
+  offers: string[];
+  matchingOptIn: boolean;
+  intentComplete: boolean;
+  seekingText: string;
+  offeringText: string;
+  seekingEmbedding?: number[];
+  offeringEmbedding?: number[];
+  embeddingModel?: string;
+  embeddingSourceHash?: string;
+  embeddingStatus: SpaceIntentEmbeddingStatus;
+  embeddingError?: string;
+  embeddingUpdatedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -246,6 +311,7 @@ export interface ProfileLink {
 export interface Post {
   id: string;
   orgId: string;
+  spaceId?: string;
   authorMembershipId: string;
   type: PostType;
   opportunitySource?: OpportunitySource;
@@ -254,7 +320,7 @@ export interface Post {
   tags: string[];
   relatedStartupName?: string;
   relatedRolesNeeded: string[];
-  visibility: "org_only";
+  visibility: "org_only" | "space_only";
   status: PostStatus;
   featured: boolean;
   hidden: boolean;
@@ -266,6 +332,7 @@ export interface Post {
 export interface Follow {
   id: string;
   orgId: string;
+  spaceId?: string;
   followerMembershipId: string;
   followedMembershipId: string;
   createdAt: string;
@@ -292,6 +359,7 @@ export interface Comment {
 export interface MatchRecord {
   id: string;
   orgId: string;
+  spaceId?: string;
   sourceProfileId: string;
   targetProfileId: string;
   matchType: MatchType;
@@ -313,6 +381,7 @@ export interface MatchRecord {
 export interface MatchRun {
   id: string;
   orgId: string;
+  spaceId?: string;
   startedAt: string;
   completedAt?: string;
   status: "running" | "completed" | "failed";
@@ -322,6 +391,7 @@ export interface MatchRun {
 export interface MatchFeedback {
   id: string;
   orgId: string;
+  spaceId?: string;
   matchId: string;
   sourceProfileId: string;
   matchType: MatchType;
@@ -349,6 +419,7 @@ export interface MatchFeedbackSummary {
 export interface IntroRequest {
   id: string;
   orgId: string;
+  spaceId?: string;
   requesterMembershipId: string;
   receiverMembershipId: string;
   sourceType: IntroSourceType;
@@ -366,6 +437,7 @@ export interface IntroRequest {
 export interface Notification {
   id: string;
   orgId: string;
+  spaceId?: string;
   membershipId: string;
   type: NotificationType;
   title: string;
@@ -378,6 +450,7 @@ export interface Notification {
 export interface AnalyticsEvent {
   id: string;
   orgId: string;
+  spaceId?: string;
   membershipId?: string;
   eventName: string;
   payload: Record<string, unknown>;
@@ -474,6 +547,9 @@ export interface MatchCardView {
 
 export interface IntroRequestView {
   id: string;
+  spaceId?: string;
+  spaceName?: string;
+  spaceSlug?: string;
   status: IntroStatus;
   introPurpose: string;
   note: string;
@@ -491,6 +567,8 @@ export interface IntroRequestView {
 
 export interface NotificationView {
   id: string;
+  spaceId?: string;
+  spaceName?: string;
   title: string;
   body: string;
   createdAt: string;

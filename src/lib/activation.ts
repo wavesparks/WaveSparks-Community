@@ -238,6 +238,41 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
         title: "Member added to cohort",
         body: "The existing member was linked to the selected cohort without changing their profile or access.",
       };
+    case "member_added_to_space":
+      return {
+        title: "Space access added",
+        body: "The account now has access to the selected Space. Access to every other Space is unchanged.",
+      };
+    case "space_access_conflict":
+      return {
+        title: "Space access needs explicit review",
+        body: "Rejected, suspended, or removed Space access cannot be silently restored from an invitation flow.",
+      };
+    case "account_inactive_conflict":
+      return {
+        title: "Account needs explicit review",
+        body: "A globally suspended or deprovisioned account cannot receive new Space access until it is restored.",
+      };
+    case "event_created":
+      return {
+        title: "Event created",
+        body: "The Event now has its own roster, content boundary, and matching pool.",
+      };
+    case "event_updated":
+      return {
+        title: "Event updated",
+        body: "The Event settings were saved without changing access to another Space.",
+      };
+    case "event_archived":
+      return {
+        title: "Event archived",
+        body: "Participant access and matching are closed. Content and roster data are retained and can be restored.",
+      };
+    case "event_restored":
+      return {
+        title: "Event restored",
+        body: "The Event is available again with its original roster and Space boundary.",
+      };
     case "member_inactive_conflict":
       return {
         title: "Inactive member needs explicit review",

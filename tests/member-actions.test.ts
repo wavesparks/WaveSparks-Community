@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seedOrganization } from "@/data/seed-data";
-import type { ViewerContext } from "@/lib/domain";
+import type { MatchRecord, Space, ViewerContext } from "@/lib/domain";
 
 const redirectMock = vi.hoisted(() =>
   vi.fn((url: string) => {
@@ -124,11 +124,72 @@ function firstFollowReadyTargetFor(followerMembershipId: string) {
   );
 }
 
+function addSpace(kind: Space["kind"], id: string) {
+  const mainSpace = getStore().spaces.find((space) => space.kind === "main")!;
+  const space: Space = {
+    ...mainSpace,
+    id,
+    slug: id,
+    kind,
+    name: kind === "main" ? "Main Community" : "Security Test Event",
+    eventLabel: kind === "main" ? "Permanent community" : "Security test",
+  };
+  getStore().spaces.push(space);
+  return space;
+}
+
+function addMatchSource(input: {
+  id: string;
+  spaceId: string;
+  sourceProfileId: string;
+  targetProfileId: string;
+}) {
+  const now = new Date().toISOString();
+  const match: MatchRecord = {
+    id: input.id,
+    orgId: seedOrganization.id,
+    spaceId: input.spaceId,
+    sourceProfileId: input.sourceProfileId,
+    targetProfileId: input.targetProfileId,
+    matchType: "mentor_match",
+    score: 91,
+    scoreBreakdown: {},
+    explanationText: "Action validation fixture.",
+    overlapTags: [],
+    scoreBand: "high",
+    confidence: "high",
+    algorithmVersion: "test",
+    surfacedAt: now,
+    dismissedBySource: false,
+    hiddenByAdmin: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  getStore().matches.push(match);
+  return match;
+}
+
 describe("member server actions", () => {
   beforeEach(() => {
     resetStore();
     vi.clearAllMocks();
     viewerRef.current = null;
+  });
+
+  it("rejects account and social writes until the organization account is connected", async () => {
+    await setViewer("mem_jules");
+    viewerRef.current = {
+      ...viewerRef.current!,
+      membership: {
+        ...viewerRef.current!.membership,
+        accountStatus: "invited",
+      },
+    };
+
+    await expect(
+      saveOnboardingAction("wavesparks", "mem_jules", new FormData()),
+    ).rejects.toThrow("Connected account required.");
+    expect(afterMock).not.toHaveBeenCalled();
   });
 
   it("saves onboarding before scheduling match recompute after the response", async () => {
@@ -149,17 +210,17 @@ describe("member server actions", () => {
     });
 
     await expect(
-      saveOnboardingAction("wavespark", "mem_jules", formData),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/wavespark/profile?status=profile_saved");
+      saveOnboardingAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/profile?status=profile_saved");
 
     await expect(getProfileByMembershipId("mem_jules")).resolves.toMatchObject({
       headline: "Founder improving activation loops",
       startupOneLiner: "A product for better community activation.",
     });
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/feed");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/profile");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/pending");
-    expect(revalidatePathMock).not.toHaveBeenCalledWith("/org/wavespark/matches");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/feed");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/profile");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/pending");
+    expect(revalidatePathMock).not.toHaveBeenCalledWith("/org/wavesparks/matches");
     expect(afterMock).toHaveBeenCalledTimes(1);
 
     const backgroundTask = afterMock.mock.calls[0]?.[0] as
@@ -167,7 +228,7 @@ describe("member server actions", () => {
       | undefined;
     expect(backgroundTask).toBeTypeOf("function");
     await backgroundTask?.();
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/matches");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/matches");
   });
 
   it("saves an incomplete onboarding draft without unlocking member interaction", async () => {
@@ -179,8 +240,8 @@ describe("member server actions", () => {
       intent: "draft",
     });
 
-    await expect(saveOnboardingAction("wavespark", "mem_jules", formData)).rejects.toThrow(
-      /NEXT_REDIRECT:\/org\/wavespark\/onboarding\?status=profile_draft_saved&step=0&missing=/,
+    await expect(saveOnboardingAction("wavesparks", "mem_jules", formData)).rejects.toThrow(
+      /NEXT_REDIRECT:\/org\/wavesparks\/onboarding\?status=profile_draft_saved&step=0&missing=/,
     );
 
     const membership = (await getMembershipById("mem_jules"))!;
@@ -200,8 +261,8 @@ describe("member server actions", () => {
       years_of_experience: "2.5",
     });
 
-    await expect(saveOnboardingAction("wavespark", "mem_jules", formData)).rejects.toThrow(
-      /NEXT_REDIRECT:\/org\/wavespark\/onboarding\?status=profile_invalid&fields=/,
+    await expect(saveOnboardingAction("wavesparks", "mem_jules", formData)).rejects.toThrow(
+      /NEXT_REDIRECT:\/org\/wavesparks\/onboarding\?status=profile_invalid&fields=/,
     );
 
     expect((await getProfileByMembershipId("mem_jules"))?.updatedAt).toBe(before.updatedAt);
@@ -218,8 +279,8 @@ describe("member server actions", () => {
     });
 
     await expect(
-      createPostAction("wavespark", "mem_jules", formData),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/wavespark/feed?status=post_created");
+      createPostAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/feed?status=post_created");
 
     const post = getStore().posts.find((candidate) => candidate.title === "Need activation review");
     expect(post).toBeDefined();
@@ -231,8 +292,8 @@ describe("member server actions", () => {
       );
     expect(hasPostAnalytics()).toBe(false);
     expect(afterMock).toHaveBeenCalledTimes(2);
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/feed");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/profile");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/feed");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/profile");
 
     const backgroundTasks = afterMock.mock.calls.map(
       ([task]) => task as () => Promise<void>,
@@ -247,8 +308,8 @@ describe("member server actions", () => {
     const target = firstFollowReadyTargetFor("mem_jules")!;
 
     await expect(
-      followMembershipAction("wavespark", "mem_jules", target.id),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/wavespark/matches?status=member_followed");
+      followMembershipAction("wavesparks", "mem_jules", target.id),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/matches?status=member_followed");
 
     expect(
       getStore().follows.some(
@@ -257,16 +318,16 @@ describe("member server actions", () => {
           follow.followedMembershipId === target.id,
       ),
     ).toBe(true);
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/feed");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/opportunities");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/matches");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/profile");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/feed");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/opportunities");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/matches");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/profile");
 
     vi.clearAllMocks();
 
     await expect(
-      unfollowMembershipAction("wavespark", "mem_jules", target.id),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/wavespark/matches?status=member_unfollowed");
+      unfollowMembershipAction("wavesparks", "mem_jules", target.id),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/matches?status=member_unfollowed");
 
     expect(
       getStore().follows.some(
@@ -275,41 +336,49 @@ describe("member server actions", () => {
           follow.followedMembershipId === target.id,
       ),
     ).toBe(false);
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/feed");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/opportunities");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/matches");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/profile");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/feed");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/opportunities");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/matches");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/profile");
   });
 
   it("creates an intro request before writing notification side effects after the response", async () => {
     await setViewer("mem_jules");
     const receiver = firstIntroReadyTargetFor("mem_jules")!;
+    const receiverProfile = (await getProfileByMembershipId(receiver.id))!;
+    const mainSpace = getStore().spaces.find((space) => space.kind === "main")!;
+    const sourceMatch = addMatchSource({
+      id: "mtc_action",
+      spaceId: mainSpace.id,
+      sourceProfileId: viewerRef.current!.profile!.id,
+      targetProfileId: receiverProfile.id,
+    });
     const formData = formDataFromEntries({
       receiver_membership_id: receiver.id,
       source_type: "match",
-      source_id: "mtc_action",
+      source_id: sourceMatch.id,
       intro_purpose: "mentor guidance",
       note: "This request should create a notification.",
       suggested_first_message: "Would love to compare notes.",
     });
 
     await expect(
-      requestIntroAction("wavespark", "mem_jules", formData),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/wavespark/requests?status=intro_requested");
+      requestIntroAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/requests?status=intro_requested");
 
     expect(
       getStore().introRequests.some(
         (request) =>
           request.requesterMembershipId === "mem_jules" &&
           request.receiverMembershipId === receiver.id &&
-          request.sourceId === "mtc_action",
+          request.sourceId === sourceMatch.id,
       ),
     ).toBe(true);
     await expect(getNotificationViews(receiver.id)).resolves.toEqual(
       expect.not.arrayContaining([
         expect.objectContaining({
           title: "A new intro request is waiting",
-          link: "/org/wavespark/requests",
+          link: "/org/wavesparks/s/main/requests",
         }),
       ]),
     );
@@ -319,14 +388,68 @@ describe("member server actions", () => {
       expect.arrayContaining([
         expect.objectContaining({
           title: "A new intro request is waiting",
-          link: "/org/wavespark/requests",
+          link: "/org/wavesparks/s/main/requests",
         }),
       ]),
     );
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/requests");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/matches");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/feed");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/profile");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/requests");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/matches");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/feed");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/profile");
+  });
+
+  it("rejects an Event post source through the legacy Main intro action", async () => {
+    await setViewer("mem_jules");
+    const receiver = firstIntroReadyTargetFor("mem_jules")!;
+    const eventSpace = addSpace("event", "spc_event_intro_post");
+    const sourcePost = {
+      ...getStore().posts[0]!,
+      id: "pst_event_intro_source",
+      spaceId: eventSpace.id,
+      authorMembershipId: receiver.id,
+    };
+    getStore().posts.push(sourcePost);
+    const formData = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "post",
+      source_id: sourcePost.id,
+      intro_purpose: "cross-space attempt",
+    });
+
+    await expect(
+      requestIntroAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow(
+      "Post source does not belong to the selected member in this Space.",
+    );
+    expect(
+      getStore().introRequests.some((request) => request.sourceId === sourcePost.id),
+    ).toBe(false);
+  });
+
+  it("rejects an Event match source through the legacy Main intro action", async () => {
+    await setViewer("mem_jules");
+    const receiver = firstIntroReadyTargetFor("mem_jules")!;
+    const receiverProfile = (await getProfileByMembershipId(receiver.id))!;
+    const eventSpace = addSpace("event", "spc_event_intro_match");
+    const sourceMatch = addMatchSource({
+      id: "mtc_event_intro_source",
+      spaceId: eventSpace.id,
+      sourceProfileId: viewerRef.current!.profile!.id,
+      targetProfileId: receiverProfile.id,
+    });
+    const formData = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "match",
+      source_id: sourceMatch.id,
+      intro_purpose: "cross-space attempt",
+    });
+
+    await expect(
+      requestIntroAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("Match source does not belong to this Space pair.");
+    expect(
+      getStore().introRequests.some((request) => request.sourceId === sourceMatch.id),
+    ).toBe(false);
   });
 
   it("creates profile-sourced intro requests from member discovery", async () => {
@@ -343,8 +466,8 @@ describe("member server actions", () => {
     });
 
     await expect(
-      requestIntroAction("wavespark", "mem_jules", formData),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/wavespark/requests?status=intro_requested");
+      requestIntroAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/requests?status=intro_requested");
 
     expect(
       getStore().introRequests.some(
@@ -355,38 +478,44 @@ describe("member server actions", () => {
           request.sourceId === receiverProfile.id,
       ),
     ).toBe(true);
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/people");
-    expect(revalidatePathMock).toHaveBeenCalledWith(`/org/wavespark/people/${receiver.id}`);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/people");
+    expect(revalidatePathMock).toHaveBeenCalledWith(`/org/wavesparks/people/${receiver.id}`);
   });
 
   it("saves and unsaves posts through server actions", async () => {
     await setViewer("mem_jules");
     const formData = formDataFromEntries({
-      return_to: "/org/wavespark/knowledge?mode=saved",
+      return_to: "/org/wavesparks/knowledge?mode=saved",
     });
 
     await expect(
-      savePostAction("wavespark", "mem_jules", "pst_8", formData),
+      savePostAction("wavesparks", "mem_jules", "pst_8", formData),
     ).rejects.toThrow(
-      "NEXT_REDIRECT:/org/wavespark/knowledge?mode=saved&status=post_saved",
+      "NEXT_REDIRECT:/org/wavesparks/knowledge?mode=saved&status=post_saved",
     );
     await expect(
       listSavedPostIdsForMembership("mem_jules", { postIds: ["pst_8"] }),
     ).resolves.toHaveProperty("size", 1);
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/knowledge");
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/posts/pst_8");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/knowledge");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/posts/pst_8");
+    expect(revalidatePathMock).toHaveBeenCalledWith(
+      "/org/wavesparks/s/main/knowledge",
+    );
+    expect(revalidatePathMock).toHaveBeenCalledWith(
+      "/org/wavesparks/s/main/posts/pst_8",
+    );
 
     vi.clearAllMocks();
 
     await expect(
-      unsavePostAction("wavespark", "mem_jules", "pst_8", formData),
+      unsavePostAction("wavesparks", "mem_jules", "pst_8", formData),
     ).rejects.toThrow(
-      "NEXT_REDIRECT:/org/wavespark/knowledge?mode=saved&status=post_unsaved",
+      "NEXT_REDIRECT:/org/wavesparks/knowledge?mode=saved&status=post_unsaved",
     );
     await expect(
       listSavedPostIdsForMembership("mem_jules", { postIds: ["pst_8"] }),
     ).resolves.toHaveProperty("size", 0);
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/knowledge");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/knowledge");
   });
 
   it("responds to an intro before notifying the requester after the response", async () => {
@@ -404,8 +533,8 @@ describe("member server actions", () => {
     });
 
     await expect(
-      respondIntroAction("wavespark", intro.id, "mem_jules", "accepted"),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/wavespark/requests?status=intro_accepted");
+      respondIntroAction("wavesparks", intro.id, "mem_jules", "accepted"),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/requests?status=intro_accepted");
 
     await expect(getIntroRequestById(intro.id)).resolves.toMatchObject({
       status: "accepted",
@@ -414,7 +543,7 @@ describe("member server actions", () => {
       expect.not.arrayContaining([
         expect.objectContaining({
           title: "Your intro was accepted",
-          link: "/org/wavespark/requests",
+          link: "/org/wavesparks/s/main/requests",
         }),
       ]),
     );
@@ -424,10 +553,10 @@ describe("member server actions", () => {
       expect.arrayContaining([
         expect.objectContaining({
           title: "Your intro was accepted",
-          link: "/org/wavespark/requests",
+          link: "/org/wavesparks/s/main/requests",
         }),
       ]),
     );
-    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavespark/requests");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/requests");
   });
 });

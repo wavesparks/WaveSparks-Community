@@ -2,8 +2,11 @@ import { BriefcaseBusiness, ExternalLink, Handshake, MapPin, UserPlus } from "lu
 
 import {
   followMembershipAction,
+  followMembershipInSpaceAction,
   requestIntroAction,
+  requestIntroInSpaceAction,
   unfollowMembershipAction,
+  unfollowMembershipInSpaceAction,
 } from "@/actions/member";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -18,17 +21,53 @@ export function MemberDirectoryCard({
   profile,
   returnPath,
   slug,
+  spaceId,
+  spaceSlug,
   viewerMembershipId,
 }: {
   profile: MemberDirectoryProfileView;
   returnPath: string;
   slug: string;
-  viewerMembershipId: string;
+  spaceId?: string;
+  spaceSlug?: string;
+  viewerMembershipId?: string;
 }) {
-  const isSelf = viewerMembershipId === profile.membershipId;
-  const followAction = profile.isFollowing
-    ? unfollowMembershipAction.bind(null, slug, viewerMembershipId, profile.membershipId)
-    : followMembershipAction.bind(null, slug, viewerMembershipId, profile.membershipId);
+  const isSelf = Boolean(viewerMembershipId === profile.membershipId);
+  const followAction = spaceId
+    ? profile.isFollowing
+      ? unfollowMembershipInSpaceAction.bind(
+          null,
+          slug,
+          spaceId,
+          viewerMembershipId ?? "",
+          profile.membershipId,
+        )
+      : followMembershipInSpaceAction.bind(
+          null,
+          slug,
+          spaceId,
+          viewerMembershipId ?? "",
+          profile.membershipId,
+        )
+    : profile.isFollowing
+      ? unfollowMembershipAction.bind(
+          null,
+          slug,
+          viewerMembershipId ?? "",
+          profile.membershipId,
+        )
+      : followMembershipAction.bind(
+          null,
+          slug,
+          viewerMembershipId ?? "",
+          profile.membershipId,
+        );
+  const profilePath = spaceSlug
+    ? `/org/${slug}/s/${spaceSlug}/people/${profile.membershipId}`
+    : `/org/${slug}/people/${profile.membershipId}`;
+  const requestsPath = spaceSlug
+    ? `/org/${slug}/s/${spaceSlug}/requests`
+    : `/org/${slug}/requests`;
   const introCopy = getActiveIntroStatusCopy(profile.introStatus);
   const needs = [...profile.whatTheyNeed, ...profile.desiredRoles].slice(0, 4);
   const expertise = [...profile.skillTags, ...profile.mentorOffers].slice(0, 5);
@@ -103,13 +142,13 @@ export function MemberDirectoryCard({
 
       <div className="flex flex-col gap-2 border-t border-[var(--line)] pt-4 sm:flex-row sm:items-center sm:justify-end">
         <LinkButton
-          href={`/org/${slug}/people/${profile.membershipId}`}
+          href={profilePath}
           size="sm"
           variant="secondary"
         >
           View profile
         </LinkButton>
-        {!isSelf ? (
+        {!isSelf && viewerMembershipId ? (
           <form action={followAction}>
             <input name="return_to" type="hidden" value={returnPath} />
             <SubmitButton
@@ -121,13 +160,24 @@ export function MemberDirectoryCard({
             </SubmitButton>
           </form>
         ) : null}
-        {!isSelf && introCopy ? (
-          <LinkButton href={`/org/${slug}/requests`} size="sm" variant="secondary">
+        {!isSelf && viewerMembershipId && introCopy ? (
+          <LinkButton href={requestsPath} size="sm" variant="secondary">
             {introCopy.title}
           </LinkButton>
         ) : null}
-        {!isSelf && !introCopy ? (
-          <form action={requestIntroAction.bind(null, slug, viewerMembershipId)}>
+        {!isSelf && viewerMembershipId && !introCopy ? (
+          <form
+            action={
+              spaceId
+                ? requestIntroInSpaceAction.bind(
+                    null,
+                    slug,
+                    spaceId,
+                    viewerMembershipId,
+                  )
+                : requestIntroAction.bind(null, slug, viewerMembershipId)
+            }
+          >
             <input name="receiver_membership_id" type="hidden" value={profile.membershipId} />
             <input name="source_type" type="hidden" value="profile" />
             <input name="source_id" type="hidden" value={profile.profileId} />

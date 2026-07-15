@@ -18,9 +18,9 @@ const bodyFont = Urbanist({
 });
 
 export const metadata: Metadata = {
-  title: "Wavespark Community Platform",
+  title: "Wavesparks Community Platform",
   description:
-    "A semi-private, multi-tenant founder community platform for Wavespark and future cohorts.",
+    "A semi-private, multi-tenant founder community platform for Wavesparks and future cohorts.",
   robots: {
     index: false,
     follow: false,

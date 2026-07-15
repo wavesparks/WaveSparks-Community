@@ -6,6 +6,7 @@ import {
   createCohort,
   getMembershipById,
   getProfileByMembershipId,
+  getSpaceMembership,
   getUserById,
   importCohortMembers,
   listCohortMemberRecordsForCohort,
@@ -46,7 +47,7 @@ describe("cohort management", () => {
 
     expect(imported).toHaveLength(2);
     expect(newStudent?.membership).toMatchObject({
-      status: "waitlist",
+      status: "pending",
       programName: "Demo Day July",
       cohortNameOrYear: "July 2026",
     });
@@ -55,6 +56,9 @@ describe("cohort management", () => {
       cohortMemberCreated: true,
       shouldInvite: true,
     });
+    await expect(
+      getSpaceMembership(cohort.id, newStudent!.membership.id),
+    ).resolves.toMatchObject({ accessStatus: "active" });
     expect(existingStudent?.membership.status).toBe("approved");
     expect(existingStudent?.cohortMember.status).toBe("promoted");
     expect(summaries[0]).toMatchObject({

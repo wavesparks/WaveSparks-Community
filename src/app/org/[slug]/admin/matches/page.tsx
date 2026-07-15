@@ -16,6 +16,7 @@ import {
   getMatchFeedbackSummaryForOrg,
   listMatchRunsForOrg,
   listMatchTypeConfigsForOrg,
+  listSpacesForOrg,
 } from "@/server/store";
 
 function scoreBandFromQuery(value?: string) {
@@ -52,7 +53,7 @@ export default async function AdminMatchesPage({
   const query = await searchParams;
   const viewer = await getViewerContext(slug, {
     requireAuth: true,
-    requireApproved: true,
+    requireConnected: true,
     requireAdmin: true,
   });
 
@@ -66,7 +67,7 @@ export default async function AdminMatchesPage({
     ? requestedMatchType
     : undefined;
   const selectedScoreBand = scoreBandFromQuery(singleQueryValue(query.score_band));
-  const [matchCards, runs, feedbackSummary] = await Promise.all([
+  const [matchCards, runs, feedbackSummary, spaces] = await Promise.all([
     listMatchProfileRecordsForOrg(viewer.org.id, {
       limit: 20,
       matchType: selectedMatchType,
@@ -74,7 +75,11 @@ export default async function AdminMatchesPage({
     }),
     listMatchRunsForOrg(viewer.org.id, 5),
     getMatchFeedbackSummaryForOrg(viewer.org.id),
+    listSpacesForOrg(viewer.org.id),
   ]);
+  const spaceNameById = new Map(spaces.map((space) => [space.id, space.name]));
+  const spaceLabel = (spaceId?: string) =>
+    (spaceId && spaceNameById.get(spaceId)) || "Unscoped migration row";
   const matchQueues: MatchQueue[] = [
     { label: "All" },
     { label: "High score", scoreBand: "high" },
@@ -91,7 +96,7 @@ export default async function AdminMatchesPage({
             eyebrow="Admin · Matches"
             level={1}
             title="Review generated matches and recompute"
-            description="Review explainable recommendations, embedding health, and each organization-defined matching type."
+            description="Organization-wide matching audit. Every recommendation and run identifies its Space; use a Space detail page for an isolated view."
           />
           <form action={recomputeMatchesAction.bind(null, slug)}>
             <SubmitButton pendingLabel="Recomputing">Recompute matches</SubmitButton>
@@ -126,6 +131,9 @@ export default async function AdminMatchesPage({
                     <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">
                       {configBySlug.get(match.matchType)?.name ?? match.matchType.replaceAll("_", " ")}
                     </p>
+                    <Badge className="mt-2" variant={match.spaceId ? "muted" : "default"}>
+                      {spaceLabel(match.spaceId)}
+                    </Badge>
                     <h3 className="mt-2 text-xl font-semibold text-[var(--ink)]">
                       {sourceProfile?.preferredName ?? "Source"} → {targetProfile?.preferredName ?? "Target"}
                     </h3>
@@ -221,7 +229,12 @@ export default async function AdminMatchesPage({
             {runs.map((run) => (
               <div className="flex flex-wrap items-center justify-between gap-3 py-3" key={run.id}>
                 <div>
-                  <p className="text-sm font-semibold text-[var(--ink)]">{run.status}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold text-[var(--ink)]">{run.status}</p>
+                    <Badge variant={run.spaceId ? "muted" : "default"}>
+                      {spaceLabel(run.spaceId)}
+                    </Badge>
+                  </div>
                   <p className="text-xs text-[var(--ink-soft)]">
                     {new Date(run.startedAt).toLocaleString("en-SG")}
                   </p>

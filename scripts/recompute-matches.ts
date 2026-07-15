@@ -18,7 +18,7 @@ async function main() {
 
   const { recomputeMatchesForOrg } = await import("@/server/store");
   const matches = await recomputeMatchesForOrg("org_wavespark");
-  console.info(`Recomputed ${matches.length} matches for Wavespark.`);
+  console.info(`Recomputed ${matches.length} matches for Wavesparks.`);
 }
 
 main().catch((error) => {

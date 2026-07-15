@@ -5,31 +5,47 @@ import {
 import { getProfileReadiness } from "@/lib/activation";
 import {
   getMembershipById,
+  getSpaceById,
   getMemberActivationSignals,
   getPostThreadRecord,
+  getPostThreadRecordForSpace,
+  listActiveSpaceMemberRecords,
   listCommentRecordsForOrg,
   listActiveIntroRequestStatusesForRequester,
+  listActiveIntroRequestStatusesForRequesterInSpace,
   listFollowedMembershipIdsForMembership,
+  listFollowedMembershipIdsForMembershipInSpace,
   listIntroRequestsForOrg,
   listIntroRequestsForMembership,
-  listMembershipRecordsForOrg,
+  listIntroRequestsForMembershipInSpace,
+  listIntroRequestsForMembershipWithSpaceAccess,
   listMembershipUserRecordsByIds,
   listMembershipProfileRecordsForOrg,
   listMembershipProfileRecordsByIds,
   listMatchTargetRecordsForProfile,
   listMatchTypeConfigsForOrg,
   listNotificationsForMembership,
+  listNotificationsForMembershipInSpace,
+  listNotificationsForMembershipWithSpaceAccess,
   listPostsForOrg,
+  listPostsForSpace,
   listPublicFeedPostRecordsForOrg,
+  listFeedPostRecordsForSpace,
   listProfileMembershipRecordsByIds,
   listProfileLinks,
   listProfileLinksByProfileIds,
   listSavedPostIdsForMembership,
+  listSavedPostIdsForMembershipInSpace,
   listVisibleCommentCountsForOrg,
+  listVisibleCommentCountsForSpace,
   listVisibleMatchTargetMembershipIdsForMembership,
   listVisibleMatchTargetMembershipIdsForProfile,
 } from "@/server/store";
-import type { MembershipRecord, PostThreadRecord } from "@/server/store";
+import type {
+  ActiveSpaceMemberRecord,
+  MembershipRecord,
+  PostThreadRecord,
+} from "@/server/store";
 import type {
   FeedPostView,
   FullAdminProfile,
@@ -50,6 +66,7 @@ import type {
   PostType,
   Profile,
   ProfileLink,
+  Space,
 } from "@/lib/domain";
 
 const opportunityTypes: PostType[] = [
@@ -73,6 +90,7 @@ export interface FeedFilters {
 export type KnowledgeMode = "all" | "saved";
 
 export interface FeedViewOptions {
+  spaceId?: string;
   viewerMembershipId?: string;
   viewerProfileId?: string;
   filters?: FeedFilters;
@@ -82,12 +100,14 @@ export interface FeedViewOptions {
 }
 
 export interface MemberDirectoryViewOptions {
+  spaceId?: string;
   viewerMembershipId: string;
   filters?: MemberDirectoryFilters;
   limit?: number;
 }
 
 export interface KnowledgeViewOptions {
+  spaceId?: string;
   viewerMembershipId: string;
   viewerProfileId?: string;
   mode?: KnowledgeMode;
@@ -96,6 +116,7 @@ export interface KnowledgeViewOptions {
 }
 
 export interface AdminIntroRequestDashboardOptions {
+  spaceId?: string;
   requestLimit?: number;
   candidateLimit?: number;
   requestStatus?: IntroStatus;
@@ -109,6 +130,7 @@ export interface AdminManualIntroCandidateView {
 
 export interface AdminIntroRequestRowView {
   id: string;
+  spaceId?: string;
   status: IntroStatus;
   introPurpose: string;
   note: string;
@@ -128,6 +150,7 @@ export interface AdminPostModerationDashboardOptions {
 
 export interface AdminPostModerationPostView {
   id: string;
+  spaceId?: string;
   title: string;
   body: string;
   type: PostType;
@@ -140,6 +163,7 @@ export interface AdminPostModerationPostView {
 
 export interface AdminCommentModerationRowView {
   id: string;
+  spaceId?: string;
   body: string;
   status: Comment["status"];
   postId?: string;
@@ -423,6 +447,10 @@ function profileCanAppearInDirectory(profile?: Profile, membership?: Membership)
   );
 }
 
+function profileCanAppearInSpaceDirectory(profile?: Profile) {
+  return Boolean(profile?.onboardingComplete);
+}
+
 export async function getMemberDirectoryViewsForOrg(
   org: Organization,
   options: MemberDirectoryViewOptions,
@@ -482,6 +510,56 @@ export async function getMemberDirectoryViewsForOrg(
     });
 }
 
+export async function getMemberDirectoryViewsForSpace(
+  spaceId: string,
+  org: Organization,
+  options: Omit<MemberDirectoryViewOptions, "spaceId">,
+) {
+  const filters = options.filters ?? {};
+  const records = (await listActiveSpaceMemberRecords(spaceId))
+    .filter((record) => record.membership.orgId === org.id)
+    .filter(
+      (record): record is ActiveSpaceMemberRecord & { profile: Profile } =>
+        Boolean(
+          record.profile &&
+            profileCanAppearInSpaceDirectory(record.profile) &&
+            directoryProfileMatchesFilters(record.profile, record.membership, filters),
+        ),
+    )
+    .sort((left, right) => {
+      const featuredDelta =
+        Number(Boolean(right.profile.featured)) - Number(Boolean(left.profile.featured));
+      return featuredDelta || right.profile.lastActiveAt.localeCompare(left.profile.lastActiveAt);
+    });
+  const limitedRecords = options.limit ? records.slice(0, options.limit) : records;
+  const membershipIds = limitedRecords.map((record) => record.membership.id);
+  const [followedMembershipIds, introStatusByReceiver, profileLinksByProfileId] =
+    await Promise.all([
+      listFollowedMembershipIdsForMembershipInSpace(
+        spaceId,
+        options.viewerMembershipId,
+        { followedMembershipIds: membershipIds },
+      ),
+      listActiveIntroRequestStatusesForRequesterInSpace(
+        spaceId,
+        options.viewerMembershipId,
+        membershipIds,
+      ),
+      listProfileLinksByProfileIds(limitedRecords.map((record) => record.profile.id)),
+    ]);
+  const followedIds = new Set(followedMembershipIds);
+
+  return limitedRecords.map((record) =>
+    toMemberDirectoryProfileView({
+      profile: record.profile,
+      membership: record.membership,
+      profileLinks: profileLinksByProfileId.get(record.profile.id) ?? [],
+      following: followedIds.has(record.membership.id),
+      introStatus: introStatusByReceiver.get(record.membership.id),
+    }),
+  );
+}
+
 export async function getMemberDirectoryProfileView(input: {
   orgId: string;
   membershipId: string;
@@ -517,6 +595,42 @@ export async function getMemberDirectoryProfileView(input: {
   });
 }
 
+export async function getMemberDirectoryProfileViewForSpace(input: {
+  orgId: string;
+  spaceId: string;
+  membershipId: string;
+  viewerMembershipId: string;
+}) {
+  const record = (await listActiveSpaceMemberRecords(input.spaceId)).find(
+    (candidate) =>
+      candidate.membership.id === input.membershipId &&
+      candidate.membership.orgId === input.orgId,
+  );
+  if (!record?.profile || !profileCanAppearInSpaceDirectory(record.profile)) {
+    return undefined;
+  }
+  const [profileLinks, followedMembershipIds, introStatusByReceiver] = await Promise.all([
+    listProfileLinks(record.profile.id),
+    listFollowedMembershipIdsForMembershipInSpace(
+      input.spaceId,
+      input.viewerMembershipId,
+      { followedMembershipIds: [record.membership.id] },
+    ),
+    listActiveIntroRequestStatusesForRequesterInSpace(
+      input.spaceId,
+      input.viewerMembershipId,
+      [record.membership.id],
+    ),
+  ]);
+  return toMemberDirectoryProfileView({
+    profile: record.profile,
+    membership: record.membership,
+    profileLinks,
+    following: followedMembershipIds.includes(record.membership.id),
+    introStatus: introStatusByReceiver.get(record.membership.id),
+  });
+}
+
 function knowledgeReasonForPost(post: FeedPostView): KnowledgePostView["knowledgeReason"] | null {
   if (post.type === "resource") {
     return "resource";
@@ -543,12 +657,18 @@ export async function getKnowledgePostViewsForOrg(
 ) {
   const [feedPosts, savedPostsById] = await Promise.all([
     getFeedViewsForOrg(org, {
+      spaceId: options.spaceId,
       viewerMembershipId: options.viewerMembershipId,
       viewerProfileId: options.viewerProfileId,
       filters: { q: options.q },
       includeMatchedRecommendationSignals: false,
     }),
-    listSavedPostIdsForMembership(options.viewerMembershipId),
+    options.spaceId
+      ? listSavedPostIdsForMembershipInSpace(
+          options.spaceId,
+          options.viewerMembershipId,
+        )
+      : listSavedPostIdsForMembership(options.viewerMembershipId),
   ]);
 
   const posts = feedPosts
@@ -591,6 +711,14 @@ export async function getKnowledgePostViewsForOrg(
   return options.limit ? posts.slice(0, options.limit) : posts;
 }
 
+export async function getKnowledgePostViewsForSpace(
+  spaceId: string,
+  org: Organization,
+  options: Omit<KnowledgeViewOptions, "spaceId">,
+) {
+  return getKnowledgePostViewsForOrg(org, { ...options, spaceId });
+}
+
 export async function getFeedViewsForOrg(org: Organization, options: FeedViewOptions = {}) {
   const filters = options.filters ?? {};
   const normalizedQuery = normalized(filters.q);
@@ -608,12 +736,15 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
     !options.viewerProfileId &&
     !includeMatchedRecommendationSignals
   ) {
-    const records = await listPublicFeedPostRecordsForOrg(org.id, {
+    const postOptions = {
       hidden: false,
       types: postTypes,
       opportunitySources: opportunitySourcesForPostList(filters),
       limit: canLimitPostList ? options.limit : undefined,
-    });
+    };
+    const records = await (options.spaceId
+      ? listFeedPostRecordsForSpace(options.spaceId, postOptions)
+      : listPublicFeedPostRecordsForOrg(org.id, postOptions));
 
     return records
       .map(({ commentCount, membership, post, profile }) => {
@@ -646,17 +777,29 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
     postsForOrg,
     matchedMembershipIds,
   ] = await Promise.all([
-    listPostsForOrg(org.id, {
-      hidden: false,
-      types: postTypes,
-      opportunitySources: opportunitySourcesForPostList(filters),
-      limit: canLimitPostList ? options.limit : undefined,
-    }),
+    options.spaceId
+      ? listPostsForSpace(options.spaceId, {
+          hidden: false,
+          types: postTypes,
+          opportunitySources: opportunitySourcesForPostList(filters),
+          limit: canLimitPostList ? options.limit : undefined,
+        })
+      : listPostsForOrg(org.id, {
+          hidden: false,
+          types: postTypes,
+          opportunitySources: opportunitySourcesForPostList(filters),
+          limit: canLimitPostList ? options.limit : undefined,
+        }),
     includeMatchedRecommendationSignals && options.viewerProfileId
-      ? listVisibleMatchTargetMembershipIdsForProfile(options.viewerProfileId)
+      ? listVisibleMatchTargetMembershipIdsForProfile(options.viewerProfileId, {
+          spaceId: options.spaceId,
+        })
       : includeMatchedRecommendationSignals && options.viewerMembershipId
-        ? listVisibleMatchTargetMembershipIdsForMembership(options.viewerMembershipId)
-      : Promise.resolve([]),
+        ? listVisibleMatchTargetMembershipIdsForMembership(
+            options.viewerMembershipId,
+            { spaceId: options.spaceId },
+          )
+        : Promise.resolve([]),
   ]);
   const relevantPosts = postsForOrg;
   const authorMembershipIds = relevantPosts.map((post) => post.authorMembershipId);
@@ -671,18 +814,34 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
       { orgId: org.id },
     ),
     options.viewerMembershipId
-      ? listFollowedMembershipIdsForMembership(options.viewerMembershipId, {
-          followedMembershipIds: authorMembershipIds,
-        })
+      ? options.spaceId
+        ? listFollowedMembershipIdsForMembershipInSpace(
+            options.spaceId,
+            options.viewerMembershipId,
+            { followedMembershipIds: authorMembershipIds },
+          )
+        : listFollowedMembershipIdsForMembership(options.viewerMembershipId, {
+            followedMembershipIds: authorMembershipIds,
+          })
       : Promise.resolve([]),
     options.viewerMembershipId
-      ? listSavedPostIdsForMembership(options.viewerMembershipId, {
+      ? options.spaceId
+        ? listSavedPostIdsForMembershipInSpace(
+            options.spaceId,
+            options.viewerMembershipId,
+            { postIds: relevantPosts.map((post) => post.id) },
+          )
+        : listSavedPostIdsForMembership(options.viewerMembershipId, {
+            postIds: relevantPosts.map((post) => post.id),
+          })
+      : Promise.resolve(new Map()),
+    options.spaceId
+      ? listVisibleCommentCountsForSpace(options.spaceId, {
           postIds: relevantPosts.map((post) => post.id),
         })
-      : Promise.resolve(new Map()),
-    listVisibleCommentCountsForOrg(org.id, {
-      postIds: relevantPosts.map((post) => post.id),
-    }),
+      : listVisibleCommentCountsForOrg(org.id, {
+          postIds: relevantPosts.map((post) => post.id),
+        }),
   ]);
   const followedIds = new Set(followedMembershipIds);
   const matchedIds = new Set(matchedMembershipIds);
@@ -736,6 +895,14 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
     .map((entry) => entry.view);
 }
 
+export async function getFeedViewsForSpace(
+  spaceId: string,
+  org: Organization,
+  options: FeedViewOptions & { viewerMembershipId: string },
+) {
+  return getFeedViewsForOrg(org, { ...options, spaceId });
+}
+
 export async function getMatchViews(membershipId: string, matchRecords: Array<{
   id: string;
   matchType: MatchCardView["matchType"];
@@ -784,13 +951,19 @@ export async function getMatchViews(membershipId: string, matchRecords: Array<{
 export async function getMatchCardViewsForProfile(
   profileId: string,
   membershipId: string,
-  options: { matchType?: string } = {},
+  options: { matchType?: string; spaceId?: string } = {},
 ) {
   const [records, introStatusByReceiver] = await Promise.all([
     listMatchTargetRecordsForProfile(profileId, membershipId, {
       matchType: options.matchType,
+      spaceId: options.spaceId,
     }),
-    listActiveIntroRequestStatusesForRequester(membershipId),
+    options.spaceId
+      ? listActiveIntroRequestStatusesForRequesterInSpace(
+          options.spaceId,
+          membershipId,
+        )
+      : listActiveIntroRequestStatusesForRequester(membershipId),
   ]);
   const configs = records[0]
     ? await listMatchTypeConfigsForOrg(records[0].match.orgId, { includeInactive: true })
@@ -830,20 +1003,46 @@ export async function getMatchCardViewsForProfile(
   return views;
 }
 
+export async function getMatchCardViewsForProfileInSpace(
+  spaceId: string,
+  profileId: string,
+  membershipId: string,
+  options: { matchType?: string } = {},
+) {
+  return getMatchCardViewsForProfile(profileId, membershipId, {
+    ...options,
+    spaceId,
+  });
+}
+
 export async function getPostThreadIntroContext(input: {
   postId: string;
   orgId: string;
+  spaceId?: string;
   viewerMembershipId?: string;
 }): Promise<PostThreadIntroContext> {
   const [thread, introStatusByReceiver, savedPostsById] = await Promise.all([
-    getPostThreadRecord(input.postId, input.orgId),
+    input.spaceId
+      ? getPostThreadRecordForSpace(input.spaceId, input.postId)
+      : getPostThreadRecord(input.postId, input.orgId),
     input.viewerMembershipId
-      ? listActiveIntroRequestStatusesForRequester(input.viewerMembershipId)
+      ? input.spaceId
+        ? listActiveIntroRequestStatusesForRequesterInSpace(
+            input.spaceId,
+            input.viewerMembershipId,
+          )
+        : listActiveIntroRequestStatusesForRequester(input.viewerMembershipId)
       : Promise.resolve(new Map<string, IntroStatus>()),
     input.viewerMembershipId
-      ? listSavedPostIdsForMembership(input.viewerMembershipId, {
-          postIds: [input.postId],
-        })
+      ? input.spaceId
+        ? listSavedPostIdsForMembershipInSpace(
+            input.spaceId,
+            input.viewerMembershipId,
+            { postIds: [input.postId] },
+          )
+        : listSavedPostIdsForMembership(input.viewerMembershipId, {
+            postIds: [input.postId],
+          })
       : Promise.resolve(new Map()),
   ]);
   const authorMembershipId = thread?.author?.membership.id;
@@ -858,6 +1057,15 @@ export async function getPostThreadIntroContext(input: {
         ? introStatusByReceiver.get(authorMembershipId)
         : undefined,
   };
+}
+
+export async function getPostThreadIntroContextForSpace(input: {
+  postId: string;
+  orgId: string;
+  spaceId: string;
+  viewerMembershipId: string;
+}) {
+  return getPostThreadIntroContext(input);
 }
 
 export async function getIntroRequestViews(
@@ -914,6 +1122,128 @@ export async function getIntroRequestViews(
   });
 }
 
+export async function getIntroRequestViewsForSpace(
+  spaceId: string,
+  membershipId: string,
+  orgId: string,
+  options: IntroRequestViewOptions = {},
+) {
+  const [space, requests] = await Promise.all([
+    getSpaceById(spaceId),
+    listIntroRequestsForMembershipInSpace(spaceId, membershipId, options),
+  ]);
+  const relatedMembershipIds = requests.flatMap((request) => [
+    request.requesterMembershipId,
+    request.receiverMembershipId,
+  ]);
+  const membershipRecords = await listMembershipProfileRecordsByIds(
+    relatedMembershipIds,
+    { orgId },
+  );
+  const recordByMembershipId = new Map(
+    membershipRecords.map((record) => [record.membership.id, record]),
+  );
+
+  return requests.map((request) => {
+    const isIncoming = request.receiverMembershipId === membershipId;
+    const otherRecord = recordByMembershipId.get(
+      isIncoming ? request.requesterMembershipId : request.receiverMembershipId,
+    );
+    if (!otherRecord?.profile) {
+      throw new Error("Intro request references a missing member.");
+    }
+    return {
+      id: request.id,
+      spaceId: request.spaceId,
+      spaceName: space?.name,
+      spaceSlug: space?.slug,
+      status: request.status,
+      introPurpose: request.introPurpose,
+      note: request.note,
+      sourceType: request.sourceType,
+      createdAt: request.createdAt,
+      respondedAt: request.respondedAt,
+      contactDetails: canViewContactDetails(membershipId, request)
+        ? {
+            email: otherRecord.profile.emailForIntro,
+            whatsapp: otherRecord.profile.whatsappNumber,
+          }
+        : undefined,
+      otherParty: toLimitedProfileCard(otherRecord.profile, otherRecord.membership),
+      isIncoming,
+      suggestedFirstMessage: request.suggestedFirstMessage,
+    } satisfies IntroRequestView;
+  });
+}
+
+export async function getAccountIntroHistoryViews(
+  membershipId: string,
+  orgId: string,
+  accessibleSpaces: Space[],
+  options: IntroRequestViewOptions = {},
+) {
+  const requests = await listIntroRequestsForMembershipWithSpaceAccess(
+    membershipId,
+    accessibleSpaces.map((space) => space.id),
+    options,
+  );
+  const historySpaceIds = [
+    ...new Set(requests.map((request) => request.spaceId).filter(Boolean)),
+  ] as string[];
+  const historySpaces = await Promise.all(historySpaceIds.map(getSpaceById));
+  const nameBySpaceId = new Map(
+    [...accessibleSpaces, ...historySpaces.filter((space): space is Space => Boolean(space))]
+      .map((space) => [space.id, space.name]),
+  );
+  const slugBySpaceId = new Map(
+    [...accessibleSpaces, ...historySpaces.filter((space): space is Space => Boolean(space))]
+      .map((space) => [space.id, space.slug]),
+  );
+  const relatedMembershipIds = requests.flatMap((request) => [
+    request.requesterMembershipId,
+    request.receiverMembershipId,
+  ]);
+  const membershipRecords = await listMembershipProfileRecordsByIds(
+    relatedMembershipIds,
+    { orgId },
+  );
+  const recordByMembershipId = new Map(
+    membershipRecords.map((record) => [record.membership.id, record]),
+  );
+  return requests.flatMap((request) => {
+    const isIncoming = request.receiverMembershipId === membershipId;
+    const otherRecord = recordByMembershipId.get(
+      isIncoming ? request.requesterMembershipId : request.receiverMembershipId,
+    );
+    if (!otherRecord?.profile) return [];
+    return [{
+      id: request.id,
+      spaceId: request.spaceId,
+      spaceName: request.spaceId
+        ? nameBySpaceId.get(request.spaceId)
+        : undefined,
+      spaceSlug: request.spaceId
+        ? slugBySpaceId.get(request.spaceId)
+        : undefined,
+      status: request.status,
+      introPurpose: request.introPurpose,
+      note: request.note,
+      sourceType: request.sourceType,
+      createdAt: request.createdAt,
+      respondedAt: request.respondedAt,
+      contactDetails: canViewContactDetails(membershipId, request)
+        ? {
+            email: otherRecord.profile.emailForIntro,
+            whatsapp: otherRecord.profile.whatsappNumber,
+          }
+        : undefined,
+      otherParty: toLimitedProfileCard(otherRecord.profile, otherRecord.membership),
+      isIncoming,
+      suggestedFirstMessage: request.suggestedFirstMessage,
+    } satisfies IntroRequestView];
+  });
+}
+
 export async function getNotificationViews(
   membershipId: string,
   options: { limit?: number } = {},
@@ -922,12 +1252,65 @@ export async function getNotificationViews(
     (notification) =>
       ({
         id: notification.id,
+        spaceId: notification.spaceId,
         title: notification.title,
         body: notification.body,
         createdAt: notification.createdAt,
         link: notification.link,
         readAt: notification.readAt,
       }) satisfies NotificationView,
+  );
+}
+
+export async function getNotificationViewsForSpace(
+  spaceId: string,
+  membershipId: string,
+  options: { limit?: number } = {},
+) {
+  const [space, notifications] = await Promise.all([
+    getSpaceById(spaceId),
+    listNotificationsForMembershipInSpace(spaceId, membershipId, options),
+  ]);
+  return notifications.map(
+    (notification) => ({
+        id: notification.id,
+        spaceId: notification.spaceId,
+        spaceName: space?.name,
+        title: notification.title,
+        body: notification.body,
+        createdAt: notification.createdAt,
+        link: notification.link,
+        readAt: notification.readAt,
+      }) satisfies NotificationView,
+  );
+}
+
+export async function getAccountInboxNotificationViews(
+  membershipId: string,
+  accessibleSpaces: Space[],
+  options: { limit?: number } = {},
+) {
+  const nameBySpaceId = new Map(
+    accessibleSpaces.map((space) => [space.id, space.name]),
+  );
+  const notifications = await listNotificationsForMembershipWithSpaceAccess(
+    membershipId,
+    accessibleSpaces.map((space) => space.id),
+    options,
+  );
+  return notifications.map(
+    (notification) => ({
+      id: notification.id,
+      spaceId: notification.spaceId,
+      spaceName: notification.spaceId
+        ? nameBySpaceId.get(notification.spaceId)
+        : undefined,
+      title: notification.title,
+      body: notification.body,
+      createdAt: notification.createdAt,
+      link: notification.link,
+      readAt: notification.readAt,
+    }) satisfies NotificationView,
   );
 }
 
@@ -959,6 +1342,7 @@ export async function getAdminPostModerationDashboard(
   return {
     posts: posts.map((post) => ({
       id: post.id,
+      spaceId: post.spaceId,
       title: post.title,
       body: post.body,
       type: post.type,
@@ -970,6 +1354,7 @@ export async function getAdminPostModerationDashboard(
     })),
     comments: commentRecords.map((record) => ({
       id: record.comment.id,
+      spaceId: record.post?.spaceId,
       body: record.comment.body,
       status: record.comment.status,
       postId: record.post?.id,
@@ -986,19 +1371,23 @@ export async function getAdminIntroRequestDashboard(
   const [requests, candidateRecords] = await Promise.all([
     listIntroRequestsForOrg(orgId, {
       limit: options.requestLimit ?? 50,
+      spaceId: options.spaceId,
       sourceType: options.sourceType,
       status: options.requestStatus,
     }),
-    listMembershipRecordsForOrg(orgId, {
-      limit: options.candidateLimit ?? 100,
-      status: "approved",
-    }),
+    options.spaceId
+      ? listActiveSpaceMemberRecords(options.spaceId)
+      : Promise.resolve([]),
   ]);
-  const eligibleCandidateRecords = candidateRecords.filter(
-    (record) =>
-      record.profile?.introOptIn && getProfileReadiness(record.profile).isReady,
-  );
-  const recordByMembershipId = new Map(
+  const eligibleCandidateRecords = candidateRecords
+    .filter(
+      (record) =>
+        record.membership.orgId === orgId &&
+        record.profile?.introOptIn &&
+        getProfileReadiness(record.profile).isReady,
+    )
+    .slice(0, options.candidateLimit ?? 100);
+  const recordByMembershipId = new Map<string, MembershipRecord>(
     eligibleCandidateRecords.map((record) => [record.membership.id, record]),
   );
   const missingParticipantIds = [
@@ -1027,6 +1416,7 @@ export async function getAdminIntroRequestDashboard(
     })),
     requests: requests.map((request) => ({
       id: request.id,
+      spaceId: request.spaceId,
       status: request.status,
       introPurpose: request.introPurpose,
       note: request.note,
@@ -1044,7 +1434,7 @@ export async function getMemberActivationState(
   orgId: string,
   membershipId: string,
   profile: Profile,
-  slug = "wavespark",
+  slug = "wavesparks",
 ): Promise<MemberActivationState> {
   const {
     hasPost,

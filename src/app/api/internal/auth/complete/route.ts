@@ -2,28 +2,17 @@ import { NextRequest } from "next/server";
 
 import { getAuthCompletionViewerContext } from "@/lib/auth";
 import { hasPotentialClerkSessionCookie } from "@/lib/clerk-cookies";
-import { canAccessFeed } from "@/server/permissions";
 
 function completionTarget(slug: string, context: Awaited<ReturnType<typeof getAuthCompletionViewerContext>>) {
   if (context.status !== "authenticated") {
     return null;
   }
 
-  const { viewer } = context;
-
   if (context.state === "inactive") {
     return `/org/${slug}/pending?state=inactive`;
   }
 
-  if (context.state === "ready" || canAccessFeed(viewer.membership, viewer.profile)) {
-    return `/org/${slug}/feed`;
-  }
-
-  if (viewer.membership.status === "approved") {
-    return `/org/${slug}/onboarding`;
-  }
-
-  return `/org/${slug}/pending`;
+  return context.state === "ready" ? `/org/${slug}` : `/org/${slug}/pending`;
 }
 
 function clerkSessionTokenFromAuthorization(header: string | null) {
@@ -42,7 +31,7 @@ function logAuthCompleteDenied(
 }
 
 export async function GET(request: NextRequest) {
-  const slug = request.nextUrl.searchParams.get("orgSlug")?.trim() || "wavespark";
+  const slug = request.nextUrl.searchParams.get("orgSlug")?.trim() || "wavesparks";
   const hasClerkCookie = hasPotentialClerkSessionCookie(request.cookies.getAll());
   const clerkSessionToken = clerkSessionTokenFromAuthorization(
     request.headers.get("authorization"),
@@ -72,7 +61,7 @@ export async function GET(request: NextRequest) {
       slug,
     });
     return Response.json(
-      { error: "This account does not have a Wavespark invitation." },
+      { error: "This account does not have a Wavesparks invitation." },
       { status: 403 },
     );
   }

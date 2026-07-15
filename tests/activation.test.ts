@@ -31,8 +31,9 @@ const activationMembership: Membership = {
   id: "mem_activation",
   orgId: "org_wavespark",
   userId: activationUser.id,
-  role: "member",
-  affiliationType: "current participant",
+      role: "member",
+      accountStatus: "connected",
+      affiliationType: "current participant",
   status: "approved",
   archetypes: ["founder"],
   programName: "Activation Program",
@@ -134,7 +135,7 @@ describe("member activation state", () => {
     expect(state.items.every((item) => item.complete)).toBe(true);
     expect(state.items.find((item) => item.id === "intro")).toMatchObject({
       cta: "View requests",
-      href: "/org/wavespark/requests",
+      href: "/org/wavesparks/requests",
     });
   });
 
@@ -174,7 +175,7 @@ describe("member activation state", () => {
         expect.objectContaining({
           id: "intro",
           complete: false,
-          href: "/org/wavespark/matches",
+          href: "/org/wavesparks/matches",
         }),
       ]),
     );

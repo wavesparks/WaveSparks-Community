@@ -56,15 +56,15 @@ describe("AuthCompleteClient", () => {
         Response.json({
           clerkOrgId: "org_clerk_wavespark",
           state: "ready",
-          target: "/org/wavespark/feed",
+          target: "/org/wavesparks/feed",
         }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AuthCompleteClient slug="wavespark" />);
+    render(<AuthCompleteClient slug="wavesparks" />);
 
     await waitFor(() => {
-      expect(router.replace).toHaveBeenCalledWith("/org/wavespark/feed");
+      expect(router.replace).toHaveBeenCalledWith("/org/wavesparks/feed");
     });
     expect(clerk.getToken).toHaveBeenNthCalledWith(1, { skipCache: false });
     expect(clerk.getToken).toHaveBeenNthCalledWith(2, { skipCache: true });
@@ -77,7 +77,7 @@ describe("AuthCompleteClient", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<AuthCompleteClient slug="wavespark" />);
+    render(<AuthCompleteClient slug="wavesparks" />);
 
     expect(
       await screen.findByText("We could not verify your Clerk session. Please try again."),
