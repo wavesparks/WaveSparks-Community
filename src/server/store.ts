@@ -37,6 +37,7 @@ import {
   buildMatchingEmbeddingTexts,
   buildSpaceIntentEmbeddingTexts,
   isSpaceMatchingMemberEligible,
+  MATCHING_ALGORITHM_VERSION,
   recomputeMatchesForSpaceMembers,
   spaceAllowsMatching,
   type SpaceMatchingMember,
@@ -50,6 +51,7 @@ import {
   MATCHING_EMBEDDING_DIMENSIONS,
   MATCHING_EMBEDDING_MODEL,
 } from "@/server/embeddings";
+import { withSpaceRecomputeLock } from "@/server/space-recompute-lock";
 import type {
   AccountStatus,
   AnalyticsEvent,
@@ -9615,7 +9617,7 @@ async function replaceMatchesForSpace(space: Space, matches: MatchRecord[]) {
   }
 }
 
-export async function recomputeMatchesForSpace(spaceId: string) {
+async function recomputeMatchesForSpaceUnlocked(spaceId: string) {
   const input = await getSpaceMatchRecomputeInput(spaceId);
   if (!input) return [];
   const run = await beginMatchRun(input.organization.id, input.space.id);
@@ -9647,7 +9649,7 @@ export async function recomputeMatchesForSpace(spaceId: string) {
 
     const degradedReason = profileResult.degradedReason ?? intentResult.degradedReason;
     await finishMatchRun(run, "completed", {
-      algorithmVersion: matches[0]?.algorithmVersion ?? "hybrid-v2",
+      algorithmVersion: matches[0]?.algorithmVersion ?? MATCHING_ALGORITHM_VERSION,
       spaceId: input.space.id,
       activeTypes: input.configs.filter((config) => config.active).length,
       eligibleProfiles: input.records.length,
@@ -9666,6 +9668,10 @@ export async function recomputeMatchesForSpace(spaceId: string) {
     });
     throw error;
   }
+}
+
+export async function recomputeMatchesForSpace(spaceId: string) {
+  return withSpaceRecomputeLock(spaceId, () => recomputeMatchesForSpaceUnlocked(spaceId));
 }
 
 export async function recomputeMatchesForOrg(orgId: string) {

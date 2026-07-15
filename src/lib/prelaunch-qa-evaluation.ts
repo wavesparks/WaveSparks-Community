@@ -1,3 +1,12 @@
+export const PRELAUNCH_QA_MATCH_TYPES = [
+  "mentor_match",
+  "cofounder_match",
+  "collaborator_match",
+] as const;
+
+export type PrelaunchQaMatchType = (typeof PRELAUNCH_QA_MATCH_TYPES)[number];
+export type PrelaunchQaMatchDirection = "seeker_provider" | "mutual";
+
 export const PRELAUNCH_QA_THRESHOLDS = {
   expectedSeekers: 50,
   expectedMentors: 10,
@@ -10,6 +19,7 @@ export const PRELAUNCH_QA_THRESHOLDS = {
   hitK: 3,
   ndcgK: 5,
   matchType: "mentor_match",
+  supportedMatchTypes: PRELAUNCH_QA_MATCH_TYPES,
   embeddingModel: "text-embedding-3-large",
 } as const;
 
@@ -21,6 +31,8 @@ export interface PrelaunchQaParticipant {
   intentId: string;
   orgId: string;
   spaceId: string;
+  seekingMatchTypes: PrelaunchQaMatchType[];
+  offeringMatchTypes: PrelaunchQaMatchType[];
 }
 
 export interface PrelaunchQaSeeker extends PrelaunchQaParticipant {
@@ -80,6 +92,7 @@ export interface PrelaunchQaEvaluationInput {
 export type PrelaunchQaMismatchCode =
   | "dataset_shape"
   | "participant_scope"
+  | "participant_match_types"
   | "label_duplicate"
   | "label_invalid"
   | "label_missing"
@@ -94,6 +107,8 @@ export type PrelaunchQaMismatchCode =
   | "embedding_unknown_owner"
   | "match_invalid"
   | "match_unknown_source"
+  | "match_unknown_target"
+  | "match_ineligible_pair"
   | "match_cross_org"
   | "match_cross_space"
   | "match_non_mentor"
@@ -102,6 +117,7 @@ export type PrelaunchQaMismatchCode =
   | "determinism_score"
   | "determinism_breakdown"
   | "seeker_no_results"
+  | "match_type_no_results"
   | "holdout_no_relevant_top3"
   | "holdout_irrelevant_top1";
 
@@ -111,12 +127,41 @@ export interface PrelaunchQaKnownMismatch {
   runId?: string;
   seekerProfileId?: string;
   targetProfileId?: string;
+  matchType?: PrelaunchQaMatchType;
 }
 
 export interface PrelaunchQaGate {
   passed: boolean;
   actual: number | string | boolean;
   expected: string;
+}
+
+export interface PrelaunchQaMatchTypeEvaluation {
+  direction: PrelaunchQaMatchDirection;
+  applicable: boolean;
+  eligibleSources: number;
+  coveredSources: number;
+  coverage: number;
+  minimumCoverage: number;
+  resultCount: number;
+  nonEmpty: boolean;
+  invalidRows: number;
+  ineligiblePairs: number;
+  leakage: {
+    crossOrg: number;
+    crossSpace: number;
+    nonMentorTargets: number;
+    unknownSources: number;
+    unknownTargets: number;
+  };
+  duplicates: number;
+  determinism: {
+    top3OrderMismatches: number;
+    scoreMismatches: number;
+    breakdownMismatches: number;
+    passed: boolean;
+  };
+  passed: boolean;
 }
 
 export interface PrelaunchQaEvaluationResult {
@@ -146,8 +191,10 @@ export interface PrelaunchQaEvaluationResult {
     crossSpace: number;
     nonMentorTargets: number;
     unknownSources: number;
+    unknownTargets: number;
   };
   duplicates: number;
+  matchTypes: Record<PrelaunchQaMatchType, PrelaunchQaMatchTypeEvaluation>;
   determinism: {
     top3OrderMismatches: number;
     scoreMismatches: number;
@@ -174,6 +221,88 @@ export interface PrelaunchQaEvaluationResult {
 
 interface RankedMatch extends PrelaunchQaPersistedMatch {
   relevance: PrelaunchQaRelevance;
+}
+
+interface MatchTypeCounters {
+  invalidRows: number;
+  ineligiblePairs: number;
+  crossOrg: number;
+  crossSpace: number;
+  nonMentorTargets: number;
+  unknownSources: number;
+  unknownTargets: number;
+  duplicates: number;
+  top3OrderMismatches: number;
+  scoreMismatches: number;
+  breakdownMismatches: number;
+}
+
+type RankedBySource = Map<string, PrelaunchQaPersistedMatch[]>;
+type RankedByType = Map<PrelaunchQaMatchType, RankedBySource>;
+
+const MATCH_DIRECTIONS: Record<PrelaunchQaMatchType, PrelaunchQaMatchDirection> = {
+  mentor_match: "seeker_provider",
+  cofounder_match: "mutual",
+  collaborator_match: "mutual",
+};
+
+function isPrelaunchQaMatchType(value: unknown): value is PrelaunchQaMatchType {
+  return PRELAUNCH_QA_MATCH_TYPES.some((matchType) => matchType === value);
+}
+
+function hasValidParticipantMatchTypes(value: unknown): value is PrelaunchQaMatchType[] {
+  return (
+    Array.isArray(value) &&
+    value.every(isPrelaunchQaMatchType) &&
+    new Set(value).size === value.length
+  );
+}
+
+function participantHasMatchType(
+  participant: PrelaunchQaParticipant,
+  field: "seekingMatchTypes" | "offeringMatchTypes",
+  matchType: PrelaunchQaMatchType,
+) {
+  return Array.isArray(participant[field]) && participant[field].includes(matchType);
+}
+
+function isEligiblePair(
+  source: PrelaunchQaParticipant,
+  target: PrelaunchQaParticipant,
+  matchType: PrelaunchQaMatchType,
+  mentorIds: ReadonlySet<string>,
+) {
+  if (
+    source.profileId === target.profileId ||
+    !participantHasMatchType(source, "seekingMatchTypes", matchType) ||
+    !participantHasMatchType(target, "offeringMatchTypes", matchType)
+  ) {
+    return false;
+  }
+  if (matchType === "mentor_match" && !mentorIds.has(target.profileId)) {
+    return false;
+  }
+  return (
+    MATCH_DIRECTIONS[matchType] !== "mutual" ||
+    (participantHasMatchType(source, "offeringMatchTypes", matchType) &&
+      participantHasMatchType(target, "seekingMatchTypes", matchType))
+  );
+}
+
+function emptyMatchTypeCounters(): MatchTypeCounters {
+  return {
+    invalidRows: 0,
+    ineligiblePairs: 0,
+    crossOrg: 0,
+    crossSpace: 0,
+    nonMentorTargets: 0,
+    unknownSources: 0,
+    unknownTargets: 0,
+    duplicates: 0,
+    top3OrderMismatches: 0,
+    scoreMismatches: 0,
+    breakdownMismatches: 0,
+  };
 }
 
 function ratio(numerator: number, denominator: number) {
@@ -272,6 +401,9 @@ export function evaluatePrelaunchQa(
   const mentorIds = new Set(input.mentors.map((mentor) => mentor.profileId));
   const allParticipants: PrelaunchQaParticipant[] = [...input.seekers, ...input.mentors];
   const participantIds = new Set(allParticipants.map((participant) => participant.profileId));
+  const participantById = new Map(
+    allParticipants.map((participant) => [participant.profileId, participant]),
+  );
   const intentIds = new Set(allParticipants.map((participant) => participant.intentId));
   const expectedEmbeddingOwners = new Set(
     allParticipants.flatMap((participant) => [
@@ -304,6 +436,7 @@ export function evaluatePrelaunchQa(
   }
 
   let participantScopeErrors = 0;
+  let participantMatchTypeErrors = 0;
   for (const participant of allParticipants) {
     if (participant.orgId !== input.orgId || participant.spaceId !== input.spaceId) {
       participantScopeErrors += 1;
@@ -313,7 +446,33 @@ export function evaluatePrelaunchQa(
         targetProfileId: participant.profileId,
       });
     }
+    if (
+      !hasValidParticipantMatchTypes(participant.seekingMatchTypes) ||
+      !hasValidParticipantMatchTypes(participant.offeringMatchTypes)
+    ) {
+      participantMatchTypeErrors += 1;
+      addMismatch(mismatches, {
+        code: "participant_match_types",
+        message: `${participant.profileId} has unsupported, duplicated, or malformed seeking/offering match types.`,
+        targetProfileId: participant.profileId,
+      });
+    }
   }
+
+  const eligibleSourceIdsByType = new Map<PrelaunchQaMatchType, Set<string>>(
+    PRELAUNCH_QA_MATCH_TYPES.map((matchType) => [
+      matchType,
+      new Set(
+        allParticipants
+          .filter((source) =>
+            allParticipants.some((target) =>
+              isEligiblePair(source, target, matchType, mentorIds),
+            ),
+          )
+          .map((participant) => participant.profileId),
+      ),
+    ]),
+  );
 
   const labelMap = new Map<string, PrelaunchQaRelevance>();
   let labelDuplicates = 0;
@@ -380,14 +539,20 @@ export function evaluatePrelaunchQa(
   let crossSpace = 0;
   let nonMentorTargets = 0;
   let unknownSources = 0;
+  let unknownTargets = 0;
   let duplicates = 0;
   let invalidMatches = 0;
+  let ineligiblePairs = 0;
   let embeddingMissing = 0;
   let embeddingDuplicates = 0;
   let embeddingWrongModel = 0;
   let embeddingUnknownOwners = 0;
   let runScopeErrors = 0;
   const rankedByRun = new Map<string, Map<string, RankedMatch[]>>();
+  const rankedByTypeByRun = new Map<string, RankedByType>();
+  const matchTypeCounters = new Map<PrelaunchQaMatchType, MatchTypeCounters>(
+    PRELAUNCH_QA_MATCH_TYPES.map((matchType) => [matchType, emptyMatchTypeCounters()]),
+  );
   const runIdsUnique = new Set(input.runs.map((run) => run.id)).size === input.runs.length;
 
   if (!runIdsUnique) {
@@ -448,44 +613,71 @@ export function evaluatePrelaunchQa(
     }
 
     const seenMatches = new Set<string>();
-    const validBySeeker = new Map<string, PrelaunchQaPersistedMatch[]>();
+    const validByType = new Map<PrelaunchQaMatchType, Map<string, PrelaunchQaPersistedMatch[]>>(
+      PRELAUNCH_QA_MATCH_TYPES.map((matchType) => [matchType, new Map()]),
+    );
     for (const match of run.matches) {
+      const supportedMatchType = isPrelaunchQaMatchType(match.matchType)
+        ? match.matchType
+        : null;
+      const counters = supportedMatchType
+        ? matchTypeCounters.get(supportedMatchType)!
+        : null;
       const duplicateKey = matchKey(match);
       if (seenMatches.has(duplicateKey)) {
         duplicates += 1;
+        if (counters) counters.duplicates += 1;
         addMismatch(mismatches, {
           code: "match_duplicate",
           message: `Run ${run.id} has a duplicate (${match.sourceProfileId}, ${match.targetProfileId}, ${match.matchType}) match.`,
           runId: run.id,
           seekerProfileId: match.sourceProfileId,
           targetProfileId: match.targetProfileId,
+          ...(supportedMatchType ? { matchType: supportedMatchType } : {}),
         });
       }
       seenMatches.add(duplicateKey);
 
-      const hasExpectedMatchType = match.matchType === thresholds.matchType;
-      if (
-        !Number.isFinite(match.score) ||
-        !isFiniteBreakdown(match.scoreBreakdown) ||
-        !hasExpectedMatchType
-      ) {
+      const hasValidShape =
+        supportedMatchType !== null &&
+        Number.isFinite(match.score) &&
+        isFiniteBreakdown(match.scoreBreakdown);
+      if (!hasValidShape) {
         invalidMatches += 1;
+        if (counters) counters.invalidRows += 1;
         addMismatch(mismatches, {
           code: "match_invalid",
-          message: `Run ${run.id} has an unexpected type, non-finite score, or invalid score breakdown for ${match.id}.`,
+          message: `Run ${run.id} has an unsupported type, non-finite score, or invalid score breakdown for ${match.id}.`,
           runId: run.id,
           seekerProfileId: match.sourceProfileId,
           targetProfileId: match.targetProfileId,
+          ...(supportedMatchType ? { matchType: supportedMatchType } : {}),
         });
       }
-      if (!seekerIds.has(match.sourceProfileId)) {
+      const source = participantById.get(match.sourceProfileId);
+      const target = participantById.get(match.targetProfileId);
+      if (!source) {
         unknownSources += 1;
+        if (counters) counters.unknownSources += 1;
         addMismatch(mismatches, {
           code: "match_unknown_source",
-          message: `Run ${run.id} returned a match for unknown seeker ${match.sourceProfileId}.`,
+          message: `Run ${run.id} returned a match for unknown participant ${match.sourceProfileId}.`,
           runId: run.id,
           seekerProfileId: match.sourceProfileId,
           targetProfileId: match.targetProfileId,
+          ...(supportedMatchType ? { matchType: supportedMatchType } : {}),
+        });
+      }
+      if (!target) {
+        unknownTargets += 1;
+        if (counters) counters.unknownTargets += 1;
+        addMismatch(mismatches, {
+          code: "match_unknown_target",
+          message: `Run ${run.id} returned unknown target ${match.targetProfileId}.`,
+          runId: run.id,
+          seekerProfileId: match.sourceProfileId,
+          targetProfileId: match.targetProfileId,
+          ...(supportedMatchType ? { matchType: supportedMatchType } : {}),
         });
       }
       const isCrossOrg = match.orgId !== input.orgId || match.targetOrgId !== input.orgId;
@@ -494,61 +686,100 @@ export function evaluatePrelaunchQa(
       const isMentor = mentorIds.has(match.targetProfileId);
       if (isCrossOrg) {
         crossOrg += 1;
+        if (counters) counters.crossOrg += 1;
         addMismatch(mismatches, {
           code: "match_cross_org",
           message: `Run ${run.id} returned cross-organization target ${match.targetProfileId}.`,
           runId: run.id,
           seekerProfileId: match.sourceProfileId,
           targetProfileId: match.targetProfileId,
+          ...(supportedMatchType ? { matchType: supportedMatchType } : {}),
         });
       }
       if (isCrossSpace) {
         crossSpace += 1;
+        if (counters) counters.crossSpace += 1;
         addMismatch(mismatches, {
           code: "match_cross_space",
           message: `Run ${run.id} returned cross-Space target ${match.targetProfileId}.`,
           runId: run.id,
           seekerProfileId: match.sourceProfileId,
           targetProfileId: match.targetProfileId,
+          ...(supportedMatchType ? { matchType: supportedMatchType } : {}),
         });
       }
-      if (!isMentor) {
+      if (supportedMatchType === thresholds.matchType && !isMentor) {
         nonMentorTargets += 1;
+        counters!.nonMentorTargets += 1;
         addMismatch(mismatches, {
           code: "match_non_mentor",
           message: `Run ${run.id} returned non-mentor target ${match.targetProfileId}.`,
           runId: run.id,
           seekerProfileId: match.sourceProfileId,
           targetProfileId: match.targetProfileId,
+          matchType: supportedMatchType,
+        });
+      }
+
+      const pairEligible = Boolean(
+        supportedMatchType &&
+          source &&
+          target &&
+          isEligiblePair(source, target, supportedMatchType, mentorIds),
+      );
+      if (supportedMatchType && source && target && !pairEligible) {
+        ineligiblePairs += 1;
+        counters!.ineligiblePairs += 1;
+        addMismatch(mismatches, {
+          code: "match_ineligible_pair",
+          message: `Run ${run.id} returned an ineligible ${supportedMatchType} pair ${match.sourceProfileId} -> ${match.targetProfileId}.`,
+          runId: run.id,
+          seekerProfileId: match.sourceProfileId,
+          targetProfileId: match.targetProfileId,
+          matchType: supportedMatchType,
         });
       }
 
       if (
-        seekerIds.has(match.sourceProfileId) &&
-        hasExpectedMatchType &&
+        supportedMatchType &&
+        source &&
+        target &&
+        pairEligible &&
+        hasValidShape &&
         !isCrossOrg &&
-        !isCrossSpace &&
-        isMentor &&
-        Number.isFinite(match.score) &&
-        isFiniteBreakdown(match.scoreBreakdown)
+        !isCrossSpace
       ) {
-        const candidates = validBySeeker.get(match.sourceProfileId) ?? [];
+        const validBySource = validByType.get(supportedMatchType)!;
+        const candidates = validBySource.get(match.sourceProfileId) ?? [];
         candidates.push(match);
-        validBySeeker.set(match.sourceProfileId, candidates);
+        validBySource.set(match.sourceProfileId, candidates);
       }
     }
 
+    const rankedByType = new Map<PrelaunchQaMatchType, RankedBySource>();
+    for (const matchType of PRELAUNCH_QA_MATCH_TYPES) {
+      const rankedBySource = new Map<string, PrelaunchQaPersistedMatch[]>();
+      const candidatesBySource = validByType.get(matchType)!;
+      for (const participant of allParticipants) {
+        const seenTargets = new Set<string>();
+        const matches = [...(candidatesBySource.get(participant.profileId) ?? [])]
+          .sort(stableMatchSort)
+          .filter((match) => {
+            if (seenTargets.has(match.targetProfileId)) return false;
+            seenTargets.add(match.targetProfileId);
+            return true;
+          });
+        rankedBySource.set(participant.profileId, matches);
+      }
+      rankedByType.set(matchType, rankedBySource);
+    }
+    rankedByTypeByRun.set(run.id, rankedByType);
+
     const ranked = new Map<string, RankedMatch[]>();
     for (const seeker of input.seekers) {
-      const seenTargets = new Set<string>();
-      const matches = (validBySeeker.get(seeker.profileId) ?? [])
-        .sort(stableMatchSort)
-        .filter((match) => {
-          if (seenTargets.has(match.targetProfileId)) return false;
-          seenTargets.add(match.targetProfileId);
-          return true;
-        })
-        .map((match) => ({
+      const matches = (
+        rankedByType.get(thresholds.matchType)?.get(seeker.profileId) ?? []
+      ).map((match) => ({
           ...match,
           relevance: labelMap.get(labelKey(seeker.profileId, match.targetProfileId)) ?? 0,
         }));
@@ -621,48 +852,142 @@ export function evaluatePrelaunchQa(
   const mrr = average(reciprocalRanks);
   const ndcgAt5 = average(ndcgValues);
 
-  const firstRanked = rankedByRun.get(input.runs[0].id) ?? new Map<string, RankedMatch[]>();
-  const secondRanked = latestRanked;
+  const firstRankedByType =
+    rankedByTypeByRun.get(input.runs[0].id) ?? new Map<PrelaunchQaMatchType, RankedBySource>();
+  const secondRankedByType =
+    rankedByTypeByRun.get(latestRun.id) ?? new Map<PrelaunchQaMatchType, RankedBySource>();
   let top3OrderMismatches = 0;
   let scoreMismatches = 0;
   let breakdownMismatches = 0;
-  for (const seeker of input.seekers) {
-    const firstTop3 = (firstRanked.get(seeker.profileId) ?? []).slice(0, thresholds.hitK);
-    const secondTop3 = (secondRanked.get(seeker.profileId) ?? []).slice(0, thresholds.hitK);
-    const firstTargets = firstTop3.map((match) => match.targetProfileId);
-    const secondTargets = secondTop3.map((match) => match.targetProfileId);
-    if (!deepEqual(firstTargets, secondTargets)) {
-      top3OrderMismatches += 1;
-      addMismatch(mismatches, {
-        code: "determinism_top3",
-        message: `${seeker.profileId} has different Top 3 target order across the two runs.`,
-        seekerProfileId: seeker.profileId,
-      });
-      continue;
-    }
-    for (let index = 0; index < firstTop3.length; index += 1) {
-      const first = firstTop3[index];
-      const second = secondTop3[index];
-      if (!second) continue;
-      if (!Object.is(first.score, second.score)) {
-        scoreMismatches += 1;
+  for (const matchType of PRELAUNCH_QA_MATCH_TYPES) {
+    const counters = matchTypeCounters.get(matchType)!;
+    const firstRanked =
+      firstRankedByType.get(matchType) ?? new Map<string, PrelaunchQaPersistedMatch[]>();
+    const secondRanked =
+      secondRankedByType.get(matchType) ?? new Map<string, PrelaunchQaPersistedMatch[]>();
+    for (const sourceProfileId of eligibleSourceIdsByType.get(matchType) ?? []) {
+      const firstTop3 = (firstRanked.get(sourceProfileId) ?? []).slice(0, thresholds.hitK);
+      const secondTop3 = (secondRanked.get(sourceProfileId) ?? []).slice(0, thresholds.hitK);
+      const firstTargets = firstTop3.map((match) => match.targetProfileId);
+      const secondTargets = secondTop3.map((match) => match.targetProfileId);
+      if (!deepEqual(firstTargets, secondTargets)) {
+        top3OrderMismatches += 1;
+        counters.top3OrderMismatches += 1;
         addMismatch(mismatches, {
-          code: "determinism_score",
-          message: `${seeker.profileId} -> ${first.targetProfileId} changed score across runs.`,
-          seekerProfileId: seeker.profileId,
-          targetProfileId: first.targetProfileId,
+          code: "determinism_top3",
+          message: `${sourceProfileId} has different ${matchType} Top 3 target order across the two runs.`,
+          seekerProfileId: sourceProfileId,
+          matchType,
         });
+        continue;
       }
-      if (!deepEqual(first.scoreBreakdown, second.scoreBreakdown)) {
-        breakdownMismatches += 1;
-        addMismatch(mismatches, {
-          code: "determinism_breakdown",
-          message: `${seeker.profileId} -> ${first.targetProfileId} changed score breakdown across runs.`,
-          seekerProfileId: seeker.profileId,
-          targetProfileId: first.targetProfileId,
-        });
+      for (let index = 0; index < firstTop3.length; index += 1) {
+        const first = firstTop3[index];
+        const second = secondTop3[index];
+        if (!second) continue;
+        if (!Object.is(first.score, second.score)) {
+          scoreMismatches += 1;
+          counters.scoreMismatches += 1;
+          addMismatch(mismatches, {
+            code: "determinism_score",
+            message: `${sourceProfileId} -> ${first.targetProfileId} changed ${matchType} score across runs.`,
+            seekerProfileId: sourceProfileId,
+            targetProfileId: first.targetProfileId,
+            matchType,
+          });
+        }
+        if (!deepEqual(first.scoreBreakdown, second.scoreBreakdown)) {
+          breakdownMismatches += 1;
+          counters.breakdownMismatches += 1;
+          addMismatch(mismatches, {
+            code: "determinism_breakdown",
+            message: `${sourceProfileId} -> ${first.targetProfileId} changed ${matchType} score breakdown across runs.`,
+            seekerProfileId: sourceProfileId,
+            targetProfileId: first.targetProfileId,
+            matchType,
+          });
+        }
       }
     }
+  }
+
+  const matchTypes = {} as Record<
+    PrelaunchQaMatchType,
+    PrelaunchQaMatchTypeEvaluation
+  >;
+  let matchTypeCoverageFailures = 0;
+  for (const matchType of PRELAUNCH_QA_MATCH_TYPES) {
+    const direction = MATCH_DIRECTIONS[matchType];
+    const eligibleSourceIds = eligibleSourceIdsByType.get(matchType) ?? new Set<string>();
+    const latestBySource =
+      secondRankedByType.get(matchType) ??
+      new Map<string, PrelaunchQaPersistedMatch[]>();
+    const coveredSources = [...eligibleSourceIds].filter(
+      (sourceProfileId) => (latestBySource.get(sourceProfileId)?.length ?? 0) > 0,
+    ).length;
+    const resultCount = [...latestBySource.values()].reduce(
+      (total, matches) => total + matches.length,
+      0,
+    );
+    const applicable = eligibleSourceIds.size > 0;
+    const coverage = ratio(coveredSources, eligibleSourceIds.size);
+    const minimumCoverage = thresholds.minimumCoverage;
+    const coveragePassed = applicable
+      ? resultCount > 0 && coverage >= minimumCoverage
+      : resultCount === 0;
+    if (!coveragePassed) matchTypeCoverageFailures += 1;
+    if (matchType !== thresholds.matchType && applicable) {
+      for (const sourceProfileId of eligibleSourceIds) {
+        if (!(latestBySource.get(sourceProfileId)?.length ?? 0)) {
+          addMismatch(mismatches, {
+            code: "match_type_no_results",
+            message: `${sourceProfileId} has no valid ${matchType} results in latest run ${latestRun.id}.`,
+            runId: latestRun.id,
+            seekerProfileId: sourceProfileId,
+            matchType,
+          });
+        }
+      }
+    }
+    const counters = matchTypeCounters.get(matchType)!;
+    const deterministic =
+      counters.top3OrderMismatches === 0 &&
+      counters.scoreMismatches === 0 &&
+      counters.breakdownMismatches === 0;
+    const leakage = {
+      crossOrg: counters.crossOrg,
+      crossSpace: counters.crossSpace,
+      nonMentorTargets: counters.nonMentorTargets,
+      unknownSources: counters.unknownSources,
+      unknownTargets: counters.unknownTargets,
+    };
+    matchTypes[matchType] = {
+      direction,
+      applicable,
+      eligibleSources: eligibleSourceIds.size,
+      coveredSources,
+      coverage,
+      minimumCoverage,
+      resultCount,
+      nonEmpty: resultCount > 0,
+      invalidRows: counters.invalidRows,
+      ineligiblePairs: counters.ineligiblePairs,
+      leakage,
+      duplicates: counters.duplicates,
+      determinism: {
+        top3OrderMismatches: counters.top3OrderMismatches,
+        scoreMismatches: counters.scoreMismatches,
+        breakdownMismatches: counters.breakdownMismatches,
+        passed: deterministic,
+      },
+      passed:
+        coveragePassed &&
+        counters.invalidRows === 0 &&
+        counters.ineligiblePairs === 0 &&
+        Object.values(leakage).every((value) => value === 0) &&
+        counters.duplicates === 0 &&
+        deterministic,
+    };
   }
 
   const degradedRaw = latestRun.metadata.embeddingsDegraded;
@@ -707,6 +1032,11 @@ export function evaluatePrelaunchQa(
       actual: participantScopeErrors,
       expected: "0 participants outside the QA organization or Space",
     },
+    participantMatchTypes: {
+      passed: participantMatchTypeErrors === 0,
+      actual: participantMatchTypeErrors,
+      expected: "supported, unique seeking/offering match types on every participant",
+    },
     runScope: {
       passed: runScopeErrors === 0 && runIdsUnique,
       actual: runScopeErrors + (runIdsUnique ? 0 : 1),
@@ -721,6 +1051,11 @@ export function evaluatePrelaunchQa(
       passed: coverageValue >= thresholds.minimumCoverage,
       actual: coverageValue,
       expected: `>= ${thresholds.minimumCoverage}`,
+    },
+    matchTypeCoverage: {
+      passed: matchTypeCoverageFailures === 0,
+      actual: matchTypeCoverageFailures,
+      expected: `coverage >= ${thresholds.minimumCoverage} for every applicable match type; no results for inapplicable types`,
     },
     holdoutHitAt3: {
       passed: hitAt3 >= thresholds.minimumHitAt3,
@@ -742,9 +1077,16 @@ export function evaluatePrelaunchQa(
         crossOrg === 0 &&
         crossSpace === 0 &&
         nonMentorTargets === 0 &&
-        unknownSources === 0,
-      actual: crossOrg + crossSpace + nonMentorTargets + unknownSources,
-      expected: "0 cross-org, cross-Space, non-mentor, or unknown-source results",
+        unknownSources === 0 &&
+        unknownTargets === 0,
+      actual:
+        crossOrg + crossSpace + nonMentorTargets + unknownSources + unknownTargets,
+      expected: "0 cross-org, cross-Space, non-mentor, unknown-source, or unknown-target results",
+    },
+    eligiblePairs: {
+      passed: ineligiblePairs === 0,
+      actual: ineligiblePairs,
+      expected: "0 rows whose source/target eligibility flags violate the match-type direction",
     },
     duplicateMatches: {
       passed: duplicates === 0,
@@ -754,7 +1096,7 @@ export function evaluatePrelaunchQa(
     persistedMatchShape: {
       passed: invalidMatches === 0,
       actual: invalidMatches,
-      expected: `only ${thresholds.matchType} rows with finite scores and breakdown factors`,
+      expected: `only ${PRELAUNCH_QA_MATCH_TYPES.join(", ")} rows with finite scores and breakdown factors`,
     },
     deterministicTop3: {
       passed: determinismPassed,
@@ -793,8 +1135,9 @@ export function evaluatePrelaunchQa(
       mrr,
       ndcgAt5,
     },
-    leakage: { crossOrg, crossSpace, nonMentorTargets, unknownSources },
+    leakage: { crossOrg, crossSpace, nonMentorTargets, unknownSources, unknownTargets },
     duplicates,
+    matchTypes,
     determinism: {
       top3OrderMismatches,
       scoreMismatches,

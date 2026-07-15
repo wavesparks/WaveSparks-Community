@@ -4,6 +4,7 @@ import {
   evaluatePrelaunchQa,
   PRELAUNCH_QA_THRESHOLDS,
   type PrelaunchQaEvaluationInput,
+  type PrelaunchQaMatchType,
   type PrelaunchQaParticipant,
   type PrelaunchQaPersistedMatch,
   type PrelaunchQaPersistedRun,
@@ -24,6 +25,8 @@ function buildSeekers(): PrelaunchQaSeeker[] {
     intentId: `intent_seeker_${padded(index)}`,
     orgId,
     spaceId,
+    seekingMatchTypes: ["mentor_match"],
+    offeringMatchTypes: [],
     split: index < 35 ? "calibration" : "holdout",
   }));
 }
@@ -34,6 +37,8 @@ function buildMentors(): PrelaunchQaParticipant[] {
     intentId: `intent_mentor_${padded(index)}`,
     orgId,
     spaceId,
+    seekingMatchTypes: [],
+    offeringMatchTypes: ["mentor_match"],
   }));
 }
 
@@ -133,6 +138,35 @@ function buildInput(): PrelaunchQaEvaluationInput {
   };
 }
 
+function enableMutualMatches(
+  input: PrelaunchQaEvaluationInput,
+  matchType: Extract<PrelaunchQaMatchType, "cofounder_match" | "collaborator_match">,
+  sourceIndexes: readonly [number, number],
+) {
+  const participants = sourceIndexes.map((index) => input.seekers[index]);
+  for (const participant of participants) {
+    participant.seekingMatchTypes.push(matchType);
+    participant.offeringMatchTypes.push(matchType);
+  }
+  for (const run of input.runs) {
+    participants.forEach((source, index) => {
+      const target = participants[index === 0 ? 1 : 0];
+      run.matches.push({
+        id: `${run.id}_${matchType}_${source.profileId}`,
+        orgId,
+        spaceId,
+        sourceProfileId: source.profileId,
+        targetProfileId: target.profileId,
+        targetOrgId: orgId,
+        targetSpaceId: spaceId,
+        matchType,
+        score: 88 - index,
+        scoreBreakdown: { semantic: 70, intent: 18 - index },
+      });
+    });
+  }
+}
+
 function removeSeekerMatches(
   input: PrelaunchQaEvaluationInput,
   seekerIds: ReadonlySet<string>,
@@ -205,6 +239,29 @@ describe("prelaunch QA matching evaluation", () => {
       crossSpace: 0,
       nonMentorTargets: 0,
       unknownSources: 0,
+      unknownTargets: 0,
+    });
+    expect(result.matchTypes).toMatchObject({
+      mentor_match: {
+        applicable: true,
+        eligibleSources: 50,
+        coveredSources: 50,
+        coverage: 1,
+        nonEmpty: true,
+        passed: true,
+      },
+      cofounder_match: {
+        applicable: false,
+        eligibleSources: 0,
+        resultCount: 0,
+        passed: true,
+      },
+      collaborator_match: {
+        applicable: false,
+        eligibleSources: 0,
+        resultCount: 0,
+        passed: true,
+      },
     });
     expect(result.determinism.passed).toBe(true);
     expect(result.embeddingGate).toMatchObject({
@@ -215,6 +272,83 @@ describe("prelaunch QA matching evaluation", () => {
       passed: true,
     });
     expect(result.knownMismatches).toEqual([]);
+  });
+
+  it("evaluates eligible cofounder and collaborator results without changing mentor accuracy", () => {
+    const input = buildInput();
+    enableMutualMatches(input, "cofounder_match", [0, 1]);
+    enableMutualMatches(input, "collaborator_match", [2, 3]);
+
+    const result = evaluatePrelaunchQa(input);
+
+    expect(result.overallPassed).toBe(true);
+    expect(result.coverage.value).toBe(1);
+    expect(result.holdout).toMatchObject({ hitAt3: 1, mrr: 1, ndcgAt5: 1 });
+    expect(result.matchTypes.cofounder_match).toMatchObject({
+      direction: "mutual",
+      applicable: true,
+      eligibleSources: 2,
+      coveredSources: 2,
+      coverage: 1,
+      resultCount: 2,
+      ineligiblePairs: 0,
+      duplicates: 0,
+      passed: true,
+    });
+    expect(result.matchTypes.collaborator_match).toMatchObject({
+      direction: "mutual",
+      applicable: true,
+      eligibleSources: 2,
+      coveredSources: 2,
+      coverage: 1,
+      resultCount: 2,
+      passed: true,
+    });
+    expect(result.determinism.passed).toBe(true);
+  });
+
+  it("fails per-type gates for ineligible, duplicated, leaking, or nondeterministic rows", () => {
+    const input = buildInput();
+    enableMutualMatches(input, "cofounder_match", [0, 1]);
+    enableMutualMatches(input, "collaborator_match", [2, 3]);
+
+    input.seekers[4].seekingMatchTypes.push("cofounder_match");
+    const ineligible = {
+      ...input.runs[1].matches.find(
+        (match) => match.matchType === "cofounder_match",
+      )!,
+      id: "ineligible_cofounder",
+      sourceProfileId: input.seekers[4].profileId,
+      targetProfileId: input.seekers[0].profileId,
+    };
+    input.runs[1].matches.push(ineligible, { ...ineligible, id: "duplicate_cofounder" });
+
+    const leaking = input.runs[1].matches.find(
+      (match) => match.matchType === "collaborator_match",
+    )!;
+    leaking.targetOrgId = "org_elsewhere";
+
+    const nondeterministic = input.runs[1].matches.find(
+      (match) =>
+        match.matchType === "collaborator_match" &&
+        match.sourceProfileId === input.seekers[3].profileId,
+    )!;
+    nondeterministic.score = 12;
+
+    const result = evaluatePrelaunchQa(input);
+
+    expect(result.overallPassed).toBe(false);
+    expect(result.matchTypes.cofounder_match).toMatchObject({
+      ineligiblePairs: 2,
+      duplicates: 1,
+      passed: false,
+    });
+    expect(result.matchTypes.collaborator_match.leakage.crossOrg).toBe(1);
+    expect(result.matchTypes.collaborator_match.determinism.passed).toBe(false);
+    expect(result.gates.eligiblePairs.passed).toBe(false);
+    expect(result.gates.targetIsolation.passed).toBe(false);
+    expect(result.gates.duplicateMatches.passed).toBe(false);
+    expect(result.gates.deterministicTop3.passed).toBe(false);
   });
 
   it("treats the strict coverage and holdout metric thresholds as inclusive", () => {
@@ -251,6 +385,34 @@ describe("prelaunch QA matching evaluation", () => {
         (mismatch) => mismatch.code === "holdout_no_relevant_top3",
       ),
     ).toHaveLength(3);
+
+    const typeCoverageBoundary = buildInput();
+    for (const indexes of [
+      [0, 1],
+      [2, 3],
+      [4, 5],
+      [6, 7],
+      [8, 9],
+    ] as const) {
+      enableMutualMatches(typeCoverageBoundary, "cofounder_match", indexes);
+    }
+    for (const run of typeCoverageBoundary.runs) {
+      run.matches = run.matches.filter(
+        (match) =>
+          match.matchType !== "cofounder_match" ||
+          match.sourceProfileId !== typeCoverageBoundary.seekers[0].profileId,
+      );
+    }
+    const typeCoverageResult = evaluatePrelaunchQa(typeCoverageBoundary);
+
+    expect(typeCoverageResult.matchTypes.cofounder_match).toMatchObject({
+      eligibleSources: 10,
+      coveredSources: 9,
+      coverage: PRELAUNCH_QA_THRESHOLDS.minimumCoverage,
+      passed: true,
+    });
+    expect(typeCoverageResult.gates.matchTypeCoverage.passed).toBe(true);
+    expect(typeCoverageResult.overallPassed).toBe(true);
   });
 
   it("uses relevance > 0 for Hit/MRR and graded 2^rel-1 gain for NDCG", () => {
@@ -347,6 +509,7 @@ describe("prelaunch QA matching evaluation", () => {
       crossSpace: 1,
       nonMentorTargets: 1,
       unknownSources: 1,
+      unknownTargets: 0,
     });
     expect(result.duplicates).toBe(1);
     expect(result.determinism.top3OrderMismatches).toBeGreaterThanOrEqual(2);

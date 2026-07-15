@@ -45,7 +45,11 @@ import {
   spaces,
   users,
 } from "@/db/schema";
+import type { MatchFactorWeights } from "@/lib/domain";
 import { stableDefaultMatchTypeConfigs } from "@/lib/match-config";
+import { containsPrelaunchQaContactIdentifier } from "./prelaunch-qa-contact-safety";
+
+export { containsPrelaunchQaContactIdentifier };
 
 export const PRELAUNCH_QA = {
   namespace: "wavesparks-prelaunch-qa-v1",
@@ -60,13 +64,47 @@ export const PRELAUNCH_QA = {
   emailDomain: "prelaunch-qa.invalid",
   requiredDatabaseName: "wavespark_dev",
   deidentificationConfirmation: "DEIDENTIFIED_QA_ONLY",
+  publicDataConfirmation: "PUBLIC_AIRTABLE_PROFILE_DATA_QA_ONLY",
   cleanupConfirmation: "DELETE_PRELAUNCH_QA",
   latestMigrationTimestamp: 1_784_096_677_394,
 } as const;
 
+type PublicAirtableQaMatchSlug =
+  | "cofounder_match"
+  | "collaborator_match"
+  | "mentor_match";
+
+const publicAirtableQaMatchOverrides: Record<
+  PublicAirtableQaMatchSlug,
+  { minimumScore: number; weights?: MatchFactorWeights }
+> = {
+  cofounder_match: { minimumScore: 35 },
+  collaborator_match: { minimumScore: 35 },
+  mentor_match: {
+    minimumScore: 35,
+    weights: {
+      semantic: 50,
+      skills: 10,
+      venture: 10,
+      availability: 10,
+      work_style: 10,
+      location: 10,
+    },
+  },
+};
+
 const boundedText = z.string().trim().min(2).max(2_000);
 const boundedShortText = z.string().trim().min(1).max(300);
+const boundedOptionalText = z.string().trim().max(2_000);
+const boundedOptionalShortText = z.string().trim().max(300);
 const tagList = z.array(z.string().trim().min(1).max(100)).min(1).max(40);
+const optionalTagList = z.array(z.string().trim().min(1).max(100)).max(40);
+const matchTypeSlugSchema = z.enum([
+  "cofounder_match",
+  "mentor_match",
+  "collaborator_match",
+]);
+const matchTypeListSchema = z.array(matchTypeSlugSchema).max(3);
 
 const qaPersonBaseSchema = z
   .object({
@@ -105,7 +143,67 @@ const qaMentorSchema = qaPersonBaseSchema.extend({
   maxMentees: z.number().int().min(1).max(100),
 });
 
-const qaInputSchema = z
+const qaPublicProfileBaseSchema = qaPersonBaseSchema.extend({
+  stage: boundedOptionalShortText,
+  preferredName: z.string().trim().min(1).max(80),
+  displayNamePreference: z.enum(["full_name", "preferred_name", "first_name_last_initial"]),
+  shortBio: boundedShortText,
+  longBio: boundedText,
+  technicalExperienceLevel: boundedOptionalShortText,
+  technicalExperience: boundedOptionalText,
+  city: boundedOptionalShortText,
+  country: boundedOptionalShortText,
+  timezone: boundedOptionalShortText,
+  schoolOrCompany: boundedOptionalShortText,
+  currentStatus: boundedOptionalShortText,
+  startupName: boundedOptionalShortText,
+  startupOneLiner: boundedOptionalShortText,
+  startupDescription: boundedOptionalText,
+  businessModelTags: optionalTagList,
+  currentProgress: boundedOptionalText,
+  tractionSummary: boundedOptionalText,
+  regionFocus: boundedOptionalShortText,
+  lookingForTypes: optionalTagList,
+  seekingMatchTypes: matchTypeListSchema,
+  offeringMatchTypes: matchTypeListSchema,
+  desiredRoles: tagList,
+  canContribute: tagList,
+  yearsOfExperience: z.number().int().min(0).max(100),
+  priorProjects: boundedOptionalText,
+  notableWins: boundedOptionalText,
+  timeCommitment: boundedOptionalShortText,
+  availabilityStart: boundedOptionalShortText,
+  remotePreference: boundedOptionalShortText,
+  preferredGeographies: optionalTagList,
+  meetingFrequencyPreference: boundedOptionalShortText,
+  ambitionLevel: z.number().int().min(0).max(5),
+  riskTolerance: z.number().int().min(0).max(5),
+  speedPreference: boundedOptionalShortText,
+  decisionStyle: boundedOptionalShortText,
+  workStyle: boundedOptionalShortText,
+  communicationStyle: boundedOptionalShortText,
+  conflictStyle: boundedOptionalShortText,
+  commitmentHorizon: boundedOptionalShortText,
+  missionVsMarketOrientation: boundedOptionalShortText,
+  structureVsChaos: z.number().int().min(0).max(5),
+  mentorExpertiseTags: optionalTagList,
+  mentorFunctionalStrengths: optionalTagList,
+  mentorStageExperience: optionalTagList,
+  mentorOffers: optionalTagList,
+  mentorshipPreferences: boundedOptionalText,
+  mentorAvailability: boundedOptionalShortText,
+  maxMentees: z.number().int().min(1).max(100).nullable(),
+});
+
+const qaPublicParticipantSchema = qaPublicProfileBaseSchema.extend({
+  kind: z.literal("person"),
+});
+
+const qaPublicMentorSchema = qaPublicProfileBaseSchema.extend({
+  kind: z.literal("mentor"),
+});
+
+const qaInputV1Schema = z
   .object({
     version: z.literal(1),
     generatedAt: z.string().datetime({ offset: true }),
@@ -116,8 +214,27 @@ const qaInputSchema = z
   })
   .strict();
 
-export type PrelaunchQaPerson = z.infer<typeof qaParticipantSchema>;
-export type PrelaunchQaMentor = z.infer<typeof qaMentorSchema>;
+const qaInputV2Schema = z
+  .object({
+    version: z.literal(2),
+    dataPolicy: z.literal("public_airtable_profile_data"),
+    generatedAt: z.string().datetime({ offset: true }),
+    people: z
+      .array(z.discriminatedUnion("kind", [qaPublicParticipantSchema, qaPublicMentorSchema]))
+      .length(PRELAUNCH_QA.expectedParticipants + PRELAUNCH_QA.expectedMentors),
+    labels: z.record(z.string().max(80), z.string().max(200)).optional(),
+  })
+  .strict();
+
+const qaInputSchema = z.discriminatedUnion("version", [qaInputV1Schema, qaInputV2Schema]);
+
+type PrelaunchQaV1Person = z.infer<typeof qaParticipantSchema>;
+type PrelaunchQaV1Mentor = z.infer<typeof qaMentorSchema>;
+type PrelaunchQaV2Person = z.infer<typeof qaPublicParticipantSchema>;
+type PrelaunchQaV2Mentor = z.infer<typeof qaPublicMentorSchema>;
+
+export type PrelaunchQaPerson = PrelaunchQaV1Person | PrelaunchQaV2Person;
+export type PrelaunchQaMentor = PrelaunchQaV1Mentor | PrelaunchQaV2Mentor;
 export type PrelaunchQaInput = z.infer<typeof qaInputSchema>;
 
 type UserInsert = typeof users.$inferInsert;
@@ -250,46 +367,24 @@ function expectedIdentity(kind: "person" | "mentor", index: number) {
   };
 }
 
-function writtenTextValues(person: PrelaunchQaPerson | PrelaunchQaMentor) {
-  const values: string[] = [
-    person.headline,
-    person.bio,
-    person.problemInterest,
-    person.currentFocus,
-    person.stage,
-    ...person.industryTags,
-    ...person.problemSpaceTags,
-    ...person.skillTags,
-    ...person.topStrengths,
-    ...person.helpNeededTags,
-    person.idealMatchDescription,
-    person.currentGoal,
-    ...person.lookingFor,
-    ...person.offers,
-  ];
-  if (person.kind === "mentor") {
-    values.push(
-      ...person.mentorExpertiseTags,
-      ...person.mentorFunctionalStrengths,
-      ...person.mentorStageExperience,
-      ...person.mentorOffers,
-      person.mentorshipPreferences,
-      person.mentorAvailability,
-    );
-  }
-  return values;
+function isPublicProfilePerson(
+  person: PrelaunchQaPerson | PrelaunchQaMentor,
+): person is PrelaunchQaV2Person | PrelaunchQaV2Mentor {
+  return "seekingMatchTypes" in person;
 }
 
-function containsDirectIdentifier(value: string) {
-  return (
-    /(?:https?:\/\/|www\.)/i.test(value) ||
-    /\b[a-z0-9-]+\.(?:com|co|io|ai|org|net|sg)\b/i.test(value) ||
-    /\b[^\s@]+@[^\s@]+\.[^\s@]+\b/i.test(value) ||
-    /(?:^|\s)@[a-z0-9_]+\b/i.test(value) ||
-    /(?:\+?\d[\s().-]*){7,}/.test(value) ||
-    /\b(?:linkedin|github|wechat|whatsapp)\b/i.test(value) ||
-    /\b(?:pte\.?\s*ltd\.?|incorporated|llc|gmbh|plc|sdn\.?\s*bhd\.?)\b/i.test(value)
-  );
+function writtenTextValues(person: PrelaunchQaPerson | PrelaunchQaMentor) {
+  return Object.entries(person).flatMap(([key, value]) => {
+    if (key === "email" || key === "sourceId" || key === "kind") return [];
+    if (typeof value === "string") return [value];
+    return Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  });
+}
+
+function containsCompanyLegalIdentifier(value: string) {
+  return /\b(?:pte\.?\s*ltd\.?|incorporated|llc|gmbh|plc|sdn\.?\s*bhd\.?)\b/i.test(value);
 }
 
 function inputValidationMessages(input: PrelaunchQaInput) {
@@ -306,11 +401,15 @@ function inputValidationMessages(input: PrelaunchQaInput) {
 
   const allSourceIds = input.people.map((person) => person.sourceId);
   const allEmails = input.people.map((person) => person.email.toLowerCase());
+  const allFullNames = input.people.map((person) => person.fullName.toLocaleLowerCase());
   if (new Set(allSourceIds).size !== allSourceIds.length) {
     messages.push("sourceId values must be unique.");
   }
   if (new Set(allEmails).size !== allEmails.length) {
     messages.push("email values must be unique.");
+  }
+  if (new Set(allFullNames).size !== allFullNames.length) {
+    messages.push("fullName values must be unique.");
   }
 
   for (const [kind, people, expectedCount] of [
@@ -322,10 +421,13 @@ function inputValidationMessages(input: PrelaunchQaInput) {
       const expected = expectedIdentity(kind, index);
       const person = actualBySourceId.get(expected.sourceId);
       if (!person) {
-        messages.push(`Missing de-identified record ${expected.sourceId}.`);
+        messages.push(`Missing QA record ${expected.sourceId}.`);
         continue;
       }
-      if (person.fullName !== expected.fullName || person.email.toLowerCase() !== expected.email) {
+      if (person.email.toLowerCase() !== expected.email) {
+        messages.push(`${expected.sourceId} must use its fixed .invalid email.`);
+      }
+      if (input.version === 1 && person.fullName !== expected.fullName) {
         messages.push(`${expected.sourceId} must use its fixed QA name and .invalid email.`);
       }
     }
@@ -335,10 +437,30 @@ function inputValidationMessages(input: PrelaunchQaInput) {
     if (!person.email.toLowerCase().endsWith(`@${PRELAUNCH_QA.emailDomain}`)) {
       messages.push(`${person.sourceId} must use the ${PRELAUNCH_QA.emailDomain} domain.`);
     }
-    if (writtenTextValues(person).some(containsDirectIdentifier)) {
+    const writtenValues = writtenTextValues(person);
+    if (writtenValues.some(containsPrelaunchQaContactIdentifier)) {
       messages.push(
-        `${person.sourceId} contains a URL, email, phone number, contact handle, or company legal identifier.`,
+        `${person.sourceId} contains a URL, email, phone number, or social account.`,
       );
+    }
+    if (input.version === 1 && writtenValues.some(containsCompanyLegalIdentifier)) {
+      messages.push(`${person.sourceId} contains a company legal identifier.`);
+    }
+    if (input.version === 2 && isPublicProfilePerson(person)) {
+      for (const key of ["seekingMatchTypes", "offeringMatchTypes"] as const) {
+        if (new Set(person[key]).size !== person[key].length) {
+          messages.push(`${person.sourceId} contains duplicate ${key} values.`);
+        }
+      }
+      for (const matchType of ["cofounder_match", "collaborator_match"] as const) {
+        const seeks = person.seekingMatchTypes.includes(matchType);
+        const offers = person.offeringMatchTypes.includes(matchType);
+        if (seeks !== offers) {
+          messages.push(
+            `${person.sourceId} must both seek and offer ${matchType} because it is mutual.`,
+          );
+        }
+      }
     }
   }
 
@@ -505,35 +627,54 @@ export function assertCleanupAuthorization(apply: boolean, confirmation?: string
 }
 
 function profileSeekingText(person: PrelaunchQaPerson | PrelaunchQaMentor) {
+  const desiredRoles = isPublicProfilePerson(person) ? person.desiredRoles : person.lookingFor;
+  const businessModels = isPublicProfilePerson(person) ? person.businessModelTags : [];
   return [
     `Current context: ${person.headline}. ${person.currentFocus}. ${person.problemInterest}`,
     `Ideal match: ${person.idealMatchDescription}`,
+    `Roles needed: ${desiredRoles.join(", ")}`,
     `Help needed: ${person.helpNeededTags.join(", ")}`,
     `Current goal: ${person.currentGoal}`,
     `Looking for: ${person.lookingFor.join(", ")}`,
-    `Venture: ${person.stage}; ${person.industryTags.join(", ")}; ${person.problemSpaceTags.join(", ")}`,
+    `Venture: ${person.stage}; ${person.industryTags.join(", ")}; ${person.problemSpaceTags.join(", ")}; ${businessModels.join(", ")}`,
   ].join("\n");
 }
 
 function profileOfferingText(person: PrelaunchQaPerson | PrelaunchQaMentor) {
-  const mentorSignals =
-    person.kind === "mentor"
+  const mentorSignals = isPublicProfilePerson(person)
+    ? [
+        ...person.mentorExpertiseTags,
+        ...person.mentorFunctionalStrengths,
+        ...person.mentorOffers,
+      ]
+    : person.kind === "mentor"
       ? [
           ...person.mentorExpertiseTags,
           ...person.mentorFunctionalStrengths,
           ...person.mentorOffers,
         ]
       : [];
+  const canContribute = isPublicProfilePerson(person) ? person.canContribute : person.offers;
+  const experience = isPublicProfilePerson(person)
+    ? [person.technicalExperience, person.priorProjects, person.notableWins].filter(Boolean).join("; ")
+    : "";
   return [
     `Profile: ${person.headline}. ${person.bio}`,
     `Skills: ${person.skillTags.join(", ")}`,
     `Strengths: ${person.topStrengths.join(", ")}`,
-    `Can offer: ${[...person.offers, ...mentorSignals].join(", ")}`,
+    `Can offer: ${[...canContribute, ...mentorSignals].join(", ")}`,
+    experience ? `Experience: ${experience}` : "",
     `Venture context: ${person.stage}; ${person.industryTags.join(", ")}; ${person.problemSpaceTags.join(", ")}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-function buildSyntheticMembership(person: PrelaunchQaPerson | PrelaunchQaMentor, at: Date) {
+function buildSyntheticMembership(
+  person: PrelaunchQaPerson | PrelaunchQaMentor,
+  at: Date,
+  usesPublicProfileData: boolean,
+) {
   const userId = deterministicQaId("qa_usr", person.sourceId);
   const membershipId = deterministicQaId("qa_mem", person.sourceId);
   return {
@@ -557,7 +698,9 @@ function buildSyntheticMembership(person: PrelaunchQaPerson | PrelaunchQaMentor,
       archetypes: person.kind === "mentor" ? ["mentor"] : ["founder", "mentee"],
       programName: "Wavesparks Prelaunch QA",
       cohortNameOrYear: "Prelaunch QA",
-      approvalNote: "Synthetic, de-identified prelaunch QA record.",
+      approvalNote: usesPublicProfileData
+        ? "Protected QA profile built from public Airtable profile data; contact details and links excluded."
+        : "Synthetic, de-identified prelaunch QA record.",
       approvedAt: at,
       createdAt: at,
       updatedAt: at,
@@ -571,73 +714,92 @@ function buildProfile(
   at: Date,
 ) {
   const isMentor = person.kind === "mentor";
-  const mentorSignals = isMentor
+  const publicProfile = isPublicProfilePerson(person) ? person : undefined;
+  const mentorSignals = !publicProfile && isMentor
     ? [...person.mentorExpertiseTags, ...person.mentorFunctionalStrengths, ...person.mentorOffers]
     : [];
+  const seekingMatchTypes = publicProfile
+    ? publicProfile.seekingMatchTypes
+    : isMentor
+      ? []
+      : ["mentor_match"];
+  const offeringMatchTypes = publicProfile
+    ? publicProfile.offeringMatchTypes
+    : isMentor
+      ? ["mentor_match"]
+      : [];
   return {
     id: deterministicQaId("qa_pro", person.sourceId),
     membershipId,
     fullName: person.fullName,
-    preferredName: person.fullName,
-    displayNamePreference: "full_name",
+    preferredName: publicProfile?.preferredName ?? person.fullName,
+    displayNamePreference: publicProfile?.displayNamePreference ?? "full_name",
     profilePhoto: "",
     headline: person.headline,
-    shortBio: person.bio.slice(0, 280),
-    longBio: person.bio,
+    shortBio: publicProfile?.shortBio ?? person.bio.slice(0, 280),
+    longBio: publicProfile?.longBio ?? person.bio,
     bio: person.bio,
     problemInterest: person.problemInterest,
     currentFocus: person.currentFocus,
-    technicalExperienceLevel: "not_sure",
-    technicalExperience: person.topStrengths.join(", "),
-    city: "Singapore",
-    country: "SG",
-    timezone: "Asia/Singapore",
-    schoolOrCompany: "",
-    currentStatus: isMentor ? "mentor" : "founder",
-    startupName: "",
-    startupOneLiner: person.currentFocus,
-    startupDescription: person.problemInterest,
+    technicalExperienceLevel: publicProfile?.technicalExperienceLevel ?? "not_sure",
+    technicalExperience: publicProfile?.technicalExperience ?? person.topStrengths.join(", "),
+    city: publicProfile?.city ?? "Singapore",
+    country: publicProfile?.country ?? "SG",
+    timezone: publicProfile?.timezone ?? "Asia/Singapore",
+    schoolOrCompany: publicProfile?.schoolOrCompany ?? "",
+    currentStatus: publicProfile?.currentStatus ?? (isMentor ? "mentor" : "founder"),
+    startupName: publicProfile?.startupName ?? "",
+    startupOneLiner: publicProfile?.startupOneLiner ?? person.currentFocus,
+    startupDescription: publicProfile?.startupDescription ?? person.problemInterest,
     stage: person.stage,
     industryTags: person.industryTags,
     problemSpaceTags: person.problemSpaceTags,
-    businessModelTags: [],
-    currentProgress: person.currentFocus,
-    tractionSummary: "",
-    regionFocus: "Singapore",
-    lookingForTypes: isMentor ? [] : ["mentor"],
-    seekingMatchTypes: isMentor ? [] : ["mentor_match"],
-    offeringMatchTypes: isMentor ? ["mentor_match"] : [],
-    desiredRoles: person.lookingFor,
+    businessModelTags: publicProfile?.businessModelTags ?? [],
+    currentProgress: publicProfile?.currentProgress ?? person.currentFocus,
+    tractionSummary: publicProfile?.tractionSummary ?? "",
+    regionFocus: publicProfile?.regionFocus ?? "Singapore",
+    lookingForTypes: publicProfile?.lookingForTypes ?? (isMentor ? [] : ["mentor"]),
+    seekingMatchTypes,
+    offeringMatchTypes,
+    desiredRoles: publicProfile?.desiredRoles ?? person.lookingFor,
     helpNeededTags: person.helpNeededTags,
     idealMatchDescription: person.idealMatchDescription,
     skillTags: person.skillTags,
-    yearsOfExperience: isMentor ? 10 : 3,
+    yearsOfExperience: publicProfile?.yearsOfExperience ?? (isMentor ? 10 : 3),
     topStrengths: person.topStrengths,
-    canContribute: [...new Set([...person.offers, ...mentorSignals])],
-    priorProjects: person.currentFocus,
-    notableWins: "",
-    timeCommitment: "part time serious",
-    availabilityStart: "now",
-    remotePreference: "remote",
-    preferredGeographies: ["Singapore", "remote"],
-    meetingFrequencyPreference: "weekly",
-    ambitionLevel: 3,
-    riskTolerance: 3,
-    speedPreference: "balanced",
-    decisionStyle: "evidence informed",
-    workStyle: "collaborative",
-    communicationStyle: "direct",
-    conflictStyle: "constructive",
-    commitmentHorizon: "long term",
-    missionVsMarketOrientation: "balanced",
-    structureVsChaos: 3,
-    mentorExpertiseTags: isMentor ? person.mentorExpertiseTags : [],
-    mentorStageExperience: isMentor ? person.mentorStageExperience : [],
-    mentorFunctionalStrengths: isMentor ? person.mentorFunctionalStrengths : [],
-    mentorAvailability: isMentor ? person.mentorAvailability : "",
-    mentorOffers: isMentor ? person.mentorOffers : [],
-    maxMentees: isMentor ? person.maxMentees : null,
-    mentorshipPreferences: isMentor ? person.mentorshipPreferences : "",
+    canContribute: publicProfile?.canContribute ?? [
+      ...new Set([...person.offers, ...mentorSignals]),
+    ],
+    priorProjects: publicProfile?.priorProjects ?? person.currentFocus,
+    notableWins: publicProfile?.notableWins ?? "",
+    timeCommitment: publicProfile?.timeCommitment ?? "part time serious",
+    availabilityStart: publicProfile?.availabilityStart ?? "now",
+    remotePreference: publicProfile?.remotePreference ?? "remote",
+    preferredGeographies: publicProfile?.preferredGeographies ?? ["Singapore", "remote"],
+    meetingFrequencyPreference: publicProfile?.meetingFrequencyPreference ?? "weekly",
+    ambitionLevel: publicProfile?.ambitionLevel ?? 3,
+    riskTolerance: publicProfile?.riskTolerance ?? 3,
+    speedPreference: publicProfile?.speedPreference ?? "balanced",
+    decisionStyle: publicProfile?.decisionStyle ?? "evidence informed",
+    workStyle: publicProfile?.workStyle ?? "collaborative",
+    communicationStyle: publicProfile?.communicationStyle ?? "direct",
+    conflictStyle: publicProfile?.conflictStyle ?? "constructive",
+    commitmentHorizon: publicProfile?.commitmentHorizon ?? "long term",
+    missionVsMarketOrientation: publicProfile?.missionVsMarketOrientation ?? "balanced",
+    structureVsChaos: publicProfile?.structureVsChaos ?? 3,
+    mentorExpertiseTags:
+      publicProfile?.mentorExpertiseTags ?? (isMentor ? person.mentorExpertiseTags : []),
+    mentorStageExperience:
+      publicProfile?.mentorStageExperience ?? (isMentor ? person.mentorStageExperience : []),
+    mentorFunctionalStrengths:
+      publicProfile?.mentorFunctionalStrengths ??
+      (isMentor ? person.mentorFunctionalStrengths : []),
+    mentorAvailability:
+      publicProfile?.mentorAvailability ?? (isMentor ? person.mentorAvailability : ""),
+    mentorOffers: publicProfile?.mentorOffers ?? (isMentor ? person.mentorOffers : []),
+    maxMentees: publicProfile?.maxMentees ?? (isMentor ? person.maxMentees : null),
+    mentorshipPreferences:
+      publicProfile?.mentorshipPreferences ?? (isMentor ? person.mentorshipPreferences : ""),
     publicContactEnabled: false,
     emailForIntro: person.email.toLowerCase(),
     whatsappNumber: "",
@@ -671,10 +833,13 @@ export function buildPrelaunchQaRows(
     throw new Error("No existing administrator account is available for QA org access.");
   }
   const at = new Date(input.generatedAt);
+  const usesPublicProfileData = input.version === 2;
   const sortedPeople = [...input.people].sort((left, right) =>
     left.sourceId.localeCompare(right.sourceId),
   );
-  const synthetic = sortedPeople.map((person) => buildSyntheticMembership(person, at));
+  const synthetic = sortedPeople.map((person) =>
+    buildSyntheticMembership(person, at, usesPublicProfileData),
+  );
   const adminMemberships = [...adminUsers]
     .sort((left, right) => left.id.localeCompare(right.id))
     .map(
@@ -708,9 +873,15 @@ export function buildPrelaunchQaRows(
       canvas: "#f8fafc",
       ink: "#0f172a",
     },
-    tagline: "Isolated prelaunch matching validation",
-    description: "Synthetic, de-identified records for prelaunch stability and matching QA.",
-    membershipRules: ["QA namespace only", "No invitations", "No real contact data"],
+    tagline: usesPublicProfileData
+      ? "Protected public-profile prelaunch validation"
+      : "Isolated prelaunch matching validation",
+    description: usesPublicProfileData
+      ? "Public Airtable profile data replicated for isolated prelaunch QA; contact details, links, and photos are excluded."
+      : "Synthetic, de-identified records for prelaunch stability and matching QA.",
+    membershipRules: usesPublicProfileData
+      ? ["QA namespace only", "No invitations", "Public profile data only", "No contact data or links"]
+      : ["QA namespace only", "No invitations", "No real contact data"],
     allowedDomains: [PRELAUNCH_QA.emailDomain],
     inviteSettings: "disabled",
     status: "active",
@@ -793,8 +964,13 @@ export function buildPrelaunchQaRows(
       }) satisfies SpaceIntentInsert,
   );
   const configs = stableDefaultMatchTypeConfigs(PRELAUNCH_QA.orgId, input.generatedAt).map(
-    (config) =>
-      ({
+    (config) => {
+      const override =
+        usesPublicProfileData && config.slug in publicAirtableQaMatchOverrides
+          ? publicAirtableQaMatchOverrides[config.slug as PublicAirtableQaMatchSlug]
+          : undefined;
+      const overrideWeights = override?.weights;
+      return {
         id: config.id,
         orgId: config.orgId,
         slug: config.slug,
@@ -803,13 +979,14 @@ export function buildPrelaunchQaRows(
         direction: config.direction,
         seekerLabel: config.seekerLabel,
         providerLabel: config.providerLabel,
-        weightsJson: config.weights,
-        minimumScore: config.minimumScore,
+        weightsJson: overrideWeights ?? config.weights,
+        minimumScore: override?.minimumScore ?? config.minimumScore,
         active: config.active,
-        version: config.version,
+        version: override ? 2 : config.version,
         createdAt: at,
         updatedAt: at,
-      }) satisfies MatchTypeConfigInsert,
+      } satisfies MatchTypeConfigInsert;
+    },
   );
 
   return {
@@ -1046,6 +1223,67 @@ function hasClerkMembershipState(membership: typeof memberships.$inferSelect) {
   );
 }
 
+function isPreservablePrelaunchQaAdmin(
+  membership: typeof memberships.$inferSelect,
+  syntheticUserIds: Set<string>,
+) {
+  return (
+    membership.orgId === PRELAUNCH_QA.orgId &&
+    !syntheticUserIds.has(membership.userId) &&
+    membership.role === "org_admin" &&
+    membership.accountStatus === "connected" &&
+    membership.status === "approved" &&
+    !hasClerkMembershipState(membership)
+  );
+}
+
+export function validatePrelaunchQaMembershipNamespace(
+  existingMemberships: Array<typeof memberships.$inferSelect>,
+  rows: PrelaunchQaRows,
+) {
+  const desiredMembershipByUser = new Map(
+    rows.memberships.map((membership) => [membership.userId, membership]),
+  );
+  const desiredMembershipById = new Map(
+    rows.memberships.map((membership) => [membership.id, membership]),
+  );
+  const syntheticUserIds = new Set(rows.syntheticUserIds);
+  let preservedAdminCount = 0;
+
+  for (const membership of existingMemberships) {
+    const expectedById = desiredMembershipById.get(membership.id);
+    if (
+      expectedById &&
+      (expectedById.orgId !== membership.orgId || expectedById.userId !== membership.userId)
+    ) {
+      throw new Error("A deterministic QA membership id collides with non-QA data.");
+    }
+    if (syntheticUserIds.has(membership.userId) && membership.orgId !== PRELAUNCH_QA.orgId) {
+      throw new Error("A QA synthetic user belongs to an organization outside the QA namespace.");
+    }
+    if (membership.orgId === PRELAUNCH_QA.orgId && hasClerkMembershipState(membership)) {
+      if (syntheticUserIds.has(membership.userId)) {
+        throw new Error(
+          "A QA synthetic membership has Clerk state; refusing database-only seed writes.",
+        );
+      }
+      throw new Error("A QA admin membership has Clerk state; refusing database-only seed writes.");
+    }
+    if (membership.orgId !== PRELAUNCH_QA.orgId) continue;
+
+    const expected = desiredMembershipByUser.get(membership.userId);
+    if (expected?.id === membership.id) continue;
+    if (isPreservablePrelaunchQaAdmin(membership, syntheticUserIds)) {
+      preservedAdminCount += 1;
+      continue;
+    }
+    throw new Error(
+      "The QA membership namespace contains an unexpected member; only existing connected and approved org admins may be preserved.",
+    );
+  }
+  return { preservedAdminCount };
+}
+
 export async function inspectPrelaunchQaNamespace(
   db: PrelaunchQaQueryExecutor,
   rows: PrelaunchQaRows,
@@ -1132,12 +1370,6 @@ export async function inspectPrelaunchQaNamespace(
     }
   }
 
-  const desiredMembershipByUser = new Map(
-    rows.memberships.map((membership) => [membership.userId, membership]),
-  );
-  const desiredMembershipById = new Map(
-    rows.memberships.map((membership) => [membership.id, membership]),
-  );
   const membershipUsers = [...new Set(rows.memberships.map((membership) => membership.userId))];
   const existingMemberships = await db
     .select()
@@ -1152,28 +1384,10 @@ export async function inspectPrelaunchQaNamespace(
         eq(memberships.orgId, PRELAUNCH_QA.orgId),
       ),
     );
-  const syntheticUserIds = new Set(rows.syntheticUserIds);
-  for (const membership of existingMemberships) {
-    const expectedById = desiredMembershipById.get(membership.id);
-    if (
-      expectedById &&
-      (expectedById.orgId !== membership.orgId || expectedById.userId !== membership.userId)
-    ) {
-      throw new Error("A deterministic QA membership id collides with non-QA data.");
-    }
-    if (syntheticUserIds.has(membership.userId) && membership.orgId !== PRELAUNCH_QA.orgId) {
-      throw new Error("A QA synthetic user belongs to an organization outside the QA namespace.");
-    }
-    if (membership.orgId === PRELAUNCH_QA.orgId && hasClerkMembershipState(membership)) {
-      throw new Error("A QA membership has Clerk state; refusing database-only seed writes.");
-    }
-    if (membership.orgId === PRELAUNCH_QA.orgId) {
-      const expected = desiredMembershipByUser.get(membership.userId);
-      if (!expected || expected.id !== membership.id) {
-        throw new Error("The QA membership namespace differs from the requested input; cleanup first.");
-      }
-    }
-  }
+  const { preservedAdminCount } = validatePrelaunchQaMembershipNamespace(
+    existingMemberships,
+    rows,
+  );
 
   const profileIds = rows.profiles.map((profile) => profile.id);
   const membershipIds = rows.profiles.map((profile) => profile.membershipId);
@@ -1281,7 +1495,7 @@ export async function inspectPrelaunchQaNamespace(
     existingOrganization: organizationRows.length === 1,
     existingSyntheticUsers: existingUsers.length,
     existingProfiles: existingProfiles.length,
-    adminUsers: rows.adminMembershipIds.length,
+    adminUsers: rows.adminMembershipIds.length + preservedAdminCount,
   };
 }
 
@@ -1406,6 +1620,10 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
   return db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PRELAUNCH_QA.namespace}))`);
     await inspectPrelaunchQaNamespace(tx, rows);
+    const desiredAdminMembershipIds = new Set(rows.adminMembershipIds);
+    const desiredAdminUserIds = rows.memberships
+      .filter((membership) => desiredAdminMembershipIds.has(membership.id))
+      .map((membership) => membership.userId);
 
     const [
       storedProfiles,
@@ -1430,7 +1648,15 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
       tx
         .select()
         .from(memberships)
-        .where(inArray(memberships.id, rows.memberships.map((membership) => membership.id))),
+        .where(
+          or(
+            inArray(memberships.id, rows.memberships.map((membership) => membership.id)),
+            and(
+              eq(memberships.orgId, PRELAUNCH_QA.orgId),
+              inArray(memberships.userId, desiredAdminUserIds),
+            ),
+          ),
+        ),
       tx
         .select()
         .from(spaces)
@@ -1450,6 +1676,24 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
     const storedConfigById = new Map(storedConfigs.map((config) => [config.id, config]));
     const storedMembershipById = new Map(
       storedMemberships.map((membership) => [membership.id, membership]),
+    );
+    const storedMembershipByUser = new Map(
+      storedMemberships
+        .filter((membership) => membership.orgId === PRELAUNCH_QA.orgId)
+        .map((membership) => [membership.userId, membership]),
+    );
+    const storedMembershipForDesired = (membership: MembershipInsert) =>
+      storedMembershipById.get(membership.id) ??
+      (desiredAdminMembershipIds.has(membership.id)
+        ? storedMembershipByUser.get(membership.userId)
+        : undefined);
+    const resolvedAdminMembershipId = new Map(
+      rows.memberships
+        .filter((membership) => desiredAdminMembershipIds.has(membership.id))
+        .map((membership) => [
+          membership.id,
+          storedMembershipByUser.get(membership.userId)?.id ?? membership.id,
+        ]),
     );
     const storedSpaceById = new Map(storedSpaces.map((space) => [space.id, space]));
     const storedSpaceMembershipById = new Map(
@@ -1489,7 +1733,7 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
     });
     const eligibilityInputsChanged =
       rows.memberships.some((membership) => {
-        const stored = storedMembershipById.get(membership.id);
+        const stored = storedMembershipForDesired(membership);
         return (
           !stored ||
           stableSerialize({
@@ -1548,20 +1792,6 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
       configsChanged ||
       eligibilityInputsChanged;
 
-    if (matchingInputsChanged) {
-      await tx.delete(matchFeedback).where(eq(matchFeedback.orgId, PRELAUNCH_QA.orgId));
-      await tx
-        .delete(introRequests)
-        .where(
-          and(
-            eq(introRequests.orgId, PRELAUNCH_QA.orgId),
-            eq(introRequests.sourceType, "match"),
-          ),
-        );
-      await tx.delete(matches).where(eq(matches.orgId, PRELAUNCH_QA.orgId));
-      await tx.delete(matchRuns).where(eq(matchRuns.orgId, PRELAUNCH_QA.orgId));
-    }
-
     await tx
       .insert(organizations)
       .values(rows.organization)
@@ -1580,6 +1810,12 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
         });
     }
     for (const membership of rows.memberships) {
+      const preservedAdmin = desiredAdminMembershipIds.has(membership.id)
+        ? storedMembershipByUser.get(membership.userId)
+        : undefined;
+      // Existing connected QA admins are access-control state, not seed data.
+      // Preserve the complete row even when it already uses our deterministic id.
+      if (preservedAdmin) continue;
       await tx
         .insert(memberships)
         .values(membership)
@@ -1589,12 +1825,21 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
         });
     }
     for (const space of rows.spaces) {
+      const resolvedCreatorMembershipId = space.createdByMembershipId
+        ? resolvedAdminMembershipId.get(space.createdByMembershipId) ?? space.createdByMembershipId
+        : undefined;
+      const spaceForWrite = {
+        ...space,
+        ...(resolvedCreatorMembershipId
+          ? { createdByMembershipId: resolvedCreatorMembershipId }
+          : {}),
+      } satisfies SpaceInsert;
       await tx
         .insert(spaces)
-        .values(space)
+        .values(spaceForWrite)
         .onConflictDoUpdate({
           target: spaces.id,
-          set: updateSetWithoutIdentityAndCreatedAt(space),
+          set: updateSetWithoutIdentityAndCreatedAt(spaceForWrite),
         });
     }
     for (const config of rows.matchTypeConfigs) {
@@ -1639,7 +1884,12 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
           ),
         });
     }
-    return { matchingOutputsReset: matchingInputsChanged };
+    return {
+      matchingInputsChanged,
+      // Kept for callers transitioning from v1. Matching outputs are now
+      // preserved until the store atomically replaces them after recompute.
+      matchingOutputsReset: false,
+    };
   });
 }
 

@@ -17,6 +17,14 @@ function createClient() {
   return postgres(env.databaseUrl, { max: 1 });
 }
 
+export function createDedicatedSqlClient() {
+  if (!env.databaseUrl) {
+    throw new Error("DATABASE_URL is not configured.");
+  }
+
+  return postgres(env.databaseUrl, { max: 1, prepare: false });
+}
+
 export function getSqlClient() {
   if (!_client) {
     _client = createClient();

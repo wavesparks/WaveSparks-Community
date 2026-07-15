@@ -48,6 +48,19 @@ describe("matching engine", () => {
     expect(result.offeringText).toContain("first-python-project-signal");
   });
 
+  it("includes mentor stage experience and mentorship preferences in offering embeddings", () => {
+    const profile = {
+      ...seedProfiles[0],
+      mentorStageExperience: ["mvp-stage-signal", "scaling-stage-signal"],
+      mentorshipPreferences: "structured-weekly-mentorship-signal",
+    };
+
+    const result = buildMatchingEmbeddingTexts(profile);
+
+    expect(result.offeringText).toContain("mvp-stage-signal, scaling-stage-signal");
+    expect(result.offeringText).toContain("structured-weekly-mentorship-signal");
+  });
+
   it("generates explainable matches while excluding non-approved members", () => {
     const matches = recomputeMatchesForProfiles(
       seedOrganization,
@@ -80,7 +93,7 @@ describe("matching engine", () => {
         "work_style",
         "location",
       ]);
-      expect(match.algorithmVersion).toBe("hybrid-v2");
+      expect(match.algorithmVersion).toBe("hybrid-v3");
     }
   });
 
@@ -111,6 +124,43 @@ describe("matching engine", () => {
     expect(Object.values(breakdown).reduce((sum, value) => sum + value, 0)).toBeLessThanOrEqual(
       100,
     );
+  });
+
+  it("scores mentor venture stage against provider experience without changing mutual types", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      stage: "mvp",
+      industryTags: [],
+      problemSpaceTags: [],
+      businessModelTags: [],
+    };
+    const target = {
+      ...seedProfiles.find((profile) => profile.id === "pro_rhea")!,
+      stage: "exploring",
+      industryTags: [],
+      problemSpaceTags: [],
+      businessModelTags: [],
+      mentorStageExperience: ["mvp"],
+    };
+    const ventureOnlyWeights = {
+      semantic: 0,
+      skills: 0,
+      venture: 100,
+      availability: 0,
+      work_style: 0,
+      location: 0,
+    };
+    const mentorConfig: MatchTypeConfig = {
+      ...seedMatchTypeConfigs.find((config) => config.slug === "mentor_match")!,
+      weights: ventureOnlyWeights,
+    };
+    const mutualConfig: MatchTypeConfig = {
+      ...seedMatchTypeConfigs.find((config) => config.slug === "cofounder_match")!,
+      weights: ventureOnlyWeights,
+    };
+
+    expect(computeMatchBreakdown(source, target, mentorConfig).venture).toBeCloseTo(25);
+    expect(computeMatchBreakdown(source, target, mutualConfig).venture).toBeCloseTo(10);
   });
 
   it("uses member-friendly language in match explanations", () => {

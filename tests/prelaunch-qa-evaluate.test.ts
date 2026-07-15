@@ -94,6 +94,8 @@ function rosterRows() {
     intent_org_id: orgId,
     intent_space_id: spaceId,
     intent_embedding_model: "text-embedding-3-large",
+    seeking_match_types: person.kind === "person" ? ["mentor_match"] : [],
+    offering_match_types: person.kind === "mentor" ? ["mentor_match"] : [],
   }));
 }
 
@@ -106,6 +108,8 @@ function snapshot(id: string): PrelaunchQaDatabaseSnapshot {
     intentId: `intent_${person.sourceId}`,
     orgId,
     spaceId,
+    seekingMatchTypes: person.kind === "person" ? ["mentor_match" as const] : [],
+    offeringMatchTypes: person.kind === "mentor" ? ["mentor_match" as const] : [],
   }));
   return {
     participants,
@@ -208,6 +212,10 @@ describe("prelaunch QA database evaluation adapter", () => {
     );
 
     expect(captured.participants).toHaveLength(60);
+    expect(captured.participants[0]).toMatchObject({
+      seekingMatchTypes: ["mentor_match"],
+      offeringMatchTypes: [],
+    });
     expect(captured.run).toMatchObject({ id: "run_latest", status: "completed" });
     expect(captured.run.embeddings).toHaveLength(120);
     expect(captured.run.matches[0]).toMatchObject({
@@ -223,6 +231,19 @@ describe("prelaunch QA database evaluation adapter", () => {
     const runQuery = (sqlClient.mock.calls[1][0] as TemplateStringsArray).join("?");
     expect(runQuery).toContain("WHERE id =");
     expect(runQuery).not.toContain("ORDER BY completed_at");
+    const rosterQuery = (sqlClient.mock.calls[0][0] as TemplateStringsArray).join("?");
+    expect(rosterQuery).toContain("p.seeking_match_types");
+    expect(rosterQuery).toContain("p.offering_match_types");
+  });
+
+  it("rejects unsupported database eligibility flags before evaluating matches", async () => {
+    const rows = rosterRows();
+    rows[0].seeking_match_types = ["custom_match"];
+    const sqlClient = vi.fn().mockResolvedValueOnce(rows);
+
+    await expect(
+      capturePrelaunchQaDatabaseSnapshot(sqlClient as never, qaInput(), "run_latest"),
+    ).rejects.toThrow(/unsupported seeking match types/);
   });
 
   it("assembles stable DB identities, the 35/15 split, labels, and two snapshots", () => {
@@ -238,10 +259,28 @@ describe("prelaunch QA database evaluation adapter", () => {
     expect(assembled.labels).toHaveLength(500);
     expect(assembled.runs.map((run) => run.id)).toEqual(["run_1", "run_2"]);
     expect(assembled.seekers.filter((seeker) => seeker.split === "calibration")).toHaveLength(35);
+    expect(assembled.seekers[0]).toMatchObject({
+      seekingMatchTypes: ["mentor_match"],
+      offeringMatchTypes: [],
+    });
+    expect(assembled.mentors[0]).toMatchObject({
+      seekingMatchTypes: [],
+      offeringMatchTypes: ["mentor_match"],
+    });
     expect(assembled.labels[0]).toMatchObject({
       seekerProfileId: "profile_qa-participant-01",
       mentorProfileId: "profile_qa-mentor-01",
       relevance: 2,
     });
+  });
+
+  it("rejects eligibility drift between the two persisted-run snapshots", () => {
+    const first = snapshot("run_1");
+    const second = snapshot("run_2");
+    second.participants[0].offeringMatchTypes = ["cofounder_match"];
+
+    expect(() =>
+      assemblePrelaunchQaEvaluationInput(qaInput(), labelsValue(), [first, second]),
+    ).toThrow(/matching eligibility changed/);
   });
 });

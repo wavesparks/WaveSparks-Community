@@ -9,8 +9,10 @@ import {
   type PrelaunchQaInput,
 } from "./prelaunch-qa-core";
 import {
+  PRELAUNCH_QA_MATCH_TYPES,
   PRELAUNCH_QA_THRESHOLDS,
   type PrelaunchQaEvaluationInput,
+  type PrelaunchQaMatchType,
   type PrelaunchQaParticipant,
   type PrelaunchQaPersistedMatch,
   type PrelaunchQaPersistedRun,
@@ -79,6 +81,8 @@ export interface PrelaunchQaSnapshotParticipant {
   intentId: string;
   orgId: string;
   spaceId: string;
+  seekingMatchTypes: PrelaunchQaMatchType[];
+  offeringMatchTypes: PrelaunchQaMatchType[];
 }
 
 export interface PrelaunchQaDatabaseSnapshot {
@@ -95,6 +99,8 @@ interface RosterRow {
   intent_org_id: string;
   intent_space_id: string;
   intent_embedding_model: string | null;
+  seeking_match_types: unknown;
+  offering_match_types: unknown;
 }
 
 interface RunRow {
@@ -221,6 +227,30 @@ function metadataRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function snapshotMatchTypes(
+  value: unknown,
+  profileId: string,
+  field: "seeking" | "offering",
+): PrelaunchQaMatchType[] {
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (candidate) =>
+        typeof candidate !== "string" ||
+        !PRELAUNCH_QA_MATCH_TYPES.includes(candidate as PrelaunchQaMatchType),
+    ) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new Error(
+      `QA database profile ${profileId} has malformed, duplicated, or unsupported ${field} match types.`,
+    );
+  }
+  return [...(value as PrelaunchQaMatchType[])].sort(
+    (left, right) =>
+      PRELAUNCH_QA_MATCH_TYPES.indexOf(left) - PRELAUNCH_QA_MATCH_TYPES.indexOf(right),
+  );
+}
+
 export async function capturePrelaunchQaDatabaseSnapshot(
   sqlClient: postgres.Sql,
   input: PrelaunchQaInput,
@@ -231,6 +261,8 @@ export async function capturePrelaunchQaDatabaseSnapshot(
       p.id AS profile_id,
       p.full_name,
       p.embedding_model AS profile_embedding_model,
+      p.seeking_match_types,
+      p.offering_match_types,
       m.org_id AS membership_org_id,
       si.id AS intent_id,
       si.org_id AS intent_org_id,
@@ -270,6 +302,16 @@ export async function capturePrelaunchQaDatabaseSnapshot(
       intentId: row.intent_id,
       orgId: row.membership_org_id,
       spaceId: row.intent_space_id,
+      seekingMatchTypes: snapshotMatchTypes(
+        row.seeking_match_types,
+        row.profile_id,
+        "seeking",
+      ),
+      offeringMatchTypes: snapshotMatchTypes(
+        row.offering_match_types,
+        row.profile_id,
+        "offering",
+      ),
     } satisfies PrelaunchQaSnapshotParticipant;
   });
 
@@ -403,9 +445,11 @@ export function assemblePrelaunchQaEvaluationInput(
       first.profileId !== latest.profileId ||
       first.intentId !== latest.intentId ||
       first.fullName !== latest.fullName ||
-      first.kind !== latest.kind
+      first.kind !== latest.kind ||
+      first.seekingMatchTypes.join("\u0000") !== latest.seekingMatchTypes.join("\u0000") ||
+      first.offeringMatchTypes.join("\u0000") !== latest.offeringMatchTypes.join("\u0000")
     ) {
-      throw new Error("Profile or intent identity changed between QA snapshots.");
+      throw new Error("Profile, intent, or matching eligibility changed between QA snapshots.");
     }
   }
 
@@ -420,6 +464,8 @@ export function assemblePrelaunchQaEvaluationInput(
       intentId: captured.intentId,
       orgId: captured.orgId,
       spaceId: captured.spaceId,
+      seekingMatchTypes: captured.seekingMatchTypes,
+      offeringMatchTypes: captured.offeringMatchTypes,
     };
     if (person.kind === "person") {
       seekers.push({ ...participant, split: labels.split[person.sourceId] });

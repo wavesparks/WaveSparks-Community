@@ -66,20 +66,30 @@ test("existing test admin can inspect the isolated 50+10 QA Event", async ({ pag
 
   await page.goto("/org/prelaunch-qa/admin/profiles");
   await expect(page.getByRole("heading", { name: "Member profiles" })).toBeVisible();
-  await expect(page.locator("h3", { hasText: /^QA (Participant|Mentor) \d{2}$/ })).toHaveCount(60);
-  await expect(page.getByRole("heading", { name: "QA Participant 01" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "QA Mentor 10" })).toBeVisible();
+  await expect(page.locator("main h3")).toHaveCount(60);
+  await expect(page.locator("main")).not.toContainText("QA Participant");
+  await expect(page.locator("main")).not.toContainText("QA Mentor");
+  const profileInspectors = page.getByText("View complete profile", { exact: true });
+  await expect(profileInspectors).toHaveCount(60);
+  await profileInspectors.first().click();
+  await expect(page.getByRole("heading", { name: "Background and current focus" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Matching intent and contribution" })).toBeVisible();
 
-  await page.goto("/org/prelaunch-qa/admin/matches?match_type=mentor_match");
-  await expect(
-    page.getByRole("heading", { name: "Review match suggestions" }),
-  ).toBeVisible();
-  const matchCards = page.locator("main h3", {
-    hasText: /^QA (?:Participant|Mentor) \d{2} and QA Mentor \d{2}$/,
-  });
-  await expect(matchCards).toHaveCount(20);
-  await expect(page.getByText("Airtable 50+10 Stability Test").first()).toBeVisible();
-  await expect(page.getByText(/because|fit|align|experience|guidance/i).first()).toBeVisible();
+  for (const matchType of [
+    "mentor_match",
+    "cofounder_match",
+    "collaborator_match",
+  ]) {
+    await page.goto(`/org/prelaunch-qa/admin/matches?match_type=${matchType}`);
+    await expect(
+      page.getByRole("heading", { name: "Review match suggestions" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Airtable 50+10 Stability Test", { exact: true }),
+    ).toHaveCount(20);
+    await expect(page.locator("main")).not.toContainText("QA Participant");
+    await expect(page.locator("main")).not.toContainText("No matches found");
+  }
 });
 
 test("admin pages sustain 10 concurrent authenticated reads across 20 rounds", async ({

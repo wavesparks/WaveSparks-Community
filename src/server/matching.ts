@@ -16,7 +16,7 @@ import { stableDefaultMatchTypeConfigs } from "@/lib/match-config";
 import { canonicalLegacyBio, distinctLegacyProfileText } from "@/lib/profile-bio";
 import { buildLocalEmbedding } from "@/server/embeddings";
 
-export const MATCHING_ALGORITHM_VERSION = "hybrid-v2";
+export const MATCHING_ALGORITHM_VERSION = "hybrid-v3";
 export const SPACE_INTENT_EMBEDDING_WEIGHT = 0.2;
 
 const memberMatchReasonLabels = {
@@ -194,7 +194,7 @@ export function buildMatchingEmbeddingTexts(
     `Skills: ${profile.skillTags.join(", ")}`,
     `Strengths: ${profile.topStrengths.join(", ")}; ${profile.canContribute.join(", ")}`,
     `Experience: ${profile.technicalExperience}; ${profile.notableWins}`,
-    `Mentoring: ${profile.mentorExpertiseTags.join(", ")}; ${profile.mentorFunctionalStrengths.join(", ")}; ${profile.mentorOffers.join(", ")}`,
+    `Mentoring: ${profile.mentorExpertiseTags.join(", ")}; ${profile.mentorFunctionalStrengths.join(", ")}; ${profile.mentorOffers.join(", ")}; ${profile.mentorStageExperience.join(", ")}; ${profile.mentorshipPreferences}`,
     `Venture context: ${profile.stage}; ${profile.industryTags.join(", ")}; ${profile.problemSpaceTags.join(", ")}`,
   ]
     .filter(Boolean)
@@ -287,6 +287,20 @@ function pairScore(forward: number, reverse: number, config: MatchTypeConfig) {
   return (2 * forward * reverse) / (forward + reverse);
 }
 
+function forwardVentureStageScore(
+  seeker: Profile,
+  provider: Profile,
+  config: MatchTypeConfig,
+) {
+  if (config.slug !== "mentor_match") {
+    return stageScore(seeker.stage, provider.stage);
+  }
+  return Math.max(
+    0,
+    ...provider.mentorStageExperience.map((stage) => stageScore(seeker.stage, stage)),
+  );
+}
+
 function factorScores(source: Profile, target: Profile, config: MatchTypeConfig) {
   const forwardSemantic = Math.max(
     normalizedSemanticScore(source.seekingEmbedding, target.offeringEmbedding),
@@ -306,7 +320,7 @@ function factorScores(source: Profile, target: Profile, config: MatchTypeConfig)
       overlapScore(source.industryTags, target.industryTags),
       overlapScore(source.problemSpaceTags, target.problemSpaceTags),
       overlapScore(source.businessModelTags, target.businessModelTags),
-      stageScore(source.stage, target.stage),
+      forwardVentureStageScore(source, target, config),
     ]),
     average([
       overlapScore(target.industryTags, source.industryTags),

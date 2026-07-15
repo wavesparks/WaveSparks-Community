@@ -16,6 +16,7 @@ import type {
 } from "@/lib/domain";
 import {
   buildSpaceIntentEmbeddingTexts,
+  MATCHING_ALGORITHM_VERSION,
   recomputeMatchesForSpaceMembers,
   spaceAllowsMatching,
   type SpaceMatchingMember,
@@ -448,5 +449,20 @@ describe("Space-scoped matching", () => {
     await expect(recomputeMatchesForSpace(first.id)).resolves.toEqual([]);
     expect(getStore().matches.some((match) => match.spaceId === first.id)).toBe(false);
     expect(getStore().matches.some((match) => match.spaceId === second.id)).toBe(true);
+  });
+
+  it("records the current algorithm version for an active Space with no matches", async () => {
+    const store = getStore();
+    const empty = eventSpace("space_event_store_empty");
+    store.spaces.push(empty);
+
+    await expect(recomputeMatchesForSpace(empty.id)).resolves.toEqual([]);
+    expect(store.matchRuns.find((run) => run.spaceId === empty.id)).toMatchObject({
+      status: "completed",
+      metadata: {
+        algorithmVersion: MATCHING_ALGORITHM_VERSION,
+        matches: 0,
+      },
+    });
   });
 });

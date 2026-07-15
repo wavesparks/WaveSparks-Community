@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 
-import postgres from "postgres";
+import type postgres from "postgres";
 
 import { readScriptEnv } from "./load-script-env";
 import {
@@ -33,7 +33,12 @@ import {
 } from "./prelaunch-qa-evaluate";
 import { evaluatePrelaunchQa as evaluatePersistedPrelaunchQa } from "../src/lib/prelaunch-qa-evaluation";
 
-export type PrelaunchQaCommand = "dry-run" | "seed" | "evaluate" | "cleanup";
+export type PrelaunchQaCommand =
+  | "dry-run"
+  | "seed"
+  | "refresh"
+  | "evaluate"
+  | "cleanup";
 
 export interface PrelaunchQaCliOptions {
   command: PrelaunchQaCommand;
@@ -44,13 +49,15 @@ export interface PrelaunchQaCliOptions {
   apply: boolean;
   confirmation?: string;
   deidentificationConfirmation?: string;
+  publicDataConfirmation?: string;
 }
 
 const usage = [
   "Usage:",
   "  pnpm exec tsx scripts/prelaunch-qa.ts dry-run --environment=development --input=/tmp/prelaunch-qa.json --admin-user-id=<local-user-id>",
   `  pnpm exec tsx scripts/prelaunch-qa.ts seed --environment=development --input=/tmp/prelaunch-qa.json --admin-user-id=<local-user-id> --apply --confirm-deidentified=${PRELAUNCH_QA.deidentificationConfirmation}`,
-  `  pnpm exec tsx scripts/prelaunch-qa.ts evaluate --environment=development --input=/tmp/prelaunch-qa.json --labels=/tmp/prelaunch-labels.json --admin-user-id=<local-user-id> --apply --confirm-deidentified=${PRELAUNCH_QA.deidentificationConfirmation}`,
+  `  pnpm exec tsx scripts/prelaunch-qa.ts refresh --environment=development --input=/tmp/prelaunch-qa-v2.json --admin-user-id=<local-user-id> --apply --confirm-public-airtable=${PRELAUNCH_QA.publicDataConfirmation}`,
+  `  pnpm exec tsx scripts/prelaunch-qa.ts evaluate --environment=development --input=/tmp/prelaunch-qa.json --labels=/tmp/prelaunch-labels.json --admin-user-id=<local-user-id> --apply (--confirm-deidentified=${PRELAUNCH_QA.deidentificationConfirmation} | --confirm-public-airtable=${PRELAUNCH_QA.publicDataConfirmation})`,
   `  pnpm exec tsx scripts/prelaunch-qa.ts cleanup --environment=development --apply --confirm=${PRELAUNCH_QA.cleanupConfirmation}`,
 ].join("\n");
 
@@ -69,10 +76,11 @@ export function parsePrelaunchQaCli(argv: string[]): PrelaunchQaCliOptions {
   if (
     rawCommand !== "dry-run" &&
     rawCommand !== "seed" &&
+    rawCommand !== "refresh" &&
     rawCommand !== "evaluate" &&
     rawCommand !== "cleanup"
   ) {
-    throw new Error(`Choose dry-run, seed, evaluate, or cleanup.\n${usage}`);
+    throw new Error(`Choose dry-run, seed, refresh, evaluate, or cleanup.\n${usage}`);
   }
 
   const valuedOptions = new Set([
@@ -82,6 +90,7 @@ export function parsePrelaunchQaCli(argv: string[]): PrelaunchQaCliOptions {
     "--admin-user-id",
     "--confirm",
     "--confirm-deidentified",
+    "--confirm-public-airtable",
   ]);
   const flags = new Set(["--apply"]);
   for (let index = 0; index < args.length; index += 1) {
@@ -109,13 +118,14 @@ export function parsePrelaunchQaCli(argv: string[]): PrelaunchQaCliOptions {
   const apply = args.includes("--apply");
   const confirmation = optionValue(args, "--confirm");
   const deidentificationConfirmation = optionValue(args, "--confirm-deidentified");
+  const publicDataConfirmation = optionValue(args, "--confirm-public-airtable");
 
   if (rawCommand === "dry-run") {
     if (!inputPath) throw new Error("dry-run requires --input=/tmp/<file>.json.");
     if (!adminUserId) throw new Error("dry-run requires --admin-user-id=<local-user-id>.");
     if (labelsPath) throw new Error("dry-run does not accept --labels.");
-    if (deidentificationConfirmation) {
-      throw new Error("dry-run does not accept --confirm-deidentified.");
+    if (deidentificationConfirmation || publicDataConfirmation) {
+      throw new Error("dry-run does not accept data-policy confirmation flags.");
     }
     if (apply || confirmation) throw new Error("dry-run does not accept write authorization flags.");
   }
@@ -124,9 +134,27 @@ export function parsePrelaunchQaCli(argv: string[]): PrelaunchQaCliOptions {
     if (labelsPath) throw new Error("seed does not accept --labels.");
     if (!adminUserId) throw new Error("seed requires --admin-user-id=<local-user-id>.");
     if (confirmation) throw new Error("seed does not accept --confirm.");
+    if (publicDataConfirmation) {
+      throw new Error("seed does not accept --confirm-public-airtable; use refresh for v2 data.");
+    }
     if (deidentificationConfirmation !== PRELAUNCH_QA.deidentificationConfirmation) {
       throw new Error(
         `seed requires --confirm-deidentified=${PRELAUNCH_QA.deidentificationConfirmation}.`,
+      );
+    }
+    assertSeedAuthorization(apply);
+  }
+  if (rawCommand === "refresh") {
+    if (!inputPath) throw new Error("refresh requires --input=/tmp/<file>.json.");
+    if (labelsPath) throw new Error("refresh does not accept --labels.");
+    if (!adminUserId) throw new Error("refresh requires --admin-user-id=<local-user-id>.");
+    if (confirmation) throw new Error("refresh does not accept --confirm.");
+    if (deidentificationConfirmation) {
+      throw new Error("refresh does not accept --confirm-deidentified.");
+    }
+    if (publicDataConfirmation !== PRELAUNCH_QA.publicDataConfirmation) {
+      throw new Error(
+        `refresh requires --confirm-public-airtable=${PRELAUNCH_QA.publicDataConfirmation}.`,
       );
     }
     assertSeedAuthorization(apply);
@@ -136,9 +164,13 @@ export function parsePrelaunchQaCli(argv: string[]): PrelaunchQaCliOptions {
     if (!labelsPath) throw new Error("evaluate requires --labels=/tmp/<file>.json.");
     if (!adminUserId) throw new Error("evaluate requires --admin-user-id=<local-user-id>.");
     if (confirmation) throw new Error("evaluate does not accept --confirm.");
-    if (deidentificationConfirmation !== PRELAUNCH_QA.deidentificationConfirmation) {
+    const confirmedDeidentified =
+      deidentificationConfirmation === PRELAUNCH_QA.deidentificationConfirmation;
+    const confirmedPublicData =
+      publicDataConfirmation === PRELAUNCH_QA.publicDataConfirmation;
+    if (confirmedDeidentified === confirmedPublicData) {
       throw new Error(
-        `evaluate requires --confirm-deidentified=${PRELAUNCH_QA.deidentificationConfirmation}.`,
+        "evaluate requires exactly one matching data-policy confirmation flag.",
       );
     }
     assertSeedAuthorization(apply);
@@ -147,8 +179,8 @@ export function parsePrelaunchQaCli(argv: string[]): PrelaunchQaCliOptions {
     if (inputPath) throw new Error("cleanup does not accept an input file.");
     if (labelsPath) throw new Error("cleanup does not accept --labels.");
     if (adminUserId) throw new Error("cleanup does not accept --admin-user-id.");
-    if (deidentificationConfirmation) {
-      throw new Error("cleanup does not accept --confirm-deidentified.");
+    if (deidentificationConfirmation || publicDataConfirmation) {
+      throw new Error("cleanup does not accept data-policy confirmation flags.");
     }
     assertCleanupAuthorization(apply, confirmation);
   }
@@ -162,7 +194,30 @@ export function parsePrelaunchQaCli(argv: string[]): PrelaunchQaCliOptions {
     apply,
     confirmation,
     deidentificationConfirmation,
+    publicDataConfirmation,
   };
+}
+
+export function assertPrelaunchQaCommandMatchesInput(
+  options: PrelaunchQaCliOptions,
+  input: { version: 1 | 2 },
+) {
+  if (options.command === "seed" && input.version !== 1) {
+    throw new Error("seed only accepts version 1 de-identified input; use refresh for version 2.");
+  }
+  if (options.command === "refresh" && input.version !== 2) {
+    throw new Error("refresh only accepts version 2 public Airtable profile input.");
+  }
+  if (options.command === "evaluate") {
+    const correctConfirmation =
+      (input.version === 1 &&
+        options.deidentificationConfirmation === PRELAUNCH_QA.deidentificationConfirmation) ||
+      (input.version === 2 &&
+        options.publicDataConfirmation === PRELAUNCH_QA.publicDataConfirmation);
+    if (!correctConfirmation) {
+      throw new Error("The evaluation confirmation does not match the input data policy.");
+    }
+  }
 }
 
 function selectedValue(
@@ -202,8 +257,46 @@ function writePrivateJson(path: string, value: unknown) {
   }
 }
 
-function prelaunchQaInputFingerprint(input: unknown) {
-  return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJsonValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, stableJsonValue(entry)]),
+    );
+  }
+  return value;
+}
+
+export function prelaunchQaInputFingerprint(input: unknown) {
+  const semanticInput =
+    input && typeof input === "object" && !Array.isArray(input)
+      ? Object.fromEntries(
+          Object.entries(input)
+            .filter(([key]) => key !== "generatedAt" && key !== "labels")
+            .map(([key, value]) => [
+              key,
+              key === "people" && Array.isArray(value)
+                ? [...value].sort((left, right) => {
+                    const leftId =
+                      left && typeof left === "object" && "sourceId" in left
+                        ? String(left.sourceId)
+                        : "";
+                    const rightId =
+                      right && typeof right === "object" && "sourceId" in right
+                        ? String(right.sourceId)
+                        : "";
+                    return leftId.localeCompare(rightId);
+                  })
+                : value,
+            ]),
+        )
+      : input;
+  const serialized = JSON.stringify(stableJsonValue(semanticInput)) ?? "null";
+  return createHash("sha256").update(serialized).digest("hex");
 }
 
 function readColdRecomputeEvidence(expected: {
@@ -230,6 +323,7 @@ function readColdRecomputeEvidence(expected: {
     generatedAt?: unknown;
     target?: unknown;
     namespace?: unknown;
+    inputFingerprintVersion?: unknown;
     inputFingerprint?: unknown;
     orgId?: unknown;
     spaceId?: unknown;
@@ -245,6 +339,7 @@ function readColdRecomputeEvidence(expected: {
     generatedAtMs > now + 5 * 60 * 1_000 ||
     report.target !== expected.target ||
     report.namespace !== PRELAUNCH_QA.namespace ||
+    report.inputFingerprintVersion !== 2 ||
     report.inputFingerprint !== expected.inputFingerprint ||
     report.orgId !== PRELAUNCH_QA.orgId ||
     report.spaceId !== PRELAUNCH_QA.testSpaceId ||
@@ -319,13 +414,17 @@ async function main() {
   }
   loadApplicationEnvironment(developmentEnv.values);
 
-  const sqlClient = postgres(databaseUrl, { max: 1, prepare: false });
+  const { createDedicatedSqlClient } = await import("@/db/client");
+  const sqlClient = createDedicatedSqlClient();
   const db = createPrelaunchQaDatabase(sqlClient);
   try {
     const preflight = await runPrelaunchQaPreflight(sqlClient);
 
     if (options.command === "cleanup") {
-      const cleanup = await cleanupPrelaunchQa(db);
+      const { withSpaceRecomputeLock } = await import("@/server/space-recompute-lock");
+      const cleanup = await withSpaceRecomputeLock(PRELAUNCH_QA.testSpaceId, () =>
+        cleanupPrelaunchQa(db),
+      );
       console.info(
         JSON.stringify(
           {
@@ -342,6 +441,7 @@ async function main() {
     }
 
     const input = readPrelaunchQaInputFile(options.inputPath!);
+    assertPrelaunchQaCommandMatchesInput(options, input);
     const inputFingerprint = prelaunchQaInputFingerprint(input);
     const adminUsers = await discoverPrelaunchQaAdminUsers(db, options.adminUserId!);
     const rows = buildPrelaunchQaRows(input, adminUsers);
@@ -350,6 +450,9 @@ async function main() {
       command: options.command,
       target: targetFingerprint,
       namespace: PRELAUNCH_QA.namespace,
+      inputVersion: input.version,
+      dataPolicy:
+        input.version === 2 ? input.dataPolicy : "deidentified_qa_only",
       org: PRELAUNCH_QA.orgSlug,
       testSpace: PRELAUNCH_QA.testSpaceSlug,
       participants: input.people.filter((person) => person.kind === "person").length,
@@ -374,166 +477,178 @@ async function main() {
     }
 
     if (options.command === "evaluate") {
-      const labels = readPrelaunchQaLabelsFile(options.labelsPath!);
-      const cold = readColdRecomputeEvidence({
-        target: targetFingerprint,
-        inputFingerprint,
-      });
-      await assertColdRunEvidence(sqlClient, cold.runId);
-      const { recomputeMatchesForSpace } = await import("@/server/store");
-      const firstRecomputeStartedAt = Date.now();
-      const firstRecomputedMatches = await recomputeMatchesForSpace(PRELAUNCH_QA.testSpaceId);
-      const firstWarmDurationMs = Date.now() - firstRecomputeStartedAt;
-      const firstRunId = uniqueRecomputeRunId(firstRecomputedMatches);
-      const firstSnapshot = await capturePrelaunchQaDatabaseSnapshot(
-        sqlClient,
-        input,
-        firstRunId,
-      );
-      const secondRecomputeStartedAt = Date.now();
-      const secondRecomputedMatches = await recomputeMatchesForSpace(PRELAUNCH_QA.testSpaceId);
-      const secondWarmDurationMs = Date.now() - secondRecomputeStartedAt;
-      const secondRunId = uniqueRecomputeRunId(secondRecomputedMatches);
-      const secondSnapshot = await capturePrelaunchQaDatabaseSnapshot(
-        sqlClient,
-        input,
-        secondRunId,
-      );
-      const evaluationInput = assemblePrelaunchQaEvaluationInput(input, labels, [
-        firstSnapshot,
-        secondSnapshot,
-      ]);
-      const evaluation = evaluatePersistedPrelaunchQa(evaluationInput);
-      const warmDurationMs = Math.max(firstWarmDurationMs, secondWarmDurationMs);
-      const timing = {
-        coldDurationMs: cold.durationMs,
-        coldLimitMs: 180_000,
-        coldPassed: cold.durationMs <= 180_000,
-        warmDurationMs,
-        warmRunsMs: [firstWarmDurationMs, secondWarmDurationMs],
-        warmLimitMs: 30_000,
-        warmPassed: warmDurationMs <= 30_000,
-      };
-      const overallPassed =
-        evaluation.overallPassed && timing.coldPassed && timing.warmPassed;
-      const reportPath = "/tmp/wavesparks-prelaunch-report.json";
-      writePrivateJson(reportPath, {
-        version: 1,
-        generatedAt: new Date().toISOString(),
-        target: targetFingerprint,
-        namespace: PRELAUNCH_QA.namespace,
-        inputFingerprint,
-        preflight,
-        namespaceInspection: namespace,
-        runs: {
-          cold: cold.runId,
-          first: firstSnapshot.run.id,
-          second: secondSnapshot.run.id,
-          recomputedMatches: [firstRecomputedMatches.length, secondRecomputedMatches.length],
-        },
-        timing,
-        evaluation,
-        overallPassed,
-      });
-      console.info(
-        JSON.stringify(
-          {
-            ...summary,
-            writesApplied: true,
-            reportPath,
-            overallPassed,
-            timing,
-            evaluation: {
-              coverage: evaluation.coverage,
-              holdout: evaluation.holdout,
-              leakage: evaluation.leakage,
-              duplicates: evaluation.duplicates,
-              determinism: evaluation.determinism,
-              embeddingGate: evaluation.embeddingGate,
-              latestRunGate: evaluation.latestRunGate,
-              knownMismatchCount: evaluation.knownMismatches.length,
-            },
+      const { withSpaceRecomputeLock } = await import("@/server/space-recompute-lock");
+      await withSpaceRecomputeLock(PRELAUNCH_QA.testSpaceId, async () => {
+        const labels = readPrelaunchQaLabelsFile(options.labelsPath!);
+        const cold = readColdRecomputeEvidence({
+          target: targetFingerprint,
+          inputFingerprint,
+        });
+        await assertColdRunEvidence(sqlClient, cold.runId);
+        const { recomputeMatchesForSpace } = await import("@/server/store");
+        const firstRecomputeStartedAt = Date.now();
+        const firstRecomputedMatches = await recomputeMatchesForSpace(PRELAUNCH_QA.testSpaceId);
+        const firstWarmDurationMs = Date.now() - firstRecomputeStartedAt;
+        const firstRunId = uniqueRecomputeRunId(firstRecomputedMatches);
+        const firstSnapshot = await capturePrelaunchQaDatabaseSnapshot(
+          sqlClient,
+          input,
+          firstRunId,
+        );
+        const secondRecomputeStartedAt = Date.now();
+        const secondRecomputedMatches = await recomputeMatchesForSpace(PRELAUNCH_QA.testSpaceId);
+        const secondWarmDurationMs = Date.now() - secondRecomputeStartedAt;
+        const secondRunId = uniqueRecomputeRunId(secondRecomputedMatches);
+        const secondSnapshot = await capturePrelaunchQaDatabaseSnapshot(
+          sqlClient,
+          input,
+          secondRunId,
+        );
+        const evaluationInput = assemblePrelaunchQaEvaluationInput(input, labels, [
+          firstSnapshot,
+          secondSnapshot,
+        ]);
+        const evaluation = evaluatePersistedPrelaunchQa(evaluationInput);
+        const warmDurationMs = Math.max(firstWarmDurationMs, secondWarmDurationMs);
+        const timing = {
+          coldDurationMs: cold.durationMs,
+          coldLimitMs: 180_000,
+          coldPassed: cold.durationMs <= 180_000,
+          warmDurationMs,
+          warmRunsMs: [firstWarmDurationMs, secondWarmDurationMs],
+          warmLimitMs: 30_000,
+          warmPassed: warmDurationMs <= 30_000,
+        };
+        const overallPassed =
+          evaluation.overallPassed && timing.coldPassed && timing.warmPassed;
+        const reportPath = "/tmp/wavesparks-prelaunch-report.json";
+        writePrivateJson(reportPath, {
+          version: 1,
+          generatedAt: new Date().toISOString(),
+          target: targetFingerprint,
+          namespace: PRELAUNCH_QA.namespace,
+          inputFingerprintVersion: 2,
+          inputFingerprint,
+          preflight,
+          namespaceInspection: namespace,
+          runs: {
+            cold: cold.runId,
+            first: firstSnapshot.run.id,
+            second: secondSnapshot.run.id,
+            recomputedMatches: [firstRecomputedMatches.length, secondRecomputedMatches.length],
           },
-          null,
-          2,
-        ),
-      );
-      if (!overallPassed) {
-        throw new Error(`Prelaunch QA evaluation gates failed; inspect ${reportPath}.`);
-      }
+          timing,
+          evaluation,
+          overallPassed,
+        });
+        console.info(
+          JSON.stringify(
+            {
+              ...summary,
+              writesApplied: true,
+              reportPath,
+              overallPassed,
+              timing,
+              evaluation: {
+                coverage: evaluation.coverage,
+                holdout: evaluation.holdout,
+                leakage: evaluation.leakage,
+                duplicates: evaluation.duplicates,
+                determinism: evaluation.determinism,
+                embeddingGate: evaluation.embeddingGate,
+                latestRunGate: evaluation.latestRunGate,
+                knownMismatchCount: evaluation.knownMismatches.length,
+              },
+            },
+            null,
+            2,
+          ),
+        );
+        if (!overallPassed) {
+          throw new Error(`Prelaunch QA evaluation gates failed; inspect ${reportPath}.`);
+        }
+      });
       return;
     }
 
-    const seed = await seedPrelaunchQa(db, rows);
-    const recomputeStartedAt = Date.now();
-    try {
-      const { recomputeMatchesForSpace } = await import("@/server/store");
-      const recomputedMatches = await recomputeMatchesForSpace(PRELAUNCH_QA.testSpaceId);
-      const recomputeDurationMs = Date.now() - recomputeStartedAt;
-      const recomputeRunId = uniqueRecomputeRunId(recomputedMatches);
-      const [latestRun] = await sqlClient<
-        {
-          id: string;
-          status: string;
-          metadata_json: Record<string, unknown>;
-        }[]
-      >`
-        SELECT id, status, metadata_json
-        FROM match_runs
-        WHERE id = ${recomputeRunId}
-        LIMIT 1
-      `;
-      const recompute = {
-        durationMs: recomputeDurationMs,
-        withinColdLimit: recomputeDurationMs <= 180_000,
-        matches: recomputedMatches.length,
-        runId: latestRun?.id,
-        status: latestRun?.status,
-        metadata: latestRun?.metadata_json,
-      };
-      const seedReportPath = seed.matchingOutputsReset
-        ? "/tmp/wavesparks-prelaunch-seed-report.json"
-        : "/tmp/wavesparks-prelaunch-idempotency-report.json";
-      writePrivateJson(seedReportPath, {
-        generatedAt: new Date().toISOString(),
-        target: targetFingerprint,
-        namespace: PRELAUNCH_QA.namespace,
-        inputFingerprint,
-        orgId: PRELAUNCH_QA.orgId,
-        spaceId: PRELAUNCH_QA.testSpaceId,
-        seed,
-        recompute,
-      });
-      console.info(
-        JSON.stringify(
+    const { withSpaceRecomputeLock } = await import("@/server/space-recompute-lock");
+    await withSpaceRecomputeLock(PRELAUNCH_QA.testSpaceId, async () => {
+      const seed = await seedPrelaunchQa(db, rows);
+      const recomputeStartedAt = Date.now();
+      try {
+        const { recomputeMatchesForSpace } = await import("@/server/store");
+        const recomputedMatches = await recomputeMatchesForSpace(PRELAUNCH_QA.testSpaceId);
+        const recomputeDurationMs = Date.now() - recomputeStartedAt;
+        const recomputeRunId = uniqueRecomputeRunId(recomputedMatches);
+        const [latestRun] = await sqlClient<
           {
-            ...summary,
-            writesApplied: true,
-            seed,
-            recompute,
-            seedReportPath,
+            id: string;
+            status: string;
+            metadata_json: Record<string, unknown>;
+          }[]
+        >`
+          SELECT id, status, metadata_json
+          FROM match_runs
+          WHERE id = ${recomputeRunId}
+          LIMIT 1
+        `;
+        const recompute = {
+          durationMs: recomputeDurationMs,
+          withinColdLimit: recomputeDurationMs <= 180_000,
+          matches: recomputedMatches.length,
+          runId: latestRun?.id,
+          status: latestRun?.status,
+          metadata: latestRun?.metadata_json,
+        };
+        const embeddingsRefreshed =
+          Number(latestRun?.metadata_json.profileEmbeddingsRefreshed ?? 0) > 0 ||
+          Number(latestRun?.metadata_json.intentEmbeddingsRefreshed ?? 0) > 0;
+        const seedReportPath = seed.matchingInputsChanged || embeddingsRefreshed
+          ? "/tmp/wavesparks-prelaunch-seed-report.json"
+          : "/tmp/wavesparks-prelaunch-idempotency-report.json";
+        writePrivateJson(seedReportPath, {
+          generatedAt: new Date().toISOString(),
+          target: targetFingerprint,
+          namespace: PRELAUNCH_QA.namespace,
+          inputFingerprintVersion: 2,
+          inputFingerprint,
+          orgId: PRELAUNCH_QA.orgId,
+          spaceId: PRELAUNCH_QA.testSpaceId,
+          seed,
+          recompute,
+        });
+        console.info(
+          JSON.stringify(
+            {
+              ...summary,
+              writesApplied: true,
+              seed,
+              recompute,
+              seedReportPath,
+            },
+            null,
+            2,
+          ),
+        );
+      } catch (error) {
+        const failureReportPath = "/tmp/wavesparks-prelaunch-incomplete-report.json";
+        writePrivateJson(failureReportPath, {
+          generatedAt: new Date().toISOString(),
+          target: targetFingerprint,
+          namespace: PRELAUNCH_QA.namespace,
+          inputFingerprintVersion: 2,
+          inputFingerprint,
+          orgId: PRELAUNCH_QA.orgId,
+          spaceId: PRELAUNCH_QA.testSpaceId,
+          seed,
+          recompute: {
+            status: "failed",
+            durationMs: Date.now() - recomputeStartedAt,
           },
-          null,
-          2,
-        ),
-      );
-    } catch (error) {
-      const failureReportPath = "/tmp/wavesparks-prelaunch-incomplete-report.json";
-      writePrivateJson(failureReportPath, {
-        generatedAt: new Date().toISOString(),
-        target: targetFingerprint,
-        namespace: PRELAUNCH_QA.namespace,
-        inputFingerprint,
-        orgId: PRELAUNCH_QA.orgId,
-        spaceId: PRELAUNCH_QA.testSpaceId,
-        seed,
-        recompute: {
-          status: "failed",
-          durationMs: Date.now() - recomputeStartedAt,
-        },
-      });
-      throw error;
-    }
+        });
+        throw error;
+      }
+    });
   } finally {
     await sqlClient.end();
   }
