@@ -1,9 +1,20 @@
 import type { FullAdminProfile } from "@/lib/domain";
 
+function csvCell(value: string) {
+  const text = String(value);
+  const spreadsheetSafe = /^\s*[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${spreadsheetSafe.replaceAll('"', '""')}"`;
+}
+
 export function fullProfilesToCsv(profiles: FullAdminProfile[]) {
   const headers = [
     "Display Name",
     "Headline",
+    "Bio",
+    "Problem Or Topic Of Interest",
+    "Current Focus",
+    "Technical Experience Level",
+    "Technical Experience",
     "Affiliation",
     "Status",
     "Location",
@@ -17,6 +28,11 @@ export function fullProfilesToCsv(profiles: FullAdminProfile[]) {
   const rows = profiles.map((profile) => [
     profile.displayName,
     profile.headline,
+    profile.bio,
+    profile.problemInterest,
+    profile.currentFocus,
+    profile.technicalExperienceLevel,
+    profile.technicalExperience,
     profile.affiliationLabel,
     profile.status,
     profile.location,
@@ -27,11 +43,5 @@ export function fullProfilesToCsv(profiles: FullAdminProfile[]) {
     String(profile.profileCompletionPercent),
   ]);
 
-  return [headers, ...rows]
-    .map((row) =>
-      row
-        .map((value) => `"${String(value).replaceAll('"', '""')}"`)
-        .join(","),
-    )
-    .join("\n");
+  return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
 }

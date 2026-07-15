@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+
+.next
+node_modules
+.pnpm-store
+.pnpm-home
+package
+screenshots
+deliverables
+demo-server*.log
+src/components/auth/password-signin-form.tsx
+src/components/auth/provider-signin-buttons.tsx

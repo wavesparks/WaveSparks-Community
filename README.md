@@ -1,15 +1,15 @@
-# Wavespark Community Platform
+# Wavesparks Community Platform
 
-Semi-private, admin-gated founder community software for Wavespark and future client communities.
+Private, invitation-only founder community software for Wavesparks and future client communities.
 
 ## What’s in this MVP
 
-- Multi-tenant org routing under `/org/[slug]`
-- Social sign-in via Auth.js with Google, GitHub, LinkedIn, plus demo personas for local development
-- Structured onboarding and profile completion flow
-- Community feed, opportunities, post detail, comments, and intro requests
-- AI-assisted cofounder and mentor matches with explainable scoring
-- Admin console for approvals, moderation, manual intros, analytics, and org settings
+- Multi-tenant organization routing under `/org/[slug]`
+- Clerk-backed invitation-only account creation and sign-in
+- A `My Spaces` home that separates the permanent **Main Community** from independent **Event** spaces
+- Space-scoped feeds, People, Knowledge, Opportunities, saved posts, follows, introductions, notifications, and AI matching
+- One global core profile plus a separate goal, needs, offers, and matching opt-in for each Space
+- Admin `Members / Spaces` workspaces with CSV/XLSX import, account safety controls, Event lifecycle management, and explicit `Add to Main Community`
 - Drizzle schema, generated SQL migration, seed script, and match recompute cron stub
 
 ## Stack
@@ -17,10 +17,16 @@ Semi-private, admin-gated founder community software for Wavespark and future cl
 - Next.js App Router
 - TypeScript
 - Tailwind CSS v4
-- Auth.js / NextAuth
+- Clerk user management
 - Drizzle ORM + drizzle-kit
 - PostgreSQL-ready schema with `pgvector`
 - Vitest + Playwright
+
+## Lifecycle guides
+
+- [User lifecycle guide](docs/user-lifecycle-guide.md)
+- [Admin lifecycle guide](docs/admin-lifecycle-guide.md)
+- [AI matching engine](docs/ai-matching-engine.md)
 
 ## Local setup
 
@@ -42,13 +48,35 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), then head to [http://localhost:3000/org/wavespark/signin](http://localhost:3000/org/wavespark/signin).
+Open [http://localhost:3000](http://localhost:3000), then head to [http://localhost:3000/org/wavesparks/signin](http://localhost:3000/org/wavesparks/signin).
 
 ## Auth behavior
 
-- If real OAuth credentials are configured, the sign-in page shows Google, GitHub, and/or LinkedIn.
-- If `AUTH_DEV_DEMO_ENABLED=true`, the sign-in page also shows seeded demo personas so the product can be exercised locally without external auth setup.
-- First sign-in creates a pending membership if the user is not already known to the org.
+- Authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`.
+- `CLERK_JWT_KEY` is optional but recommended so the OAuth handoff API can verify client session tokens directly during preview-domain sign-in flows.
+- If Clerk keys are missing, authenticated app areas are unavailable until `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are configured.
+- `memberships.account_status` represents the Clerk organization account relationship (`invited`, `connected`, `suspended`, or `deprovisioned`). It does not grant community access.
+- `space_memberships.access_status` is the authority for Main Community or Event access. Main and Event entitlements are independent, and one person may belong to any combination of Spaces.
+- Effective access requires a connected, non-suspended account, an active entitlement for the requested Space, and a lifecycle that permits member access.
+- Clerk webhooks synchronize account connection only. They never create Main Community or Event access.
+- `/org/wavesparks` is the authenticated `My Spaces` home. Canonical community routes include the Space explicitly: `/org/wavesparks/s/[spaceSlug]/...`.
+- Main Community is invitation-only and has no anonymous or locked-content preview. An Event-only participant sees a locked Main card, not Main posts, people, or counts.
+- `/org/wavesparks/admin/members` manages accounts and invitations. `/org/wavesparks/admin/spaces` manages the permanent Main Community and independent Events.
+- Admins can upload or paste up to 100 CSV/XLSX rows, map fields, preview classifications, choose one destination Space, confirm, inspect row-level results, and retry failed invitations.
+- A global Admin can audit every Space but must explicitly join a Space before appearing in its participant roster, posting, using People, or entering its matching pool.
+- Wavesparks reports an invitation as created only after Clerk accepts the operation; this does not guarantee email delivery. Clerk failures are stored per member for retry.
+- Public registration and shared invitation codes are disabled. New accounts start at `/org/wavesparks/accept-invitation` from a personal Clerk ticket.
+- Do not use Clerk Dashboard as the daily invitation surface. Dashboard invitations cannot establish the complete Wavesparks review workflow.
+- Clerk owns identity, primary email, credentials, sessions, and the organization account connection. Wavesparks owns global roles, Space entitlements, profiles, content, and matching.
+- `letsbuild@wavesparks.co` is a default bootstrap admin. Add more comma-separated admin emails with `WAVESPARK_ADMIN_EMAILS`.
+
+## Space behavior
+
+- Every organization has exactly one permanent Main Community. It is always active and cannot be ended or archived.
+- Events move through `draft`, `upcoming`, `active`, `ended`, and `archived`. An ended Event appears under Past Events and remains fully interactive; only archive closes member access and matching.
+- Posts belong to exactly one Space. Comments inherit their post's Space, and saved-post reads recheck access through the post.
+- People, follows, matches, feedback, and pending introductions are isolated by Space. Promotion to Main never copies Event activity or grants access in the other direction.
+- Profile and the global Inbox are account-level. Space-specific notifications carry a Space label and are reauthorized when opened.
 
 ## Database workflow
 
@@ -61,16 +89,48 @@ pnpm db:generate
 Run migrations against Postgres:
 
 ```bash
-pnpm db:migrate
+pnpm db:migrate -- --environment=development
+pnpm db:migrate -- --environment=development --apply
 ```
+
+The Space migration uses expand, backfill, and compatibility stages. Its preflight deliberately
+aborts on duplicate memberships, orphaned records, cross-organization references, or conflicting
+access data. Resolve those records explicitly; migrations do not guess which production record
+to keep or silently restore rejected, suspended, or removed access.
 
 Seed the database when `DATABASE_URL` is configured:
 
 ```bash
-pnpm db:seed
+pnpm db:seed -- --environment=development --apply
 ```
 
 If `DATABASE_URL` is absent, the app still runs with the in-memory seeded community dataset used by the UI and tests.
+
+Provision production-style preview accounts for role testing:
+
+```bash
+pnpm db:preview-accounts -- --environment=development --apply
+```
+
+This creates or updates one connected admin, mentor, and founder account with explicit
+Main Community access. Set up matching Clerk users or invitations for the printed emails to sign in. The
+script writes a summary to `/tmp/wavesparks-preview-accounts.txt`.
+
+Preview or reconcile Clerk Organizations:
+
+```bash
+pnpm clerk:reconcile -- --environment=development
+pnpm clerk:reconcile -- --environment=development --apply
+pnpm clerk:reconcile -- --environment=production
+pnpm clerk:reconcile -- --environment=production --apply --confirm-production
+```
+
+Reconciliation is dry-run by default and writes an environment-specific report under
+`/tmp`. Production writes require both `--apply` and `--confirm-production`; the apply
+path refuses untracked memberships and will delete an extra organization only after all
+of its members are present in the canonical Wavesparks organization and it has no pending
+invitations. `organizationCapacityConstraint` is informational: Clerk plans that fix the
+organization limit cannot be changed through reconciliation and must be upgraded in Clerk.
 
 ## Useful scripts
 
@@ -80,8 +140,102 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm test:e2e
+pnpm test:e2e:clerk
 pnpm build
-pnpm cron:matches
+pnpm cron:matches -- --environment=development
+pnpm readiness:prod
+pnpm clerk:reconcile -- --environment=development
+pnpm env:audit
+```
+
+## Production rollout checklist
+
+Before promoting a deployment to production:
+
+1. Configure production environment variables in Vercel:
+
+```bash
+NEXT_PUBLIC_APP_URL=https://app.wavesparks.co
+DATABASE_URL=<postgres-url-with-pgvector>
+SPACE_SCOPED_READS_ENABLED=true
+OPENAI_API_KEY=<production-embedding-key>
+CRON_SECRET=<long-random-secret>
+WAVESPARK_ADMIN_EMAILS=letsbuild@wavesparks.co
+BLOB_READ_WRITE_TOKEN=<vercel-blob-read-write-token>
+# Optional custom notification email delivery:
+RESEND_API_KEY=<resend-key>
+RESEND_FROM_EMAIL=Wavesparks <notification@wavesparks.co>
+```
+
+The Vercel Clerk integration should supply `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and
+`CLERK_SECRET_KEY`. Clerk production domains also need the DNS records shown in the
+Clerk Dashboard, including the Frontend API CNAME:
+
+For preview-domain OAuth handoff, also add Clerk's JWT verification key as
+`CLERK_JWT_KEY` when available from the Clerk Dashboard. Keep `CLERK_SECRET_KEY`
+configured too; the app still uses it for Clerk backend operations.
+
+```bash
+clerk.wavesparks.co CNAME frontend-api.clerk.services
+```
+
+Only set `NEXT_PUBLIC_CLERK_PROXY_URL` after enabling proxying for the domain in
+Clerk. Without that Clerk-side domain setting, proxied Frontend API requests are
+rejected as an invalid host.
+
+Add the webhook signing secret from the Clerk webhook endpoint too:
+
+```bash
+CLERK_WEBHOOK_SIGNING_SECRET=<whsec_...>
+```
+
+Optional Clerk route overrides are only needed if you want Clerk's
+global defaults to match the Wavesparks org routes:
+
+```bash
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/org/wavesparks/signin
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/org/wavesparks/sign-up
+NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL=/org/wavesparks
+NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/org/wavesparks
+```
+
+Keep the Clerk application home URL and custom sign-in routes pointed at the community app
+domain, not the marketing site. Create invitations from Wavesparks Admin so they use the
+dedicated `/org/wavesparks/accept-invitation` redirect.
+
+2. Run the production checks and database setup:
+
+```bash
+pnpm readiness:prod -- --env-only
+pnpm db:migrate -- --environment=production
+pnpm db:migrate -- --environment=production --apply --confirm-production
+pnpm readiness:prod
+pnpm clerk:reconcile -- --environment=production
+pnpm clerk:reconcile -- --environment=production --apply --confirm-production
+```
+
+Production database and Clerk writes require both `--apply` and
+`--confirm-production`. Always review the dry-run report before applying it and run a new
+dry-run afterward to confirm that no actionable differences remain.
+
+The `--env-only` pass validates configuration before any write. The full
+`pnpm readiness:prod` pass runs after migrations and also performs a read-only Space audit:
+every organization must have one active Main Community, Space relationships must remain
+organization-safe, and posts, follows, matching rows, intros, and content notifications
+must not have a null `space_id`. Missing Resend configuration is a warning because Clerk
+organization invitations still send through Clerk, but custom product notification emails
+will be skipped.
+
+3. Confirm DNS points the app domain to Vercel. `app.wavesparks.co` should resolve to Vercel before it becomes the member-facing URL.
+
+4. Keep Vercel Authentication on preview deployments only. Production access should be controlled by Clerk sign-in, global account safety, explicit Space entitlements, and profile interaction gates.
+
+5. After the first admin signs in through Clerk, create Events from the Admin Spaces page and invite people from Members or the destination Space. Add Event participants to Main only through the explicit **Add to Main Community** action.
+
+For future Clerk work in this project, install Clerk skills and restart the agent after installation:
+
+```bash
+npx skills add clerk/skills
 ```
 
 ## Verification
@@ -92,12 +246,17 @@ The current implementation was verified with:
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:e2e
+pnpm test:e2e:clerk
 pnpm build
+pnpm readiness:prod
 ```
 
 ## Notes
 
-- Member discovery is intentionally limited. There is no full people directory for regular members.
+- There is no public community feed. Every content read, direct post link, saved post, People view, notification link, and cache lookup must pass Space access checks.
+- Member discovery is limited to active members of the current Space. Regular members can search safe profile summaries, but contact details remain hidden.
 - Contact details remain hidden until an intro request is accepted.
-- Upload routes for avatars and org logos are included and expect Supabase Storage credentials.
-- Email notifications use Resend when configured and otherwise log the attempted delivery in development.
+- Accepted introductions remain private account history, but never grant content access in another Space.
+- Upload routes for avatars and org logos use Vercel Blob and expect `BLOB_READ_WRITE_TOKEN`.
+- Email notifications use Resend when configured and otherwise log the attempted delivery.

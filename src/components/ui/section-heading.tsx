@@ -1,22 +1,56 @@
+import { cn } from "@/lib/utils";
+
 export function SectionHeading({
   eyebrow,
   title,
   description,
+  level = 2,
+  tone = "default",
+  className,
 }: {
   eyebrow?: string;
   title: string;
   description?: string;
+  level?: 1 | 2 | 3;
+  tone?: "default" | "inverse";
+  className?: string;
 }) {
+  const inverse = tone === "inverse";
+  const Heading = level === 1 ? "h1" : level === 3 ? "h3" : "h2";
+
   return (
-    <div className="space-y-3">
+    <div className={cn("space-y-2", className)}>
       {eyebrow ? (
-        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[var(--accent)]">
+        <p
+          className={cn(
+            "text-xs font-semibold uppercase",
+            inverse ? "text-[var(--gold)]" : "text-[var(--accent)]",
+          )}
+        >
           {eyebrow}
         </p>
       ) : null}
-      <div className="space-y-2">
-        <h2 className="text-2xl font-semibold text-slate-950 sm:text-3xl">{title}</h2>
-        {description ? <p className="max-w-2xl text-sm text-slate-600">{description}</p> : null}
+      <div className="space-y-1.5">
+        <Heading
+          className={cn(
+            level === 1
+              ? "text-3xl font-semibold leading-tight sm:text-4xl"
+              : "text-xl font-semibold leading-tight sm:text-2xl",
+            inverse ? "text-[var(--surface)]" : "text-[var(--ink)]",
+          )}
+        >
+          {title}
+        </Heading>
+        {description ? (
+          <p
+            className={cn(
+              "max-w-2xl text-sm leading-6",
+              inverse ? "text-[var(--surface)]/75" : "text-[var(--ink-soft)]",
+            )}
+          >
+            {description}
+          </p>
+        ) : null}
       </div>
     </div>
   );

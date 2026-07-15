@@ -1,23 +1,29 @@
-import Link from "next/link";
-import { Bell, Compass, LayoutDashboard, Shield, Sparkles, UserCircle2 } from "lucide-react";
+import {
+  Bell,
+  LayoutGrid,
+  Shield,
+  UserCircle2,
+} from "lucide-react";
+import { UserButton } from "@clerk/nextjs";
 import type { CSSProperties } from "react";
 
+import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { BrandLogo } from "@/components/ui/brand-logo";
+import { NavLink } from "@/components/layout/nav-link";
 import { SignOutButton } from "@/components/layout/sign-out-button";
+import { WAVESPARKS_COMMUNITY_NAME } from "@/lib/community-copy";
 import type { ViewerContext } from "@/lib/domain";
+import { isClerkConfigured } from "@/lib/env";
+import { getMemberDisplayName } from "@/lib/member-display-name";
+import { getAccountStatusLabel, getAffiliationLabel } from "@/lib/member-copy";
+import { wavesparksBrand } from "@/lib/brand";
 import { cn } from "@/lib/utils";
-
-const memberLinks = [
-  { href: "feed", label: "Feed", icon: Compass },
-  { href: "matches", label: "Matches", icon: Sparkles },
-  { href: "opportunities", label: "Opportunities", icon: LayoutDashboard },
-  { href: "requests", label: "Requests", icon: Bell },
-  { href: "profile", label: "My Profile", icon: UserCircle2 },
-];
 
 const adminLinks = [
   { href: "admin", label: "Overview" },
   { href: "admin/members", label: "Members" },
+  { href: "admin/spaces", label: "Community & events" },
   { href: "admin/profiles", label: "Profiles" },
   { href: "admin/posts", label: "Posts" },
   { href: "admin/requests", label: "Requests" },
@@ -35,98 +41,148 @@ export function AppShell({
   currentPath: string;
   children: React.ReactNode;
 }) {
+  const accountLinks = [
+    { href: "", label: "Home", icon: LayoutGrid },
+    { href: "requests", label: "Introductions", icon: Bell },
+    viewer.profile?.onboardingComplete
+      ? { href: "profile", label: "My Profile", icon: UserCircle2 }
+      : { href: "onboarding", label: "Complete profile", icon: UserCircle2 },
+  ];
+  const theme = wavesparksBrand.theme;
+  const clerkConfigured = isClerkConfigured();
+  const memberName = getMemberDisplayName({
+    email: viewer.user.email,
+    name: viewer.user.name,
+    preferredName: viewer.profile?.preferredName,
+  });
+
   return (
     <div
-      className="min-h-screen bg-[var(--canvas)]"
+      className="ws-page-shell text-[var(--ink)]"
       style={
         {
-          "--accent": viewer.org.theme.accent,
-          "--accent-soft": viewer.org.theme.accentSoft,
-          "--canvas": viewer.org.theme.canvas,
-          "--ink": viewer.org.theme.ink,
+          "--accent": theme.accent,
+          "--accent-soft": theme.accentSoft,
+          "--canvas": theme.canvas,
+          "--ink": theme.ink,
+          "--ink-soft": theme.inkSoft,
+          "--cyan": theme.cyan,
+          "--cyan-soft": theme.cyanSoft,
+          "--gold": theme.gold,
+          "--night": theme.night,
+          "--blue": theme.blue,
         } as CSSProperties
       }
     >
-      <div className="mx-auto flex min-h-screen max-w-[1440px] flex-col gap-6 px-4 py-6 lg:flex-row lg:px-6">
-        <aside className="w-full shrink-0 rounded-[32px] border border-white/70 bg-[#231f2d] p-6 text-white shadow-[0_24px_60px_rgba(35,31,45,0.28)] lg:w-[300px]">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-orange-200">
-                  {viewer.org.name}
-                </p>
-                <h1 className="mt-2 text-2xl font-semibold">{viewer.org.tagline}</h1>
+      <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-[280px_1fr]">
+        <aside className="ws-night-panel border-b border-[var(--surface)] text-[var(--surface)] lg:min-h-screen lg:border-b-0 lg:border-r">
+          <div className="flex h-full flex-col gap-3 p-3 sm:p-4 lg:gap-6 lg:p-5">
+            <div className="overflow-hidden rounded-lg border border-[var(--cyan)] bg-[var(--blue)] p-3 shadow-[0_22px_60px_rgba(0,0,0,0.22)] lg:p-4">
+              <div className="space-y-3">
+                <BrandLogo className="h-7 max-w-[190px]" tone="light" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-[var(--surface)]">
+                    {WAVESPARKS_COMMUNITY_NAME}
+                  </p>
+                  <p className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-[var(--surface)]/70">
+                    People building and learning together.
+                  </p>
+                </div>
               </div>
+              <Badge className="mt-3 bg-[var(--gold)] text-[var(--night)] ring-[var(--surface)] lg:mt-4">
+                {getAffiliationLabel(viewer.membership.affiliationType)}
+              </Badge>
             </div>
-            <p className="text-sm text-slate-300">{viewer.org.description}</p>
-            <Badge className="w-fit bg-white/10 text-orange-100 ring-0">
-              {viewer.membership.affiliationType}
-            </Badge>
-          </div>
+            <nav
+              className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1"
+              aria-label="Account navigation"
+            >
+              {accountLinks.map((link) => {
+                const href = `/org/${viewer.org.slug}${link.href ? `/${link.href}` : ""}`;
+                const active = currentPath === href;
+                const Icon = link.icon;
+                return (
+                  <NavLink
+                    active={active}
+                    className={cn(
+                      "flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm transition",
+                      active
+                        ? "bg-[var(--surface)] text-[var(--night)] shadow-[0_12px_30px_rgba(0,0,0,0.18)]"
+                        : "text-[var(--cyan-soft)] hover:bg-[var(--blue)] hover:text-[var(--surface)]",
+                    )}
+                    href={href}
+                    key={href}
+                  >
+                    <Icon className="size-4" />
+                    <span className="min-w-0 flex-1">{link.label}</span>
+                  </NavLink>
+                );
+              })}
+            </nav>
 
-          <nav className="mt-8 space-y-2">
-            {memberLinks.map((link) => {
-              const href = `/org/${viewer.org.slug}/${link.href}`;
-              const active = currentPath === href;
-              const Icon = link.icon;
-              return (
-                <Link
-                  className={cn(
-                    "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm transition",
-                    active
-                      ? "bg-white text-[#231f2d]"
-                      : "text-slate-200 hover:bg-white/10 hover:text-white",
-                  )}
-                  href={href}
-                  key={href}
-                >
-                  <Icon className="size-4" />
-                  {link.label}
-                </Link>
-              );
-            })}
-          </nav>
-
-          {viewer.canAdmin ? (
-            <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-4">
-              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                <Shield className="size-4" />
-                Admin surface
+            {viewer.canAdmin ? (
+              <div className="rounded-lg border border-[var(--cyan)] bg-[var(--blue)] p-3">
+                <div className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold uppercase text-[var(--cyan-soft)]">
+                  <Shield className="size-4" />
+                  Admin
+                </div>
+                <div className="grid grid-cols-2 gap-1 sm:grid-cols-4 lg:grid-cols-1">
+                  {adminLinks.map((link) => {
+                    const href = `/org/${viewer.org.slug}/${link.href}`;
+                    const active =
+                      currentPath === href ||
+                      (link.href === "admin/spaces" &&
+                        (currentPath.startsWith(`${href}/`) ||
+                          currentPath.startsWith(`/org/${viewer.org.slug}/admin/cohorts`)));
+                    return (
+                      <NavLink
+                        active={active}
+                        className={cn(
+                          "flex min-h-9 items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
+                          active
+                            ? "bg-[var(--surface)] text-[var(--night)] shadow-sm"
+                            : "text-[var(--cyan-soft)] hover:bg-[var(--night)] hover:text-[var(--surface)]",
+                        )}
+                        href={href}
+                        key={href}
+                      >
+                        <span className="min-w-0 flex-1">{link.label}</span>
+                      </NavLink>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="space-y-1">
-                {adminLinks.map((link) => {
-                  const href = `/org/${viewer.org.slug}/${link.href}`;
-                  const active = currentPath === href;
-                  return (
-                    <Link
-                      className={cn(
-                        "block rounded-2xl px-3 py-2 text-sm transition",
-                        active
-                          ? "bg-white text-[#231f2d]"
-                          : "text-slate-300 hover:bg-white/10 hover:text-white",
-                      )}
-                      href={href}
-                      key={href}
-                    >
-                      {link.label}
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          <div className="mt-8 flex items-center justify-between rounded-3xl border border-white/10 bg-white/5 p-4">
-            <div>
-              <p className="text-sm font-semibold">{viewer.profile?.preferredName ?? viewer.user.name}</p>
-              <p className="text-xs text-slate-300">{viewer.membership.status}</p>
+            <div className="mt-auto flex items-center justify-between gap-3 rounded-lg border border-[var(--cyan)] bg-[var(--blue)] p-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <Avatar
+                  className="size-10 ring-[var(--gold)]"
+                  name={memberName}
+                  src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">
+                    {memberName}
+                  </p>
+                  <p className="text-xs text-[var(--cyan-soft)]">
+                    {getAccountStatusLabel(viewer.membership.accountStatus)}
+                  </p>
+                </div>
+              </div>
+              {clerkConfigured ? (
+                <UserButton />
+              ) : (
+                <SignOutButton callbackUrl={`/org/${viewer.org.slug}`} mode="local" />
+              )}
             </div>
-            <SignOutButton />
           </div>
         </aside>
 
-        <main className="flex-1 rounded-[32px] bg-white/65 p-4 shadow-[0_28px_70px_rgba(15,23,42,0.08)] backdrop-blur sm:p-6 lg:p-8">
-          {children}
+        <main className="min-w-0 flex-1">
+          <div className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+            {children}
+          </div>
         </main>
       </div>
     </div>

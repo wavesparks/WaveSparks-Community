@@ -1,12 +1,25 @@
-import { buildEmbedding, buildEmbeddingText } from "@/server/matching";
+import {
+  buildEmbedding,
+  buildMatchingEmbeddingTexts,
+} from "@/server/matching";
+import { LOCAL_EMBEDDING_MODEL } from "@/server/embeddings";
+import {
+  legacySeekingMatchTypes,
+  stableDefaultMatchTypeConfigs,
+} from "@/lib/match-config";
+import { getProfileReadiness } from "@/lib/activation";
+import { canonicalLegacyBio } from "@/lib/profile-bio";
 import type {
   AnalyticsEvent,
   Comment,
+  Follow,
   IntroRequest,
+  MatchTypeConfig,
   Membership,
   Notification,
   Organization,
   Post,
+  PostSave,
   Profile,
   ProfileLink,
   User,
@@ -28,49 +41,101 @@ function avatar(seed: string) {
   return `https://api.dicebear.com/9.x/notionists/svg?seed=${seed}`;
 }
 
-function buildProfile(input: Omit<Profile, "embeddingText" | "profileEmbedding">): Profile {
-  const embeddingText = buildEmbeddingText({
-    ...input,
-    embeddingText: "",
-    profileEmbedding: [],
-  });
+type SeedProfileInput = Omit<
+  Profile,
+  | "seekingMatchTypes"
+  | "offeringMatchTypes"
+  | "seekingEmbeddingText"
+  | "offeringEmbeddingText"
+  | "seekingEmbedding"
+  | "offeringEmbedding"
+  | "embeddingModel"
+  | "embeddingSourceHash"
+  | "embeddingStatus"
+  | "embeddingError"
+  | "embeddingUpdatedAt"
+  | "bio"
+  | "problemInterest"
+  | "currentFocus"
+  | "technicalExperienceLevel"
+  | "technicalExperience"
+> &
+  Partial<Pick<Profile, "seekingMatchTypes" | "offeringMatchTypes">>;
 
-  return {
+function buildProfile(input: SeedProfileInput): Profile {
+  const seekingMatchTypes =
+    input.seekingMatchTypes ?? legacySeekingMatchTypes(input.lookingForTypes);
+  const offeringMatchTypes = input.offeringMatchTypes ?? [
+    ...(seekingMatchTypes.includes("cofounder_match") ? ["cofounder_match"] : []),
+    ...(seekingMatchTypes.includes("collaborator_match") ? ["collaborator_match"] : []),
+    ...(input.currentStatus === "mentor" || input.mentorOffers.length
+      ? ["mentor_match"]
+      : []),
+  ];
+  const draft = {
     ...input,
-    embeddingText,
-    profileEmbedding: buildEmbedding(embeddingText),
+    bio: canonicalLegacyBio(input.shortBio, input.longBio),
+    problemInterest: input.startupDescription,
+    currentFocus: input.startupOneLiner,
+    // General years of experience do not establish coding or product-design
+    // confidence. Let members self-describe this in the new question.
+    technicalExperienceLevel: "not_sure",
+    technicalExperience: input.priorProjects,
+    seekingMatchTypes,
+    offeringMatchTypes,
+    seekingEmbeddingText: "",
+    offeringEmbeddingText: "",
+    embeddingStatus: "ready" as const,
+  } satisfies Profile;
+  const texts = buildMatchingEmbeddingTexts(draft);
+  const profile = {
+    ...draft,
+    seekingEmbeddingText: texts.seekingProfileText,
+    offeringEmbeddingText: texts.offeringText,
+    seekingEmbedding: buildEmbedding(texts.seekingProfileText),
+    offeringEmbedding: buildEmbedding(texts.offeringText),
+    embeddingModel: LOCAL_EMBEDDING_MODEL,
+    embeddingUpdatedAt: draft.updatedAt,
+  };
+  const readiness = getProfileReadiness(profile);
+  return {
+    ...profile,
+    onboardingComplete: readiness.isReady,
+    profileCompletionPercent: readiness.completionPercent,
   };
 }
 
 export const seedOrganization: Organization = {
   id: "org_wavespark",
-  name: "Wavespark",
-  slug: "wavespark",
-  logoUrl: "https://images.unsplash.com/photo-1545239351-1141bd82e8a6?auto=format&fit=crop&w=300&q=80",
+  name: "Wavesparks",
+  slug: "wavesparks",
+  logoUrl: "/wavesparks-assets/wavesparks-avatar-gradient.png",
   theme: {
-    accent: "#ff785a",
-    accentSoft: "#ffd8cb",
-    canvas: "#fff6ef",
-    ink: "#1f1d2b",
+    accent: "#8958f0",
+    accentSoft: "#f0e9ff",
+    canvas: "#f7f9ff",
+    ink: "#221b44",
   },
   tagline: "The warm founder network for serious early-stage builders.",
-  description:
-    "A semi-private community where founders, mentors, and operators get surfaced through context, not noise.",
+  description: "Wavesparks members can meet, share updates, and find useful connections here.",
   membershipRules: [
-    "Access is admin-approved after sign-in.",
-    "Members discover others through the feed, matches, and intro requests instead of a public directory.",
-    "Contact details unlock only after an intro is accepted.",
+    "Access to Wavesparks Community and each event is managed separately.",
+    "People can only see content and profiles in places they have joined.",
+    "Contact details are shared only after an introduction is accepted.",
   ],
-  allowedDomains: ["wavespark.co", "yfs.community"],
-  inviteSettings: "Invited insiders and invited outsiders can both apply, but all access is admin-gated.",
+  allowedDomains: ["wavesparks.co", "yfs.community"],
+  inviteSettings: "Only people invited by an administrator can join. Community and event access are managed separately.",
   status: "active",
   createdAt: daysAgo(120),
 };
 
+export const seedMatchTypeConfigs: MatchTypeConfig[] =
+  stableDefaultMatchTypeConfigs(seedOrganization.id, seedOrganization.createdAt);
+
 export const seedUsers: User[] = [
   {
     id: "usr_avery",
-    email: "avery@wavespark.co",
+    email: "avery@wavesparks.co",
     name: "Avery Tan",
     imageUrl: avatar("Avery"),
     platformRole: "platform_owner",
@@ -79,7 +144,7 @@ export const seedUsers: User[] = [
   },
   {
     id: "usr_maya",
-    email: "maya@wavespark.co",
+    email: "maya@wavesparks.co",
     name: "Maya Chen",
     imageUrl: avatar("Maya"),
     platformRole: "standard",
@@ -202,10 +267,11 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_avery",
     role: "org_admin",
+    accountStatus: "connected",
     affiliationType: "alumni",
     status: "approved",
     archetypes: ["mentor", "operator"],
-    programName: "Wavespark Fellowship",
+    programName: "Wavesparks Fellowship",
     cohortNameOrYear: "Founding Team",
     approvalNote: "Platform owner access",
     approvedAt: daysAgo(120),
@@ -217,10 +283,11 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_maya",
     role: "org_admin",
+    accountStatus: "connected",
     affiliationType: "alumni",
     status: "approved",
     archetypes: ["operator"],
-    programName: "Wavespark Fellowship",
+    programName: "Wavesparks Fellowship",
     cohortNameOrYear: "Ops Lead",
     approvalNote: "Community operator",
     approvedAt: daysAgo(110),
@@ -232,6 +299,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_jules",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "current participant",
     status: "approved",
     archetypes: ["founder", "cofounder_seeker", "mentee"],
@@ -246,6 +314,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_rhea",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "current participant",
     status: "approved",
     archetypes: ["cofounder_seeker", "operator"],
@@ -260,6 +329,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_kai",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "alumni",
     status: "approved",
     archetypes: ["operator", "mentor"],
@@ -274,6 +344,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_leila",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "current participant",
     status: "approved",
     archetypes: ["founder", "cofounder_seeker", "mentee"],
@@ -288,10 +359,11 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_marcus",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "mentor",
     status: "approved",
     archetypes: ["mentor"],
-    programName: "Wavespark Mentors",
+    programName: "Wavesparks Mentors",
     cohortNameOrYear: "2026",
     approvedAt: daysAgo(57),
     createdAt: daysAgo(57),
@@ -302,6 +374,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_sara",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "alumni",
     status: "approved",
     archetypes: ["operator", "cofounder_seeker"],
@@ -316,6 +389,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_nikhil",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "current participant",
     status: "approved",
     archetypes: ["founder", "cofounder_seeker"],
@@ -330,10 +404,11 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_amelia",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "mentor",
     status: "approved",
     archetypes: ["mentor"],
-    programName: "Wavespark Mentors",
+    programName: "Wavesparks Mentors",
     cohortNameOrYear: "2026",
     approvedAt: daysAgo(49),
     createdAt: daysAgo(49),
@@ -344,6 +419,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_jordan",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "current participant",
     status: "approved",
     archetypes: ["founder", "cofounder_seeker", "researcher"],
@@ -358,6 +434,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_tom",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "alumni",
     status: "approved",
     archetypes: ["founder", "operator", "mentor"],
@@ -372,6 +449,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_priya",
     role: "member",
+    accountStatus: "connected",
     affiliationType: "invited outsider",
     status: "pending",
     archetypes: ["invited_outsider", "mentor"],
@@ -386,6 +464,7 @@ export const seedMemberships: Membership[] = [
     orgId: seedOrganization.id,
     userId: "usr_nora",
     role: "member",
+    accountStatus: "suspended",
     affiliationType: "alumni",
     status: "suspended",
     archetypes: ["founder", "mentee"],
@@ -407,15 +486,15 @@ export const seedProfiles: Profile[] = [
     displayNamePreference: "first_name_last_initial",
     profilePhoto: avatar("Avery"),
     headline: "Community architect and founder coach",
-    shortBio: "Runs the warm side of Wavespark while helping founders stay focused and brave.",
+    shortBio: "Runs the warm side of Wavesparks while helping founders stay focused and brave.",
     longBio:
-      "Avery has supported multiple founder communities across SEA and now steers the member experience inside Wavespark.",
+      "Avery has supported multiple founder communities across SEA and now steers the member experience inside Wavesparks.",
     city: "Singapore",
     country: "Singapore",
     timezone: "Asia/Singapore",
-    schoolOrCompany: "Wavespark",
+    schoolOrCompany: "Wavesparks",
     currentStatus: "mentor",
-    startupName: "Wavespark",
+    startupName: "Wavesparks",
     startupOneLiner: "Semi-private founder community infrastructure.",
     startupDescription:
       "Building the ongoing community layer where founders keep momentum after the program ends.",
@@ -423,7 +502,7 @@ export const seedProfiles: Profile[] = [
     industryTags: ["community", "founder tooling"],
     problemSpaceTags: ["trust", "matching"],
     businessModelTags: ["SaaS"],
-    currentProgress: "Piloting the first community operating system for Wavespark.",
+    currentProgress: "Piloting the first community operating system for Wavesparks.",
     tractionSummary: "Run multiple cohorts and curated founder programs.",
     regionFocus: "Southeast Asia",
     lookingForTypes: ["mentor"],
@@ -459,7 +538,7 @@ export const seedProfiles: Profile[] = [
     maxMentees: 8,
     mentorshipPreferences: "Founders who are coachable and clear about what they need.",
     publicContactEnabled: false,
-    emailForIntro: "avery@wavespark.co",
+    emailForIntro: "avery@wavesparks.co",
     whatsappNumber: "+6590000001",
     whatsappVisibleAfterAccept: true,
     introOptIn: true,
@@ -486,18 +565,18 @@ export const seedProfiles: Profile[] = [
     city: "Singapore",
     country: "Singapore",
     timezone: "Asia/Singapore",
-    schoolOrCompany: "Wavespark",
+    schoolOrCompany: "Wavesparks",
     currentStatus: "operator",
-    startupName: "Wavespark",
+    startupName: "Wavesparks",
     startupOneLiner: "Community systems for serious founders.",
     startupDescription:
-      "Operating the ongoing community platform and approval flows for Wavespark.",
+      "Operating the ongoing community platform and approval flows for Wavesparks.",
     stage: "MVP",
     industryTags: ["community", "operations"],
     problemSpaceTags: ["trust", "moderation"],
     businessModelTags: ["SaaS"],
     currentProgress: "Designing moderation and reporting processes.",
-    tractionSummary: "Active across current Wavespark and YFS programming.",
+    tractionSummary: "Active across current Wavesparks and YFS programming.",
     regionFocus: "Southeast Asia",
     lookingForTypes: ["collaborators"],
     desiredRoles: ["operations"],
@@ -532,7 +611,7 @@ export const seedProfiles: Profile[] = [
     maxMentees: 4,
     mentorshipPreferences: "Teams that already have founder energy but need structure.",
     publicContactEnabled: false,
-    emailForIntro: "maya@wavespark.co",
+    emailForIntro: "maya@wavesparks.co",
     whatsappNumber: "+6590000002",
     whatsappVisibleAfterAccept: true,
     introOptIn: true,
@@ -1516,6 +1595,7 @@ export const seedPosts: Post[] = [
     orgId: seedOrganization.id,
     authorMembershipId: "mem_sara",
     type: "looking_for_mentor",
+    opportunitySource: "member",
     title: "Looking for a mentor who understands onboarding trust moments",
     body: "I’m helping a startup rethink onboarding for frontline managers. Would love feedback from anyone who has done trust-heavy design.",
     tags: ["design", "mentor", "trust"],
@@ -1588,6 +1668,7 @@ export const seedPosts: Post[] = [
     orgId: seedOrganization.id,
     authorMembershipId: "mem_tom",
     type: "opportunity",
+    opportunitySource: "mentor",
     title: "Sharing a pilot opportunity with a LATAM logistics operator",
     body: "A mid-market distributor is looking for software to reduce handoffs across field teams. Could suit a workflow-heavy SaaS startup.",
     tags: ["logistics", "opportunity", "B2B"],
@@ -1678,6 +1759,7 @@ export const seedPosts: Post[] = [
     orgId: seedOrganization.id,
     authorMembershipId: "mem_nikhil",
     type: "opportunity",
+    opportunitySource: "member",
     title: "Looking for a designer to tighten trust moments in enterprise setup",
     body: "We need help communicating review states and human oversight in the product. Good fit for product or systems-minded designers.",
     tags: ["AI", "design", "opportunity"],
@@ -1696,6 +1778,7 @@ export const seedPosts: Post[] = [
     orgId: seedOrganization.id,
     authorMembershipId: "mem_jules",
     type: "looking_for_mentor",
+    opportunitySource: "member",
     title: "Want mentor feedback on enterprise pricing for industrial workflows",
     body: "Our pilots are asking for pricing structures that map to audit complexity. Curious who has seen that movie.",
     tags: ["mentor", "pricing", "fintech"],
@@ -1732,6 +1815,7 @@ export const seedPosts: Post[] = [
     orgId: seedOrganization.id,
     authorMembershipId: "mem_jordan",
     type: "looking_for_cofounder",
+    opportunitySource: "member",
     title: "Looking for an engineering partner curious about signal and trust systems",
     body: "Testing a product idea around community signal. Need someone who enjoys building calm, high-trust experiences.",
     tags: ["community", "cofounder", "trust"],
@@ -1786,6 +1870,7 @@ export const seedPosts: Post[] = [
     orgId: seedOrganization.id,
     authorMembershipId: "mem_kai",
     type: "opportunity",
+    opportunitySource: "mentor",
     title: "Open to helping one founder tighten B2B messaging this month",
     body: "If you’re getting polite nods but low urgency in enterprise calls, happy to do one teardown with a founder here.",
     tags: ["mentor", "GTM", "opportunity"],
@@ -1798,6 +1883,25 @@ export const seedPosts: Post[] = [
     commentsLocked: false,
     createdAt: daysAgo(20),
     updatedAt: daysAgo(20),
+  },
+  {
+    id: "pst_21",
+    orgId: seedOrganization.id,
+    authorMembershipId: "mem_avery",
+    type: "opportunity",
+    opportunitySource: "official",
+    title: "Official: founder office hours with operator mentors",
+    body: "Wavesparks is opening a small event for founders who want focused feedback on trust-heavy onboarding and first customer conversations.",
+    tags: ["official", "event", "mentor"],
+    relatedStartupName: "Wavesparks",
+    relatedRolesNeeded: ["founder", "mentor"],
+    visibility: "org_only",
+    status: "active",
+    featured: true,
+    hidden: false,
+    commentsLocked: false,
+    createdAt: daysAgo(3),
+    updatedAt: daysAgo(3),
   },
 ];
 
@@ -1891,6 +1995,47 @@ export const seedComments: Comment[] = [
     status: "visible",
     createdAt: daysAgo(13),
     updatedAt: daysAgo(13),
+  },
+];
+
+export const seedFollows: Follow[] = [
+  {
+    id: "flw_jules_marcus",
+    orgId: seedOrganization.id,
+    followerMembershipId: "mem_jules",
+    followedMembershipId: "mem_marcus",
+    createdAt: daysAgo(6),
+  },
+  {
+    id: "flw_avery_kai",
+    orgId: seedOrganization.id,
+    followerMembershipId: "mem_avery",
+    followedMembershipId: "mem_kai",
+    createdAt: daysAgo(4),
+  },
+];
+
+export const seedPostSaves: PostSave[] = [
+  {
+    id: "save_jules_pst_3",
+    orgId: seedOrganization.id,
+    membershipId: "mem_jules",
+    postId: "pst_3",
+    createdAt: daysAgo(2),
+  },
+  {
+    id: "save_jules_pst_16",
+    orgId: seedOrganization.id,
+    membershipId: "mem_jules",
+    postId: "pst_16",
+    createdAt: daysAgo(1),
+  },
+  {
+    id: "save_kai_pst_8",
+    orgId: seedOrganization.id,
+    membershipId: "mem_kai",
+    postId: "pst_8",
+    createdAt: hoursAgo(10),
   },
 ];
 
@@ -2094,7 +2239,7 @@ export const demoPersonas = [
   },
   {
     label: "Admin preview",
-    email: "avery@wavespark.co",
+    email: "avery@wavesparks.co",
     description: "Platform owner and org admin",
   },
   {

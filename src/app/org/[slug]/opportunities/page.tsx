@@ -1,41 +1,16 @@
-import { AppShell } from "@/components/layout/app-shell";
-import { PostCard } from "@/components/community/post-card";
-import { SectionHeading } from "@/components/ui/section-heading";
-import { getViewerContext } from "@/lib/auth";
-import { getFeedViewsForOrg } from "@/server/view-models";
+import { redirect } from "next/navigation";
 
-export default async function OpportunitiesPage({
+import { pathWithQuery } from "@/lib/feed-filters";
+import { getLegacySpaceDestination } from "@/lib/space-auth";
+
+export default async function LegacyOpportunitiesPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { slug } = await params;
-  const viewer = await getViewerContext(slug, {
-    requireAuth: true,
-    requireApproved: true,
-    requireCompleteProfile: true,
-  });
-
-  if (!viewer) {
-    return null;
-  }
-
-  const posts = getFeedViewsForOrg(viewer.org, undefined, true);
-
-  return (
-    <AppShell currentPath={`/org/${slug}/opportunities`} viewer={viewer}>
-      <div className="space-y-8">
-        <SectionHeading
-          eyebrow="Opportunities"
-          title="Open asks, talent needs, and mentor requests"
-          description="This view filters the feed down to the posts that most often turn into intros."
-        />
-        <div className="space-y-6">
-          {posts.map((post) => (
-            <PostCard key={post.id} post={post} slug={slug} />
-          ))}
-        </div>
-      </div>
-    </AppShell>
-  );
+  const [{ slug }, query] = await Promise.all([params, searchParams]);
+  const destination = await getLegacySpaceDestination(slug, "opportunities");
+  redirect(pathWithQuery(destination, query));
 }

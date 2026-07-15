@@ -1,11 +1,14 @@
 import type { FullAdminProfile, Membership, Profile, User } from "@/lib/domain";
 
 export function canAdminOrganization(user: User, membership: Membership) {
-  return user.platformRole === "platform_owner" || membership.role === "org_admin";
+  return (
+    user.platformRole === "platform_owner" ||
+    membership.role === "org_admin"
+  );
 }
 
 export function canViewAdminRoute(user: User, membership: Membership) {
-  return canAdminOrganization(user, membership) && membership.status === "approved";
+  return canAdminOrganization(user, membership) && membership.accountStatus === "connected";
 }
 
 export function canViewContactDetails(
@@ -24,7 +27,11 @@ export function canViewContactDetails(
 }
 
 export function canAccessFeed(membership: Membership, profile?: Profile) {
-  return membership.status === "approved" && Boolean(profile?.onboardingComplete);
+  return (
+    membership.accountStatus === "connected" &&
+    membership.status === "approved" &&
+    Boolean(profile?.onboardingComplete)
+  );
 }
 
 export function getProfileVisibilityForMember(profile: Profile, membership: Membership) {

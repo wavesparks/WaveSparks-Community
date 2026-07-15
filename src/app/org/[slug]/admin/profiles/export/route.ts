@@ -1,15 +1,10 @@
-import { getServerSession } from "next-auth";
-
-import { authOptions } from "@/lib/auth-options";
+import { getCurrentAuthIdentity } from "@/lib/auth-identity";
 import type { FullAdminProfile } from "@/lib/domain";
-import { canAdminOrganization } from "@/server/permissions";
+import { canViewAdminRoute } from "@/server/permissions";
 import { fullProfilesToCsv } from "@/server/csv";
 import {
-  getMembershipByUserAndOrg,
-  getOrganizationBySlug,
-  getUserByEmail,
-  listMembershipsForOrg,
-  listProfilesForOrg,
+  getViewerRecordByEmailAndSlug,
+  listMembershipProfileRecordsForOrg,
 } from "@/server/store";
 import { toFullAdminProfile } from "@/server/view-models";
 
@@ -18,26 +13,23 @@ export async function GET(
   context: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await context.params;
-  const session = await getServerSession(authOptions);
-  const org = getOrganizationBySlug(slug);
+  const identity = await getCurrentAuthIdentity();
 
-  if (!org || !session?.user?.email) {
+  if (!identity) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const user = getUserByEmail(session.user.email);
-  const membership = user ? getMembershipByUserAndOrg(user.id, org.id) : undefined;
+  const viewerRecord = await getViewerRecordByEmailAndSlug(slug, identity.email);
+  const { org, user, membership } = viewerRecord;
 
-  if (!user || !membership || !canAdminOrganization(user, membership)) {
+  if (!org || !user || !membership || !canViewAdminRoute(user, membership)) {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const memberships = listMembershipsForOrg(org.id);
-  const profiles = listProfilesForOrg(org.id)
-    .map((profile) => {
-      const membership = memberships.find((candidate) => candidate.id === profile.membershipId);
-      return membership ? toFullAdminProfile(profile, membership) : null;
-    })
+  const profiles = (await listMembershipProfileRecordsForOrg(org.id))
+    .map(({ membership, profile }) =>
+      profile ? toFullAdminProfile(profile, membership) : null,
+    )
     .filter((profile): profile is FullAdminProfile => Boolean(profile));
 
   const csv = fullProfilesToCsv(profiles);

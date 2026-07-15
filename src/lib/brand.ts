@@ -1,0 +1,35 @@
+export const wavesparksAssets = {
+  logoPrimary: "/wavesparks-assets/wavesparks-primary.png",
+  logoLight: "/wavesparks-assets/wavesparks-light.png",
+  logoDark: "/wavesparks-assets/wavesparks-dark.png",
+  avatarGradient: "/wavesparks-assets/wavesparks-avatar-gradient.png",
+  overview: "/wavesparks-assets/wavesparks-overview.png",
+  graphic01: "/wavesparks-assets/graphic-01.png",
+  graphic02: "/wavesparks-assets/graphic-02.png",
+  frame02: "/wavesparks-assets/frame-02.png",
+  sparkGroup: "/wavesparks-assets/spark-group.png",
+  wave01: "/wavesparks-assets/wave-01.png",
+  wave02: "/wavesparks-assets/wave-02.png",
+  wave04: "/wavesparks-assets/wave-04.png",
+  wave05: "/wavesparks-assets/wave-05.png",
+  gradient03: "/wavesparks-assets/gradient-03.png",
+  gradient06: "/wavesparks-assets/gradient-06.png",
+} as const;
+
+export const wavesparksBrand = {
+  logoUrl: wavesparksAssets.logoPrimary,
+  heroImageUrl: wavesparksAssets.graphic02,
+  huddleImageUrl: wavesparksAssets.graphic01,
+  theme: {
+    accent: "#8958f0",
+    accentSoft: "#f0e9ff",
+    cyan: "#01d4e7",
+    cyanSoft: "#dcfbff",
+    gold: "#fec502",
+    canvas: "#f7f9ff",
+    ink: "#221b44",
+    inkSoft: "#5a5576",
+    night: "#221b44",
+    blue: "#2a3b89",
+  },
+} as const;

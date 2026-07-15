@@ -1,78 +1,58 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
 
+import { SignOutButton } from "@/components/layout/sign-out-button";
 import { Card } from "@/components/ui/card";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
-import { canAccessFeed } from "@/server/permissions";
+import { isClerkConfigured } from "@/lib/env";
+import { singleQueryValue } from "@/lib/feed-filters";
+import { getAccountStatusLabel } from "@/lib/member-copy";
 
 export default async function PendingPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { slug } = await params;
+  const [{ slug }, query] = await Promise.all([params, searchParams]);
   const viewer = await getViewerContext(slug, { requireAuth: true });
+  if (!viewer) return null;
 
-  if (!viewer) {
-    return null;
+  if (viewer.membership.accountStatus === "connected") {
+    redirect(`/org/${slug}`);
   }
 
-  if (canAccessFeed(viewer.membership, viewer.profile)) {
-    return (
-      <main className="mx-auto flex min-h-screen max-w-4xl items-center px-4 py-8 sm:px-6 lg:px-8">
-        <Card className="w-full space-y-4">
-          <SectionHeading title="You’re approved and ready to go" />
-          <Link className="text-sm font-semibold text-[var(--accent)]" href={`/org/${slug}/feed`}>
-            Enter the community feed
-          </Link>
-        </Card>
-      </main>
-    );
-  }
-
-  const copy =
-    viewer.membership.status === "pending"
-      ? {
-          title: "Your application is in review",
-          body: "Admins can see your full profile and will approve, waitlist, or reject access from the membership queue.",
-        }
-      : viewer.membership.status === "rejected"
-        ? {
-            title: "Your application wasn’t approved",
-            body: viewer.membership.approvalNote ?? "You can contact Wavespark if you think this was a mistake.",
-          }
-        : {
-            title: "Your access is currently paused",
-            body: viewer.membership.approvalNote ?? "Suspended members cannot enter the feed or matching surfaces.",
-          };
+  const inactive =
+    viewer.membership.accountStatus === "suspended" ||
+    viewer.membership.accountStatus === "deprovisioned";
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-4xl items-center px-4 py-8 sm:px-6 lg:px-8">
+    <main className="mx-auto flex min-h-screen max-w-3xl items-center px-4 py-8 sm:px-6 lg:px-8">
       <Card className="w-full space-y-6">
+        <StatusBanner status={singleQueryValue(query.status)} />
         <SectionHeading
-          eyebrow={viewer.membership.status}
-          title={copy.title}
-          description={copy.body}
+          description={
+            inactive
+              ? "Your account cannot currently open Wavesparks Community or any of your events. Contact the Wavesparks team if you believe this is a mistake."
+              : "Your invitation is linked to this email, but your account setup is not finished. Open your invitation email to complete it, then sign in again."
+          }
+          eyebrow="Account access"
+          level={1}
+          title={inactive ? "Account access is paused" : "Finish connecting your account"}
         />
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card className="bg-slate-50 shadow-none">
-            <p className="text-sm text-slate-700">
-              Profile completion stays open while you wait, so you can sharpen your
-              matching context before approval.
-            </p>
-            <Link
-              className="mt-4 inline-flex text-sm font-semibold text-[var(--accent)]"
-              href={`/org/${slug}/onboarding`}
-            >
-              Continue editing your profile
-            </Link>
-          </Card>
-          <Card className="bg-slate-50 shadow-none">
-            <p className="text-sm text-slate-700">
-              Access note: {viewer.membership.approvalNote ?? "No admin note yet."}
-            </p>
-          </Card>
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+          <p className="text-sm font-semibold text-[var(--ink)]">Account status</p>
+          <p className="mt-1 text-sm text-[var(--ink-soft)]">
+            {getAccountStatusLabel(viewer.membership.accountStatus)}
+          </p>
         </div>
+        <SignOutButton
+          callbackUrl={`/org/${slug}`}
+          mode={isClerkConfigured() ? "clerk" : "local"}
+          tone="light"
+        />
       </Card>
     </main>
   );
