@@ -25,10 +25,20 @@ export interface AuthIdentity {
   provider: "clerk" | "e2e";
 }
 
-type ClerkOrgIdentity = Pick<
+export type ClerkOrgIdentity = Pick<
   AuthIdentity,
   "canManageOrgMemberships" | "clerkOrgId" | "clerkOrgRole" | "clerkOrgSlug" | "clerkUserId"
 >;
+
+export type KnownClerkIdentity = Pick<AuthIdentity, "email" | "imageUrl" | "name">;
+
+interface CurrentAuthIdentityOptions {
+  allowClerkLookupWithoutCookie?: boolean;
+  clerkSessionToken?: string;
+  resolveKnownClerkIdentity?: (
+    identity: ClerkOrgIdentity,
+  ) => Promise<KnownClerkIdentity | null | undefined>;
+}
 
 function nameForClerkUser(user: NonNullable<ClerkUser>, email: string) {
   const composedName = [user.firstName, user.lastName].filter(Boolean).join(" ");
@@ -228,10 +238,7 @@ async function identityFromClerkSessionToken(
 }
 
 export async function getCurrentAuthIdentity(
-  options: {
-    allowClerkLookupWithoutCookie?: boolean;
-    clerkSessionToken?: string;
-  } = {},
+  options: CurrentAuthIdentityOptions = {},
 ): Promise<AuthIdentity | null> {
   const cookieStore = await cookies();
   const requestCookies = cookieStore.getAll();
@@ -308,6 +315,15 @@ export async function getCurrentAuthIdentity(
 
   if (claimsIdentity) {
     return claimsIdentity;
+  }
+
+  const knownIdentity = await options.resolveKnownClerkIdentity?.(orgIdentity);
+  if (knownIdentity) {
+    return {
+      ...orgIdentity,
+      ...knownIdentity,
+      provider: "clerk",
+    };
   }
 
   const client = await clerkClient();

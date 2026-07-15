@@ -121,7 +121,7 @@ describe("organization viewer context", () => {
     mockState.viewerRecord = Promise.resolve({});
   });
 
-  it("starts identity and organization lookup together for public org routes", async () => {
+  it("resolves the organization before the organization-scoped identity fallback", async () => {
     const identity = deferred<AuthIdentity | null>();
     const organization = deferred<Organization | undefined>();
     mockState.identity = identity.promise;
@@ -130,10 +130,14 @@ describe("organization viewer context", () => {
     const pending = getOrganizationViewerContext("test");
     await Promise.resolve();
 
-    expect(calls).toEqual(["identity", "org"]);
+    expect(calls).toEqual(["org"]);
+
+    organization.resolve(org);
+    await Promise.resolve();
+
+    expect(calls).toEqual(["org", "identity"]);
 
     identity.resolve(null);
-    organization.resolve(org);
 
     await expect(pending).resolves.toEqual({ org, viewer: null });
   });

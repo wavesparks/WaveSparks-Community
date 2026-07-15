@@ -316,4 +316,43 @@ describe("current auth identity", () => {
       provider: "clerk",
     });
   });
+
+  it("uses a known local Clerk identity before calling the Backend API", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
+    process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
+    clerkAuthMock.mockResolvedValue({
+      has: vi.fn(() => true),
+      orgId: "org_clerk",
+      orgRole: "org:admin",
+      orgSlug: "wavesparks",
+      userId: "clerk_user",
+      sessionClaims: {},
+    });
+    const resolveKnownClerkIdentity = vi.fn(async () => ({
+      email: "local@example.com",
+      imageUrl: "https://example.com/local.png",
+      name: "Local Member",
+    }));
+
+    const { getCurrentAuthIdentity } = await loadAuthIdentity();
+
+    await expect(
+      getCurrentAuthIdentity({ resolveKnownClerkIdentity }),
+    ).resolves.toEqual({
+      canManageOrgMemberships: true,
+      clerkOrgId: "org_clerk",
+      clerkOrgRole: "org:admin",
+      clerkOrgSlug: "wavesparks",
+      clerkUserId: "clerk_user",
+      email: "local@example.com",
+      imageUrl: "https://example.com/local.png",
+      name: "Local Member",
+      provider: "clerk",
+    });
+    expect(resolveKnownClerkIdentity).toHaveBeenCalledWith(
+      expect.objectContaining({ clerkUserId: "clerk_user" }),
+    );
+    expect(clerkClientMock).not.toHaveBeenCalled();
+    expect(getUserMock).not.toHaveBeenCalled();
+  });
 });

@@ -1,6 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 
-import { getCurrentAuthIdentity, type AuthIdentity } from "@/lib/auth-identity";
+import {
+  getCurrentAuthIdentity,
+  type AuthIdentity,
+  type ClerkOrgIdentity,
+  type KnownClerkIdentity,
+} from "@/lib/auth-identity";
 import { canAdminOrganization } from "@/server/permissions";
 import {
   getOrganizationBySlug,
@@ -27,6 +32,38 @@ interface ViewerRecord {
   user?: User;
   membership?: Membership;
   profile?: Profile;
+}
+
+async function resolveIdentityForOrg(
+  org: Organization,
+  options: AuthLookupOptions = {},
+) {
+  let knownViewerRecord: ViewerRecord | undefined;
+  const resolveKnownClerkIdentity = async (
+    clerkIdentity: ClerkOrgIdentity,
+  ): Promise<KnownClerkIdentity | null> => {
+    const viewerRecord = await getViewerRecordByClerkUserIdAndOrgId(
+      org.id,
+      clerkIdentity.clerkUserId,
+    );
+    if (!viewerRecord.user) {
+      return null;
+    }
+
+    knownViewerRecord = viewerRecord;
+    return {
+      email: viewerRecord.user.email,
+      imageUrl: viewerRecord.user.imageUrl,
+      name: viewerRecord.user.name,
+    };
+  };
+  const identity = await getCurrentAuthIdentity({
+    allowClerkLookupWithoutCookie: options.allowClerkLookupWithoutCookie,
+    clerkSessionToken: options.clerkSessionToken,
+    resolveKnownClerkIdentity,
+  });
+
+  return { identity, knownViewerRecord };
 }
 
 async function buildViewerContextForOrg(
@@ -67,26 +104,25 @@ async function resolveViewerContext(
   slug: string,
   options: AuthLookupOptions = {},
 ) {
-  const [identity, org] = await Promise.all([
-    getCurrentAuthIdentity({
-      allowClerkLookupWithoutCookie: options.allowClerkLookupWithoutCookie,
-      clerkSessionToken: options.clerkSessionToken,
-    }),
-    getOrganizationBySlug(slug),
-  ]);
+  const org = await getOrganizationBySlug(slug);
 
   if (!org) {
+    const identity = await getCurrentAuthIdentity({
+      allowClerkLookupWithoutCookie: options.allowClerkLookupWithoutCookie,
+      clerkSessionToken: options.clerkSessionToken,
+    });
     return { org: undefined, viewer: null, authenticated: Boolean(identity) };
   }
+
+  const { identity, knownViewerRecord } = await resolveIdentityForOrg(org, options);
 
   if (!identity) {
     return { org, viewer: null, authenticated: false };
   }
 
-  const clerkRecord = await getViewerRecordByClerkUserIdAndOrgId(
-    org.id,
-    identity.clerkUserId,
-  );
+  const clerkRecord =
+    knownViewerRecord ??
+    (await getViewerRecordByClerkUserIdAndOrgId(org.id, identity.clerkUserId));
   const viewerRecord = clerkRecord.membership
     ? clerkRecord
     : await getViewerRecordByEmailAndOrgId(org.id, identity.email);
@@ -103,23 +139,22 @@ async function resolveViewerContext(
 }
 
 async function resolveOrganizationViewerContext(slug: string) {
-  const [identity, org] = await Promise.all([
-    getCurrentAuthIdentity(),
-    getOrganizationBySlug(slug),
-  ]);
+  const org = await getOrganizationBySlug(slug);
 
   if (!org) {
+    const identity = await getCurrentAuthIdentity();
     return { org: undefined, viewer: null, authenticated: Boolean(identity) };
   }
+
+  const { identity, knownViewerRecord } = await resolveIdentityForOrg(org);
 
   if (!identity) {
     return { org, viewer: null, authenticated: false };
   }
 
-  const clerkRecord = await getViewerRecordByClerkUserIdAndOrgId(
-    org.id,
-    identity.clerkUserId,
-  );
+  const clerkRecord =
+    knownViewerRecord ??
+    (await getViewerRecordByClerkUserIdAndOrgId(org.id, identity.clerkUserId));
   const viewerRecord = clerkRecord.membership
     ? clerkRecord
     : await getViewerRecordByEmailAndOrgId(org.id, identity.email);

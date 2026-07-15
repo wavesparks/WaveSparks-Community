@@ -2,7 +2,7 @@ import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { clerk, clerkSetup, setupClerkTestingToken } from "@clerk/testing/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, request, test } from "@playwright/test";
 
 const adminEmail = process.env.E2E_CLERK_ADMIN_EMAIL;
 const bypassUrl = process.env.PREVIEW_BYPASS_URL;
@@ -74,7 +74,9 @@ test("existing test admin can inspect the isolated 50+10 QA Event", async ({ pag
   await expect(
     page.getByRole("heading", { name: "Review match suggestions" }),
   ).toBeVisible();
-  const matchCards = page.locator("main h3");
+  const matchCards = page.locator("main h3", {
+    hasText: /^QA (?:Participant|Mentor) \d{2} and QA Mentor \d{2}$/,
+  });
   await expect(matchCards).toHaveCount(20);
   await expect(page.getByText("Airtable 50+10 Stability Test").first()).toBeVisible();
   await expect(page.getByText(/because|fit|align|experience|guidance/i).first()).toBeVisible();
@@ -88,8 +90,18 @@ test("admin pages sustain 10 concurrent authenticated reads across 20 rounds", a
 
   await signInExistingAdmin(page);
 
+  const storageState = await page.context().storageState();
+  const authenticatedClients = await Promise.all(
+    Array.from({ length: 10 }, () =>
+      request.newContext({
+        baseURL: previewOrigin,
+        storageState,
+      }),
+    ),
+  );
+
   for (const target of authenticatedReadTargets) {
-    const warmup = await page.request.get(target.path, { failOnStatusCode: false });
+    const warmup = await authenticatedClients[0].get(target.path, { failOnStatusCode: false });
     expect(warmup.status(), `Warmup failed for ${target.path}`).toBe(200);
     expect(await warmup.text(), `Warmup was not authenticated for ${target.path}`).toContain(
       target.marker,
@@ -104,42 +116,57 @@ test("admin pages sustain 10 concurrent authenticated reads across 20 rounds", a
     status: number | null;
     authenticated: boolean;
     timedOut: boolean;
+    responseKind: "expected" | "sign-in" | "rate-limited" | "other" | "timeout";
   }> = [];
 
-  for (let round = 1; round <= 20; round += 1) {
-    for (const target of authenticatedReadTargets) {
-      await Promise.all(
-        Array.from({ length: 10 }, async (_, workerIndex) => {
-          const startedAt = performance.now();
-          try {
-            const response = await page.request.get(target.path, {
-              failOnStatusCode: false,
-              timeout: 15_000,
-            });
-            const body = await response.text();
-            samples.push({
-              path: target.path,
-              round,
-              worker: workerIndex + 1,
-              durationMs: performance.now() - startedAt,
-              status: response.status(),
-              authenticated: response.status() === 200 && body.includes(target.marker),
-              timedOut: false,
-            });
-          } catch {
-            samples.push({
-              path: target.path,
-              round,
-              worker: workerIndex + 1,
-              durationMs: performance.now() - startedAt,
-              status: null,
-              authenticated: false,
-              timedOut: true,
-            });
-          }
-        }),
-      );
+  try {
+    for (let round = 1; round <= 20; round += 1) {
+      for (const target of authenticatedReadTargets) {
+        await Promise.all(
+          authenticatedClients.map(async (client, workerIndex) => {
+            const startedAt = performance.now();
+            try {
+              const response = await client.get(target.path, {
+                failOnStatusCode: false,
+                timeout: 15_000,
+              });
+              const body = await response.text();
+              const authenticated = response.status() === 200 && body.includes(target.marker);
+              const responseKind = authenticated
+                ? "expected"
+                : response.status() === 429
+                  ? "rate-limited"
+                  : body.includes("/signin") || body.includes("Sign in")
+                    ? "sign-in"
+                    : "other";
+              samples.push({
+                path: target.path,
+                round,
+                worker: workerIndex + 1,
+                durationMs: performance.now() - startedAt,
+                status: response.status(),
+                authenticated,
+                timedOut: false,
+                responseKind,
+              });
+            } catch {
+              samples.push({
+                path: target.path,
+                round,
+                worker: workerIndex + 1,
+                durationMs: performance.now() - startedAt,
+                status: null,
+                authenticated: false,
+                timedOut: true,
+                responseKind: "timeout",
+              });
+            }
+          }),
+        );
+      }
     }
+  } finally {
+    await Promise.all(authenticatedClients.map((client) => client.dispose()));
   }
 
   const durations = samples.map((sample) => sample.durationMs).sort((left, right) => left - right);
@@ -148,6 +175,34 @@ test("admin pages sustain 10 concurrent authenticated reads across 20 rounds", a
   const timedOut = samples.filter((sample) => sample.timedOut).length;
   const serverErrors = samples.filter((sample) => (sample.status ?? 0) >= 500).length;
   const unauthenticated = samples.filter((sample) => !sample.authenticated).length;
+  const responseBreakdown = Object.fromEntries(
+    [
+      ...new Set(
+        samples.map((sample) =>
+          JSON.stringify({
+            path: sample.path,
+            status: sample.status,
+            responseKind: sample.responseKind,
+          }),
+        ),
+      ),
+    ].map((key) => {
+      const group = JSON.parse(key) as {
+        path: string;
+        status: number | null;
+        responseKind: string;
+      };
+      return [
+        `${group.path} | ${group.status ?? "timeout"} | ${group.responseKind}`,
+        samples.filter(
+          (sample) =>
+            sample.path === group.path &&
+            sample.status === group.status &&
+            sample.responseKind === group.responseKind,
+        ).length,
+      ];
+    }),
+  );
   const report = {
     generatedAt: new Date().toISOString(),
     totalRequests: samples.length,
@@ -158,6 +213,7 @@ test("admin pages sustain 10 concurrent authenticated reads across 20 rounds", a
     timedOut,
     serverErrors,
     unauthenticated,
+    responseBreakdown,
     passed:
       samples.length === 600 &&
       timedOut === 0 &&
