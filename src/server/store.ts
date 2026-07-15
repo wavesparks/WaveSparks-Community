@@ -224,6 +224,14 @@ export interface ActiveSpaceMemberRecord {
   intent?: SpaceIntent;
 }
 
+export interface AdminSpaceParticipantRecord {
+  spaceMembership: Pick<SpaceMembership, "id">;
+  membership: Pick<Membership, "id" | "role">;
+  user?: Pick<User, "email" | "name">;
+  profile?: Pick<Profile, "onboardingComplete" | "preferredName">;
+  intent?: Pick<SpaceIntent, "intentComplete" | "matchingOptIn">;
+}
+
 export type MemberWorkspaceInvitationStatus =
   | ClerkInvitationStatus
   | "connected"
@@ -358,6 +366,21 @@ export interface MatchProfileRecord {
   match: MatchRecord;
   sourceProfile?: Profile;
   targetProfile?: Profile;
+}
+
+export interface AdminMatchCardRecord {
+  match: Pick<
+    MatchRecord,
+    | "dismissedBySource"
+    | "explanationText"
+    | "hiddenByAdmin"
+    | "id"
+    | "matchType"
+    | "scoreBand"
+    | "spaceId"
+  >;
+  sourceProfile?: Pick<Profile, "preferredName">;
+  targetProfile?: Pick<Profile, "preferredName">;
 }
 
 export interface MatchTargetRecord {
@@ -3439,6 +3462,151 @@ export async function listActiveSpaceMemberRecords(
     profile: row.profile ? profileFromRow(row.profile) : undefined,
     intent: row.intent ? spaceIntentFromRow(row.intent) : undefined,
   }));
+}
+
+export async function listAdminSpaceParticipantRecords(
+  spaceId: string,
+): Promise<AdminSpaceParticipantRecord[]> {
+  if (!usesDatabase) {
+    return (await listActiveSpaceMemberRecords(spaceId)).map(
+      ({ intent, membership, profile, spaceMembership, user }) => ({
+        spaceMembership: { id: spaceMembership.id },
+        membership: { id: membership.id, role: membership.role },
+        user: user ? { email: user.email, name: user.name } : undefined,
+        profile: profile
+          ? {
+              onboardingComplete: profile.onboardingComplete,
+              preferredName: profile.preferredName,
+            }
+          : undefined,
+        intent: intent
+          ? {
+              intentComplete: intent.intentComplete,
+              matchingOptIn: intent.matchingOptIn,
+            }
+          : undefined,
+      }),
+    );
+  }
+
+  const rows = await getDb()
+    .select({
+      spaceMembershipId: dbSchema.spaceMemberships.id,
+      membershipId: dbSchema.memberships.id,
+      membershipRole: dbSchema.memberships.role,
+      userId: dbSchema.users.id,
+      userEmail: dbSchema.users.email,
+      userName: dbSchema.users.name,
+      profileId: dbSchema.profiles.id,
+      profilePreferredName: dbSchema.profiles.preferredName,
+      profileOnboardingComplete: dbSchema.profiles.onboardingComplete,
+      intentId: dbSchema.spaceIntents.id,
+      intentComplete: dbSchema.spaceIntents.intentComplete,
+      intentMatchingOptIn: dbSchema.spaceIntents.matchingOptIn,
+    })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.id, dbSchema.spaceMemberships.membershipId),
+        eq(dbSchema.memberships.orgId, dbSchema.spaceMemberships.orgId),
+      ),
+    )
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .leftJoin(
+      dbSchema.spaceIntents,
+      and(
+        eq(dbSchema.spaceIntents.spaceId, dbSchema.spaceMemberships.spaceId),
+        eq(dbSchema.spaceIntents.membershipId, dbSchema.spaceMemberships.membershipId),
+      ),
+    )
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, spaceId),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+        eq(dbSchema.memberships.accountStatus, "connected"),
+      ),
+    );
+
+  return rows.map((row) => ({
+    spaceMembership: { id: row.spaceMembershipId },
+    membership: { id: row.membershipId, role: row.membershipRole },
+    user: row.userId
+      ? { email: row.userEmail!, name: row.userName! }
+      : undefined,
+    profile: row.profileId
+      ? {
+          onboardingComplete: row.profileOnboardingComplete!,
+          preferredName: row.profilePreferredName!,
+        }
+      : undefined,
+    intent: row.intentId
+      ? {
+          intentComplete: row.intentComplete!,
+          matchingOptIn: row.intentMatchingOptIn!,
+        }
+      : undefined,
+  }));
+}
+
+export async function countActiveSpaceMembersBySpaceIds(
+  orgId: string,
+  spaceIds: string[],
+) {
+  const uniqueSpaceIds = [...new Set(spaceIds.filter(Boolean))];
+  const counts = new Map(uniqueSpaceIds.map((spaceId) => [spaceId, 0]));
+  if (!uniqueSpaceIds.length) return counts;
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const connectedMembershipIds = new Set(
+      store.memberships
+        .filter(
+          (membership) =>
+            membership.orgId === orgId && membership.accountStatus === "connected",
+        )
+        .map((membership) => membership.id),
+    );
+    for (const spaceMembership of store.spaceMemberships) {
+      if (
+        spaceMembership.orgId === orgId &&
+        spaceMembership.accessStatus === "active" &&
+        counts.has(spaceMembership.spaceId) &&
+        connectedMembershipIds.has(spaceMembership.membershipId)
+      ) {
+        counts.set(spaceMembership.spaceId, (counts.get(spaceMembership.spaceId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }
+
+  const rows = await getDb()
+    .select({
+      spaceId: dbSchema.spaceMemberships.spaceId,
+      participantCount: sql<number>`count(*)::int`,
+    })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.id, dbSchema.spaceMemberships.membershipId),
+        eq(dbSchema.memberships.orgId, dbSchema.spaceMemberships.orgId),
+      ),
+    )
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.orgId, orgId),
+        inArray(dbSchema.spaceMemberships.spaceId, uniqueSpaceIds),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+        eq(dbSchema.memberships.accountStatus, "connected"),
+      ),
+    )
+    .groupBy(dbSchema.spaceMemberships.spaceId);
+  for (const row of rows) {
+    counts.set(row.spaceId, Number(row.participantCount));
+  }
+  return counts;
 }
 
 export async function getSpaceIntent(spaceId: string, membershipId: string) {
@@ -8513,6 +8681,103 @@ export async function listMatchProfileRecordsForSpace(
   const space = await getSpaceById(spaceId);
   if (!space) return [];
   return listMatchProfileRecordsForOrg(space.orgId, { ...options, spaceId });
+}
+
+export async function listAdminMatchCardRecordsForOrg(
+  orgId: string,
+  options: MatchProfileRecordListOptions = {},
+): Promise<AdminMatchCardRecord[]> {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const profileById = new Map(store.profiles.map((profile) => [profile.id, profile]));
+    const matches = store.matches
+      .filter(
+        (match) =>
+          match.orgId === orgId &&
+          (!options.spaceId || match.spaceId === options.spaceId) &&
+          (!options.matchType || match.matchType === options.matchType) &&
+          (!options.scoreBand || match.scoreBand === options.scoreBand),
+      )
+      .sort((left, right) => right.score - left.score);
+    const visibleMatches = limit ? matches.slice(0, limit) : matches;
+
+    return visibleMatches.map((match) => ({
+      match: {
+        dismissedBySource: match.dismissedBySource,
+        explanationText: match.explanationText,
+        hiddenByAdmin: match.hiddenByAdmin,
+        id: match.id,
+        matchType: match.matchType,
+        scoreBand: match.scoreBand,
+        spaceId: match.spaceId,
+      },
+      sourceProfile: profileById.has(match.sourceProfileId)
+        ? { preferredName: profileById.get(match.sourceProfileId)!.preferredName }
+        : undefined,
+      targetProfile: profileById.has(match.targetProfileId)
+        ? { preferredName: profileById.get(match.targetProfileId)!.preferredName }
+        : undefined,
+    }));
+  }
+
+  const sourceProfiles = alias(dbSchema.profiles, "admin_match_source_profiles");
+  const targetProfiles = alias(dbSchema.profiles, "admin_match_target_profiles");
+  const query = getDb()
+    .select({
+      matchId: dbSchema.matches.id,
+      matchSpaceId: dbSchema.matches.spaceId,
+      matchType: dbSchema.matches.matchType,
+      matchScoreBand: dbSchema.matches.scoreBand,
+      matchExplanationText: dbSchema.matches.explanationText,
+      matchDismissedBySource: dbSchema.matches.dismissedBySource,
+      matchHiddenByAdmin: dbSchema.matches.hiddenByAdmin,
+      sourceProfileId: sourceProfiles.id,
+      sourcePreferredName: sourceProfiles.preferredName,
+      targetProfileId: targetProfiles.id,
+      targetPreferredName: targetProfiles.preferredName,
+    })
+    .from(dbSchema.matches)
+    .leftJoin(sourceProfiles, eq(sourceProfiles.id, dbSchema.matches.sourceProfileId))
+    .leftJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .where(
+      and(
+        eq(dbSchema.matches.orgId, orgId),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
+        options.matchType ? eq(dbSchema.matches.matchType, options.matchType) : undefined,
+        options.scoreBand ? eq(dbSchema.matches.scoreBand, options.scoreBand) : undefined,
+      ),
+    )
+    .orderBy(desc(dbSchema.matches.score));
+  const rows = await (limit ? query.limit(limit) : query);
+
+  return rows.map((row) => ({
+    match: {
+      dismissedBySource: row.matchDismissedBySource,
+      explanationText: row.matchExplanationText,
+      hiddenByAdmin: row.matchHiddenByAdmin,
+      id: row.matchId,
+      matchType: row.matchType as MatchType,
+      scoreBand: row.matchScoreBand as MatchRecord["scoreBand"],
+      spaceId: row.matchSpaceId ?? undefined,
+    },
+    sourceProfile: row.sourceProfileId
+      ? { preferredName: row.sourcePreferredName! }
+      : undefined,
+    targetProfile: row.targetProfileId
+      ? { preferredName: row.targetPreferredName! }
+      : undefined,
+  }));
+}
+
+export async function listAdminMatchCardRecordsForSpace(
+  spaceId: string,
+  options: Omit<MatchProfileRecordListOptions, "spaceId"> = {},
+): Promise<AdminMatchCardRecord[]> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return [];
+  return listAdminMatchCardRecordsForOrg(space.orgId, { ...options, spaceId });
 }
 
 export async function addNotification(notification: Notification) {

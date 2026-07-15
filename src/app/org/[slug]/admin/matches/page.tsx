@@ -13,8 +13,8 @@ import { singleQueryValue } from "@/lib/feed-filters";
 import { matchFeedbackReasonLabels } from "@/lib/match-feedback";
 import type { MatchRecord, MatchType } from "@/lib/domain";
 import {
-  listMatchProfileRecordsForOrg,
   getMatchFeedbackSummaryForOrg,
+  listAdminMatchCardRecordsForOrg,
   listMatchRunsForOrg,
   listMatchTypeConfigsForOrg,
   listSpacesForOrg,
@@ -81,7 +81,7 @@ export default async function AdminMatchesPage({
     : undefined;
   const selectedScoreBand = scoreBandFromQuery(singleQueryValue(query.score_band));
   const [matchCards, runs, feedbackSummary, spaces] = await Promise.all([
-    listMatchProfileRecordsForOrg(viewer.org.id, {
+    listAdminMatchCardRecordsForOrg(viewer.org.id, {
       limit: 20,
       matchType: selectedMatchType,
       scoreBand: selectedScoreBand,

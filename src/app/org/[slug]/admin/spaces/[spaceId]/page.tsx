@@ -32,11 +32,12 @@ import { isClerkConfigured } from "@/lib/env";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { postTypeLabel } from "@/lib/post-copy";
 import {
+  type AdminSpaceParticipantRecord,
   getSpaceAuditMetrics,
   getSpaceById,
-  listActiveSpaceMemberRecords,
+  listAdminMatchCardRecordsForSpace,
+  listAdminSpaceParticipantRecords,
   listIntroRequestsForSpace,
-  listMatchProfileRecordsForSpace,
   listMatchRunsForSpace,
   listPostsForSpace,
   listVisibleCommentCountsForSpace,
@@ -77,7 +78,7 @@ function lifecycleExplanation(space: Space) {
   return "This Event is hidden from participants. Access and matching are paused, but its history is still available to administrators.";
 }
 
-function participantName(record: Awaited<ReturnType<typeof listActiveSpaceMemberRecords>>[number]) {
+function participantName(record: AdminSpaceParticipantRecord) {
   return record.profile?.preferredName || record.user?.name || "Unnamed person";
 }
 
@@ -134,11 +135,11 @@ export default async function AdminSpaceDetailPage({
     recentMatchRecords,
     recentMatchRuns,
   ] = await Promise.all([
-    listActiveSpaceMemberRecords(space.id),
+    listAdminSpaceParticipantRecords(space.id),
     getSpaceAuditMetrics(space.id),
     listPostsForSpace(space.id, { limit: 3 }),
     listIntroRequestsForSpace(space.id, { limit: 3 }),
-    listMatchProfileRecordsForSpace(space.id, { limit: 3 }),
+    listAdminMatchCardRecordsForSpace(space.id, { limit: 3 }),
     listMatchRunsForSpace(space.id, 1),
   ]);
   if (!auditMetrics) notFound();
