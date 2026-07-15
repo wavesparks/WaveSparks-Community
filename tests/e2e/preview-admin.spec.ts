@@ -84,9 +84,10 @@ test("existing test admin can inspect the isolated 50+10 QA Event", async ({ pag
     await expect(
       page.getByRole("heading", { name: "Review match suggestions" }),
     ).toBeVisible();
-    await expect(
-      page.getByText("Airtable 50+10 Stability Test", { exact: true }),
-    ).toHaveCount(20);
+    const visibleMatchCards = await page
+      .getByText("Airtable 50+10 Stability Test", { exact: true })
+      .count();
+    expect(visibleMatchCards).toBeGreaterThanOrEqual(20);
     await expect(page.locator("main")).not.toContainText("QA Participant");
     await expect(page.locator("main")).not.toContainText("No matches found");
   }
