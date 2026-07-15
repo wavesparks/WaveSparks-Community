@@ -291,6 +291,7 @@ describe("feed filters and social recommendations", () => {
       expect.arrayContaining(["pst_3", "pst_8", "pst_16"]),
     );
     expect(saved.every((post) => post.isSaved)).toBe(true);
+    expect(saved.every((post) => Boolean(post.savedAt))).toBe(true);
   });
 
   it("can skip matched recommendation signals while preserving follow state", async () => {

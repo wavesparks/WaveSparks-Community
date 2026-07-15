@@ -1,5 +1,4 @@
 import { after } from "next/server";
-import { Resend } from "resend";
 
 import { env } from "@/lib/env";
 import type { Notification, NotificationType } from "@/lib/domain";
@@ -8,7 +7,9 @@ import {
   spaceLifecycleAllowsMemberAccess,
 } from "@/server/space-permissions";
 
-let resend: Resend | undefined;
+type ResendClient = import("resend").Resend;
+
+let resend: ResendClient | undefined;
 
 const spaceScopedNotificationTypes = new Set<NotificationType>([
   "intro_requested",
@@ -17,12 +18,13 @@ const spaceScopedNotificationTypes = new Set<NotificationType>([
   "manual_intro",
 ]);
 
-function getResend() {
+async function getResend() {
   if (!env.resendApiKey) {
     return undefined;
   }
 
   if (!resend) {
+    const { Resend } = await import("resend");
     resend = new Resend(env.resendApiKey);
   }
 
@@ -34,7 +36,7 @@ export async function sendNotificationEmail(input: {
   subject: string;
   html: string;
 }) {
-  const client = getResend();
+  const client = await getResend();
   if (!client) {
     console.info("[wavesparks] email skipped", input.subject, input.to);
     return;

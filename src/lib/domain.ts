@@ -509,6 +509,7 @@ export interface FeedPostView {
   commentCount: number;
   isFollowingAuthor: boolean;
   isSaved: boolean;
+  savedAt?: string;
   isRecommended: boolean;
   recommendationReasons: Array<"Followed" | "Matched">;
 }
