@@ -9,14 +9,14 @@ export interface MemberManagementNavProps {
 
 const items = [
   { key: "members", label: "Members", path: "members" },
-  { key: "spaces", label: "Spaces", path: "spaces" },
+  { key: "spaces", label: "Community & Events", path: "spaces" },
 ] as const;
 
 export function MemberManagementNav({ active, slug }: MemberManagementNavProps) {
   const normalizedActive = active === "cohorts" ? "spaces" : active;
 
   return (
-    <nav aria-label="Member management" className="border-b border-[var(--line)]">
+    <nav aria-label="Members, community, and Events" className="border-b border-[var(--line)]">
       <div className="flex gap-6">
         {items.map((item) => {
           const isActive = normalizedActive === item.key;

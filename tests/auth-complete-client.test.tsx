@@ -80,7 +80,7 @@ describe("AuthCompleteClient", () => {
     render(<AuthCompleteClient slug="wavesparks" />);
 
     expect(
-      await screen.findByText("We could not verify your Clerk session. Please try again."),
+      await screen.findByText("We couldn’t confirm your sign-in. Please try again."),
     ).toBeInTheDocument();
     expect(clerk.getToken).toHaveBeenCalledTimes(2);
     expect(fetchMock).not.toHaveBeenCalled();

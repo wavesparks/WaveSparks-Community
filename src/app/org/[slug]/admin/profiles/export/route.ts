@@ -1,6 +1,6 @@
 import { getCurrentAuthIdentity } from "@/lib/auth-identity";
 import type { FullAdminProfile } from "@/lib/domain";
-import { canAdminOrganization } from "@/server/permissions";
+import { canViewAdminRoute } from "@/server/permissions";
 import { fullProfilesToCsv } from "@/server/csv";
 import {
   getViewerRecordByEmailAndSlug,
@@ -22,7 +22,7 @@ export async function GET(
   const viewerRecord = await getViewerRecordByEmailAndSlug(slug, identity.email);
   const { org, user, membership } = viewerRecord;
 
-  if (!org || !user || !membership || !canAdminOrganization(user, membership)) {
+  if (!org || !user || !membership || !canViewAdminRoute(user, membership)) {
     return new Response("Forbidden", { status: 403 });
   }
 

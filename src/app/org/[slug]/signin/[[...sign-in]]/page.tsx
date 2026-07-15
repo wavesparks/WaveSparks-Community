@@ -28,7 +28,7 @@ export default async function SignInPage({
         <div className="flex items-center justify-between gap-3">
           <LinkButton href={`/org/${slug}`} size="sm" variant="ghost">
             <ArrowLeft className="size-4" />
-            Back to My Spaces
+            Back to home
           </LinkButton>
         </div>
 
@@ -38,16 +38,16 @@ export default async function SignInPage({
               <BrandLogo className="h-8 w-fit" tone="light" />
               <div>
                 <SectionHeading
-                  description="Use the account your admin invited to this community."
+                  description="Use the email address that received your Wavesparks invitation."
                   eyebrow="Sign in"
                   level={1}
-                  title="Enter the Wavesparks application flow"
+                  title="Welcome to Wavesparks"
                   tone="inverse"
                 />
                 <div className="mt-6 grid gap-3 text-sm text-[var(--surface)]/80">
-                  <p>Every Event and Main Community is a separate private Space.</p>
-                  <p>You will only see content, people, and matches from Spaces assigned to you.</p>
-                  <p>Contact details stay hidden until both sides agree.</p>
+                  <p>Wavesparks Community and each event have their own people and conversations.</p>
+                  <p>You will only see the community and events you have been invited to.</p>
+                  <p>Contact details are shared only after an introduction is accepted.</p>
                 </div>
               </div>
             </div>
@@ -57,8 +57,8 @@ export default async function SignInPage({
             {clerkConfigured ? (
               <Card className="space-y-5">
                 <SectionHeading
-                  description="Use Clerk to access your Wavesparks community account."
-                  eyebrow="Managed identity"
+                  description="Sign in to see your community and events."
+                  eyebrow="Your account"
                   title="Sign in to Wavesparks"
                 />
                 <div className="flex min-h-[360px] justify-center">
@@ -73,9 +73,9 @@ export default async function SignInPage({
             ) : (
               <Card className="space-y-4">
                 <SectionHeading
-                  description="Add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY to enable sign-in."
-                  eyebrow="Configuration"
-                  title="Clerk is not configured"
+                  description="Please try again later or contact the Wavesparks team."
+                  eyebrow="Sign-in unavailable"
+                  title="Sign-in is temporarily unavailable"
                 />
               </Card>
             )}
@@ -86,8 +86,8 @@ export default async function SignInPage({
               <Card className="space-y-2 text-sm leading-6 text-[var(--ink-soft)]">
                 <p className="font-semibold text-[var(--ink)]">Invitation required</p>
                 <p>
-                  New member accounts are created from a Wavesparks admin invitation.
-                  Ask your community admin to send an invite to your email address.
+                  Wavesparks is invitation-only. Ask the Wavesparks team to invite your email
+                  address.
                 </p>
               </Card>
             ) : null}

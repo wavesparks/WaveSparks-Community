@@ -12,14 +12,21 @@ import type {
   SpaceIntent,
   SpaceMembership,
 } from "@/lib/domain";
-import {
-  matchFactorLabels,
-  stableDefaultMatchTypeConfigs,
-} from "@/lib/match-config";
+import { stableDefaultMatchTypeConfigs } from "@/lib/match-config";
+import { canonicalLegacyBio, distinctLegacyProfileText } from "@/lib/profile-bio";
 import { buildLocalEmbedding } from "@/server/embeddings";
 
 export const MATCHING_ALGORITHM_VERSION = "hybrid-v2";
 export const SPACE_INTENT_EMBEDDING_WEIGHT = 0.2;
+
+const memberMatchReasonLabels = {
+  semantic: "what you need and can offer",
+  skills: "relevant roles and skills",
+  venture: "startup interests",
+  availability: "availability",
+  work_style: "working style",
+  location: "location or time zone",
+} as const;
 
 export interface SpaceMatchingMember {
   membership: Membership;
@@ -163,8 +170,16 @@ export function buildMatchingEmbeddingTexts(
   posts: Post[] = [],
   now = new Date(),
 ) {
+  const additionalProjectContext = distinctLegacyProfileText(
+    profile.currentFocus,
+    profile.startupOneLiner,
+  );
+  const canonicalBio = profile.bio || canonicalLegacyBio(profile.shortBio, profile.longBio);
+  const shortBioStem = profile.shortBio.replace(/…$/, "").trim();
+  const distinctLegacyShortBio = distinctLegacyProfileText(canonicalBio, shortBioStem);
   const seekingProfileText = [
-    `Current context: ${profile.headline}. ${profile.startupOneLiner}. ${profile.startupDescription}`,
+    `Current context: ${profile.headline}. ${profile.currentFocus}. ${profile.problemInterest}`,
+    additionalProjectContext ? `Project context: ${additionalProjectContext}` : "",
     `Ideal match: ${profile.idealMatchDescription}`,
     `Roles needed: ${profile.desiredRoles.join(", ")}`,
     `Help needed: ${profile.helpNeededTags.join(", ")}`,
@@ -175,10 +190,10 @@ export function buildMatchingEmbeddingTexts(
     .join("\n")
     .trim();
   const offeringText = [
-    `Profile: ${profile.headline}. ${profile.shortBio}. ${profile.longBio}`,
+    `Profile: ${profile.headline}. ${distinctLegacyShortBio}. ${canonicalBio}`,
     `Skills: ${profile.skillTags.join(", ")}`,
     `Strengths: ${profile.topStrengths.join(", ")}; ${profile.canContribute.join(", ")}`,
-    `Experience: ${profile.priorProjects}; ${profile.notableWins}`,
+    `Experience: ${profile.technicalExperience}; ${profile.notableWins}`,
     `Mentoring: ${profile.mentorExpertiseTags.join(", ")}; ${profile.mentorFunctionalStrengths.join(", ")}; ${profile.mentorOffers.join(", ")}`,
     `Venture context: ${profile.stage}; ${profile.industryTags.join(", ")}; ${profile.problemSpaceTags.join(", ")}`,
   ]
@@ -341,7 +356,7 @@ function profileSignalCoverage(profile: Profile) {
     profile.seekingMatchTypes.length > 0,
     needs(profile).length > 0,
     offers(profile).length > 0,
-    Boolean(profile.startupDescription || profile.longBio),
+    Boolean(profile.currentFocus || profile.problemInterest || profile.bio || profile.longBio),
     Boolean(profile.timeCommitment && profile.meetingFrequencyPreference),
     Boolean(profile.workStyle && profile.decisionStyle),
     Boolean(profile.timezone || profile.country || profile.remotePreference),
@@ -398,16 +413,19 @@ export function buildFallbackExplanation(
   source: Profile,
   target: Profile,
   breakdown: Record<string, number>,
-  configOrType: MatchTypeConfig | MatchType,
+  _configOrType: MatchTypeConfig | MatchType,
 ) {
-  const config = typeof configOrType === "string" ? fallbackConfig(configOrType) : configOrType;
+  void _configOrType;
   const strongestReasons = Object.entries(breakdown)
     .sort(([, left], [, right]) => right - left)
     .slice(0, 3)
-    .map(([key]) => matchFactorLabels[key as keyof typeof matchFactorLabels]);
+    .map(
+      ([key]) =>
+        memberMatchReasonLabels[key as keyof typeof memberMatchReasonLabels],
+    );
   const overlaps = topOverlapTags(source, target);
-  const overlapCopy = overlaps.length ? ` Shared signals include ${overlaps.join(", ")}.` : "";
-  return `${config.name} surfaced because ${target.preferredName} aligns with ${source.preferredName} on ${strongestReasons.join(", ")}.${overlapCopy}`;
+  const reasons = [...strongestReasons, ...overlaps].slice(0, 4);
+  return `${target.preferredName} may be a good person to meet. You have ${reasons.join(", ")} in common.`;
 }
 
 function participates(profile: Profile, target: Profile, config: MatchTypeConfig) {

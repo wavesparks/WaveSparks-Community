@@ -19,8 +19,13 @@ import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { SignOutButton } from "@/components/layout/sign-out-button";
 import { wavesparksBrand } from "@/lib/brand";
+import {
+  getCommunityDisplayName,
+  WAVESPARKS_COMMUNITY_NAME,
+} from "@/lib/community-copy";
 import type { ViewerContext } from "@/lib/domain";
 import { isClerkConfigured } from "@/lib/env";
+import { getMemberDisplayName } from "@/lib/member-display-name";
 import { cn } from "@/lib/utils";
 
 function formatDate(value?: string) {
@@ -42,10 +47,8 @@ function dateLabel(space: SpaceShellSpace) {
 }
 
 function lifecycleLabel(space: SpaceShellSpace) {
-  if (space.kind === "main") return "Permanent network";
-  if (space.lifecycle === "ended") return "Past event";
-  if (space.lifecycle === "upcoming") return "Upcoming";
-  return "Active now";
+  if (space.kind === "main") return "Community";
+  return space.lifecycle === "ended" ? "Past event" : "Event";
 }
 
 function SpaceCard({
@@ -97,22 +100,23 @@ function SpaceCard({
             {locked
               ? lockedReason === "account"
                 ? "Account unavailable"
-                : "Invite only"
+                : "Invitation only"
               : lifecycleLabel(space)}
           </Badge>
         </div>
 
         <div className="mt-5">
-          <h2 className="text-xl font-semibold text-[var(--ink)]">{space.name}</h2>
+          <h2 className="text-xl font-semibold text-[var(--ink)]">
+            {getCommunityDisplayName(space)}
+          </h2>
           <p className="mt-2 min-h-12 text-sm leading-6 text-[var(--ink-soft)]">
             {locked
               ? lockedReason === "account"
-                ? "Your account is currently suspended or deprovisioned, so every Space is unavailable."
-                : "Main Community is a separate permanent network. Access is offered after an event and never unlocks automatically."
+                ? "This account is currently unavailable, so you can’t open the community or your events."
+                : `${WAVESPARKS_COMMUNITY_NAME} is invitation-only. Joining an event won’t add you automatically.`
               : space.kind === "main"
-                ? "Your permanent Wavesparks network, with its own conversations, people, and AI matches."
-                : space.eventLabel ||
-                  "A private event space with its own conversations, participants, and AI matches."}
+                ? "Meet members, join conversations and discover people with shared interests."
+                : "Meet other participants, join the conversation and find people to connect with."}
           </p>
         </div>
 
@@ -128,11 +132,11 @@ function SpaceCard({
             <div className="rounded-lg bg-[var(--surface)] px-3 py-2.5 text-sm text-[var(--ink-soft)] ring-1 ring-[var(--line)]">
               {lockedReason === "account"
                 ? "Contact the community team if you believe this account status is incorrect."
-                : "Keep participating in your event. If you are invited later, Main Community will appear here."}
+                : `If you are invited to ${WAVESPARKS_COMMUNITY_NAME}, it will appear here.`}
             </div>
           ) : (
             <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--accent)]">
-              Enter space
+              {space.kind === "main" ? "Visit community" : "View event"}
               <ArrowRight
                 aria-hidden
                 className="size-4 transition-transform group-hover:translate-x-0.5"
@@ -167,6 +171,11 @@ export function MySpacesView({
 }) {
   const theme = wavesparksBrand.theme;
   const clerkConfigured = isClerkConfigured();
+  const memberName = getMemberDisplayName({
+    email: viewer.user.email,
+    name: viewer.user.name,
+    preferredName: viewer.profile?.preferredName,
+  });
   const mainAccess = accessibleSpaces.find((record) => record.id === mainSpace.id);
   const accountUnavailable =
     viewer.membership.accountStatus === "suspended" ||
@@ -200,7 +209,7 @@ export function MySpacesView({
         <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <BrandLogo className="h-8 max-w-[160px]" />
           <p className="hidden border-l border-[var(--line)] pl-3 text-sm font-semibold text-[var(--ink-soft)] sm:block">
-            My spaces
+            Home
           </p>
           <div className="ml-auto flex items-center gap-2">
             {viewer.canAdmin ? (
@@ -218,7 +227,7 @@ export function MySpacesView({
               <div className="hidden items-center gap-2 sm:flex">
                 <Avatar
                   className="size-8"
-                  name={viewer.profile?.preferredName ?? viewer.user.name}
+                  name={memberName}
                   src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
                 />
                 <SignOutButton callbackUrl={`/org/${viewer.org.slug}`} mode="local" tone="light" />
@@ -231,20 +240,20 @@ export function MySpacesView({
       <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
         <div className="max-w-3xl">
           <SectionHeading
-            description="Each space is private and separate. Posts, people, and AI matches stay inside the space where they were created."
+            description={`${WAVESPARKS_COMMUNITY_NAME} and your events each have their own people, conversations and matches.`}
             eyebrow="Wavesparks"
             level={1}
-            title={`Welcome back, ${viewer.profile?.preferredName || viewer.user.name}`}
+            title={`Welcome back, ${memberName}`}
           />
         </div>
 
         <section aria-labelledby="main-community-heading" className="mt-10 space-y-4">
           <div>
             <h2 className="text-xl font-semibold text-[var(--ink)]" id="main-community-heading">
-              Main Community
+              {WAVESPARKS_COMMUNITY_NAME}
             </h2>
             <p className="mt-1 text-sm text-[var(--ink-soft)]">
-              The permanent network is separate from every event space.
+              A private community for Wavesparks members.
             </p>
           </div>
           <div className="max-w-xl">
@@ -260,10 +269,10 @@ export function MySpacesView({
         <section aria-labelledby="active-events-heading" className="mt-10 space-y-4">
           <div>
             <h2 className="text-xl font-semibold text-[var(--ink)]" id="active-events-heading">
-              Your event spaces
+              Your events
             </h2>
             <p className="mt-1 text-sm text-[var(--ink-soft)]">
-              Open an event to see and interact only with that event’s participants and content.
+              Each event has its own participants, conversations and matches.
             </p>
           </div>
           {activeEvents.length ? (
@@ -274,9 +283,9 @@ export function MySpacesView({
             </div>
           ) : (
             <Card className="max-w-2xl">
-              <p className="font-semibold text-[var(--ink)]">No active event spaces</p>
+              <p className="font-semibold text-[var(--ink)]">No active events</p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                When you join another Wavesparks event, its private space will appear here.
+                When you join an event, it will appear here.
               </p>
             </Card>
           )}
@@ -289,7 +298,7 @@ export function MySpacesView({
                 Past events
               </h2>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                Ended events remain available to their participants; archived spaces are hidden.
+                Revisit past events and keep in touch with other participants.
               </p>
             </div>
             <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">

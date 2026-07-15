@@ -23,22 +23,26 @@ export function OrgLogoUploadField({
     const formData = new FormData();
     formData.append("file", file);
 
-    const response = await fetch(`/api/uploads/org-logo?slug=${encodeURIComponent(slug)}`, {
-      method: "POST",
-      body: formData,
-    });
-    const payload = (await response.json().catch(() => ({}))) as {
-      url?: string;
-      error?: string;
-    };
+    try {
+      const response = await fetch(`/api/uploads/org-logo?slug=${encodeURIComponent(slug)}`, {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
 
-    if (!response.ok || !payload.url) {
-      setStatus(payload.error ?? "Upload unavailable. Paste a logo URL instead.");
-      return;
+      if (!response.ok || !payload.url) {
+        setStatus(payload.error ?? "We couldn't upload the logo. Try again or use an image link.");
+        return;
+      }
+
+      setLogoUrl(payload.url);
+      setStatus("Logo ready.");
+    } catch {
+      setStatus("We couldn't upload the logo. Try again or use an image link.");
     }
-
-    setLogoUrl(payload.url);
-    setStatus("Logo uploaded.");
   }
 
   return (
@@ -54,9 +58,9 @@ export function OrgLogoUploadField({
         </div>
         <div className="min-w-0 flex-1 space-y-3">
           <div>
-            <Label htmlFor="org_logo_upload">Upload logo</Label>
+            <Label htmlFor="org_logo_upload">Community logo</Label>
             <Input
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp"
               id="org_logo_upload"
               onChange={(event) => {
                 const file = event.target.files?.[0];
@@ -68,7 +72,7 @@ export function OrgLogoUploadField({
             />
           </div>
           <div>
-            <Label htmlFor="org_logo_url">Logo URL fallback</Label>
+            <Label htmlFor="org_logo_url">Or use an image link</Label>
             <Input
               id="org_logo_url"
               onChange={(event) => {
@@ -79,7 +83,11 @@ export function OrgLogoUploadField({
               value={logoUrl}
             />
           </div>
-          {status ? <p className="text-xs text-[var(--ink-soft)]">{status}</p> : null}
+          {status ? (
+            <p aria-live="polite" className="text-xs text-[var(--ink-soft)]">
+              {status}
+            </p>
+          ) : null}
         </div>
       </div>
       <input name="logo_url" type="hidden" value={logoUrl} />

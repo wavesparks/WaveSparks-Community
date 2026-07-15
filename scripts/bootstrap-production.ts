@@ -75,11 +75,11 @@ async function main() {
     .from(spaces)
     .where(and(eq(spaces.orgId, seedOrganization.id), eq(spaces.kind, "main")));
   if (existingMainSpaces.length > 1) {
-    throw new Error("Production bootstrap found more than one Main Community Space.");
+    throw new Error("Production bootstrap found more than one Wavesparks Community record.");
   }
   const existingMainSpace = existingMainSpaces[0];
   if (existingMainSpace && existingMainSpace.lifecycle !== "active") {
-    throw new Error("Production bootstrap found an invalid Main Community lifecycle.");
+    throw new Error("Production bootstrap found an invalid Wavesparks Community status.");
   }
   if (!existingMainSpace) {
     const [idCollision] = await db
@@ -99,9 +99,9 @@ async function main() {
       slug: "main",
       kind: "main",
       lifecycle: "active",
-      name: "Main Community",
+      name: "Wavesparks Community",
       description: seedOrganization.description,
-      eventLabel: "Permanent community",
+      eventLabel: "Community",
       matchingEnabled: true,
       createdAt: new Date(seedOrganization.createdAt),
       updatedAt: now,

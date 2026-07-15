@@ -6,6 +6,7 @@ import { after } from "next/server";
 import { nanoid } from "nanoid";
 
 import { getViewerContextForAction } from "@/lib/auth";
+import { getCommunityDisplayName } from "@/lib/community-copy";
 import { requireSpaceAccessForAction } from "@/lib/space-auth";
 import { buildNotification, enqueueNotificationEmail } from "@/server/notifications";
 import { opportunitySourceForPost } from "@/lib/opportunities";
@@ -38,6 +39,7 @@ import {
   getSpaceMembership,
   savePostForMembershipInSpace,
   listMatchTypeConfigsForOrg,
+  listProfileLinks,
   listMatchesForProfile,
   listSpacesForOrg,
   listVisibleSpacesForMembership,
@@ -206,17 +208,17 @@ async function requireActiveTargetInSpace(
     membership.accountStatus !== "connected" ||
     spaceMembership?.accessStatus !== "active"
   ) {
-    throw new Error("This member is not active in the selected Space.");
+    throw new Error("This person is not an active member of this community or event.");
   }
   return membership;
 }
 
 async function requireLegacyMainSpace(orgId: string, membershipId: string) {
   const main = (await listSpacesForOrg(orgId)).find((space) => space.kind === "main");
-  if (!main) throw new Error("Main Community is not configured.");
+  if (!main) throw new Error("Wavesparks Community is not configured.");
   const spaceMembership = await getSpaceMembership(main.id, membershipId);
   if (spaceMembership?.accessStatus !== "active") {
-    throw new Error("Main Community access required.");
+    throw new Error("Wavesparks Community access required.");
   }
   return main;
 }
@@ -243,7 +245,7 @@ async function requireIntroSourceInSpace(input: {
       sourcePost.authorMembershipId !== input.receiverMembershipId
     ) {
       throw new Error(
-        "Post source does not belong to the selected member in this Space.",
+        "This post does not belong to the selected member in this community or event.",
       );
     }
     return;
@@ -260,7 +262,7 @@ async function requireIntroSourceInSpace(input: {
     sourceMatch.sourceProfileId !== input.requesterProfileId ||
     sourceMatch.targetProfileId !== input.receiverProfileId
   ) {
-    throw new Error("Match source does not belong to this Space pair.");
+    throw new Error("This match does not belong to these members in this community or event.");
   }
 }
 
@@ -306,7 +308,10 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
       `/org/${slug}/onboarding?status=profile_invalid&fields=${encodeURIComponent(fields)}`,
     );
   }
-  const matchTypeConfigs = await listMatchTypeConfigsForOrg(membership.orgId);
+  const [matchTypeConfigs, existingLinks] = await Promise.all([
+    listMatchTypeConfigsForOrg(membership.orgId),
+    existingProfile ? listProfileLinks(existingProfile.id) : Promise.resolve([]),
+  ]);
   const result = profileFromFormData({
     formData,
     membership,
@@ -318,6 +323,7 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
       updatedAt: new Date().toISOString(),
     },
     existingProfile,
+    existingLinks,
     matchTypeConfigs,
   });
 
@@ -333,9 +339,9 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
   if (!readiness.isReady) {
     const firstMissingStep = Math.min(
       ...readiness.missingFields.map((field) => {
-        if (["preferred_name", "headline"].includes(field.key)) return 0;
-        if (["startup_one_liner", "startup_description"].includes(field.key)) return 1;
-        if (["looking_for_types", "desired_roles", "skill_tags"].includes(field.key)) return 2;
+        if (["preferred_name", "headline", "bio"].includes(field.key)) return 0;
+        if (["current_focus", "skill_tags"].includes(field.key)) return 1;
+        if (field.key === "looking_for_types") return 2;
         return 3;
       }),
     );
@@ -453,7 +459,7 @@ export async function saveMatchFeedbackInSpaceAction(
     value,
     reasons,
   });
-  if (!feedback) throw new Error("Match not found in this Space.");
+  if (!feedback) throw new Error("Match not found in this community or event.");
   revalidatePath(`${spaceRoot(slug, space.slug)}/matches`);
   redirect(`${spaceRoot(slug, space.slug)}/matches?status=match_feedback_saved`);
 }
@@ -759,7 +765,7 @@ export async function savePostInSpaceAction(
   });
   const post = await getPostByIdInSpace(spaceId, postId);
   if (!post || post.orgId !== viewer.org.id || post.hidden) {
-    throw new Error("Post not found in this Space.");
+    throw new Error("Post not found in this community or event.");
   }
   await savePostForMembershipInSpace(
     viewer.org.id,
@@ -796,7 +802,7 @@ export async function unsavePostInSpaceAction(
   });
   const post = await getPostByIdInSpace(spaceId, postId);
   if (!post || post.orgId !== viewer.org.id || post.hidden) {
-    throw new Error("Post not found in this Space.");
+    throw new Error("Post not found in this community or event.");
   }
   await unsavePostForMembershipInSpace(spaceId, viewer.membership.id, post.id);
   revalidateSpacePostPaths(slug, space.slug, post.id);
@@ -889,7 +895,7 @@ export async function addCommentInSpaceAction(
     post.commentsLocked ||
     post.status !== "active"
   ) {
-    throw new Error("Post is not available for comments in this Space.");
+    throw new Error("Comments are not available for this post.");
   }
   const comment = await createCommentInSpace(
     spaceId,
@@ -1009,6 +1015,14 @@ export async function requestIntroInSpaceAction(
     receiverProfileId: receiverProfile.id,
   });
 
+  const note = String(formData.get("note") ?? "").trim();
+  const suggestedFirstMessage = String(
+    formData.get("suggested_first_message") ?? "",
+  ).trim();
+  if (!note || !suggestedFirstMessage) {
+    throw new Error("Share why you’d like to meet and write a short first message.");
+  }
+
   const intro = await createIntroRequestInSpace(
     {
       orgId: viewer.org.id,
@@ -1020,23 +1034,22 @@ export async function requestIntroInSpaceAction(
       introPurpose: String(
         formData.get("intro_purpose") ?? "general connection",
       ),
-      note: String(formData.get("note") ?? ""),
+      note,
       status: "pending",
-      suggestedFirstMessage:
-        String(formData.get("suggested_first_message") ?? "") ||
-        "Excited to connect and learn more about what you’re building.",
+      suggestedFirstMessage,
     },
     { recordAnalytics: false },
   );
   const requestsPath = `${spaceRoot(slug, space.slug)}/requests`;
+  const communityName = getCommunityDisplayName(space);
   enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
       viewer.org.id,
       receiverMembership.id,
       "intro_requested",
-      `A new intro request in ${space.name}`,
-      "Someone in this space wants to connect with context.",
+      `New introduction request in ${communityName}`,
+      `Someone in ${communityName} would like an introduction.`,
       requestsPath,
       spaceId,
     ),
@@ -1055,8 +1068,8 @@ export async function requestIntroInSpaceAction(
   });
   enqueueNotificationEmail({
     to: receiverProfile.emailForIntro,
-    subject: `You have a new ${space.name} intro request`,
-    html: `<p>You have a new intro request inside ${space.name}.</p><p>Open <a href="${absoluteAppUrl(requestsPath)}">your requests</a> to respond.</p>`,
+    subject: `New introduction request in ${communityName}`,
+    html: `<p>Someone in ${communityName} would like an introduction.</p><p>Open <a href="${absoluteAppUrl(requestsPath)}">your requests</a> to respond.</p>`,
     membershipId: receiverMembership.id,
     spaceId,
   });
@@ -1112,6 +1125,14 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     redirect(`/org/${slug}/requests?status=intro_existing`);
   }
 
+  const note = String(formData.get("note") ?? "").trim();
+  const suggestedFirstMessage = String(
+    formData.get("suggested_first_message") ?? "",
+  ).trim();
+  if (!note || !suggestedFirstMessage) {
+    throw new Error("Share why you’d like to meet and write a short first message.");
+  }
+
   const intro = await createIntroRequestInSpace({
     orgId: org.id,
     spaceId: mainSpace.id,
@@ -1120,11 +1141,9 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     sourceType,
     sourceId,
     introPurpose: String(formData.get("intro_purpose") ?? "general connection"),
-    note: String(formData.get("note") ?? ""),
+    note,
     status: "pending",
-    suggestedFirstMessage:
-      String(formData.get("suggested_first_message") ?? "") ||
-      "Excited to connect and learn more about what you’re building.",
+    suggestedFirstMessage,
   }, { recordAnalytics: false });
   const mainRequestsPath = `${spaceRoot(slug, mainSpace.slug)}/requests`;
   enqueueNotificationWrite(
@@ -1133,8 +1152,8 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
       org.id,
       receiverMembership.id,
       "intro_requested",
-      "A new intro request is waiting",
-      "Someone in the community wants to connect with context.",
+      "New introduction request in Wavesparks Community",
+      "Someone in Wavesparks Community would like an introduction.",
       mainRequestsPath,
       mainSpace.id,
     ),
@@ -1156,8 +1175,8 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     const requestsUrl = absoluteAppUrl(mainRequestsPath);
     enqueueNotificationEmail({
       to: receiverProfile.emailForIntro,
-      subject: "You have a new Wavesparks intro request",
-      html: `<p>You have a new intro request inside Wavesparks.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
+      subject: "New introduction request in Wavesparks Community",
+      html: `<p>Someone in Wavesparks Community would like an introduction.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
       membershipId: receiverMembership.id,
       spaceId: mainSpace.id,
     });
@@ -1195,7 +1214,7 @@ export async function respondIntroInSpaceAction(
     intro.receiverMembershipId !== viewer.membership.id ||
     intro.status !== "pending"
   ) {
-    throw new Error("Intro request not found in this Space.");
+    throw new Error("Introduction request not found in this community or event.");
   }
   const updated = await respondToIntroRequestInSpace(
     spaceId,
@@ -1203,7 +1222,9 @@ export async function respondIntroInSpaceAction(
     status,
     { recordAnalytics: false },
   );
-  if (!updated) throw new Error("Intro request not found in this Space.");
+  if (!updated) {
+    throw new Error("Introduction request not found in this community or event.");
+  }
   enqueueAnalyticsEvent({
     id: `evt_${nanoid(8)}`,
     orgId: viewer.org.id,
@@ -1219,6 +1240,7 @@ export async function respondIntroInSpaceAction(
     updated.requesterMembershipId,
   );
   const requestsPath = `${spaceRoot(slug, space.slug)}/requests`;
+  const communityName = getCommunityDisplayName(space);
   if (requesterSpaceMembership?.accessStatus === "active") {
     enqueueNotificationWrite(
       buildNotification(
@@ -1227,11 +1249,11 @@ export async function respondIntroInSpaceAction(
         updated.requesterMembershipId,
         status === "accepted" ? "intro_accepted" : "intro_declined",
         status === "accepted"
-          ? `Your ${space.name} intro was accepted`
-          : `Your ${space.name} intro was declined`,
+          ? `Your ${communityName} introduction was accepted`
+          : `Your ${communityName} introduction was declined`,
         status === "accepted"
-          ? "Contact details are now available inside this Space’s requests."
-          : "The receiver passed for now. No contact details were revealed.",
+          ? "Contact details are now available in your introduction requests."
+          : "They declined for now. No contact details were shared.",
         requestsPath,
         spaceId,
       ),
@@ -1242,9 +1264,9 @@ export async function respondIntroInSpaceAction(
     spaceId,
     subject:
       status === "accepted"
-        ? `Your ${space.name} intro was accepted`
-        : `Your ${space.name} intro was declined`,
-    html: `<p>Your request status is now <strong>${status}</strong>.</p><p>Visit <a href="${absoluteAppUrl(requestsPath)}">your ${space.name} requests</a> for the latest details.</p>`,
+        ? `Your ${communityName} introduction was accepted`
+        : `Your ${communityName} introduction was declined`,
+    html: `<p>Your introduction request was ${status}.</p><p>Open <a href="${absoluteAppUrl(requestsPath)}">your introduction requests</a> for the latest details.</p>`,
   });
   revalidatePath(requestsPath);
   revalidatePath(`/org/${slug}/requests`);
@@ -1302,8 +1324,8 @@ export async function respondIntroAction(slug: string, introRequestId: string, r
       status === "accepted" ? "intro_accepted" : "intro_declined",
       status === "accepted" ? "Your intro was accepted" : "Your intro was declined",
       status === "accepted"
-        ? "Contact details are now available inside your requests inbox."
-        : "The receiver passed for now. No contact details were revealed.",
+        ? "Contact details are now available in your introduction requests."
+        : "They declined for now. No contact details were shared.",
       mainRequestsPath,
       mainSpace.id,
     ),
@@ -1315,9 +1337,9 @@ export async function respondIntroAction(slug: string, introRequestId: string, r
     spaceId: mainSpace.id,
     subject:
       status === "accepted"
-        ? "Your Wavesparks intro was accepted"
-        : "Your Wavesparks intro was declined",
-    html: `<p>Your request status is now <strong>${status}</strong>.</p><p>Visit <a href="${requestsUrl}">your Wavesparks requests inbox</a> for the latest details.</p>`,
+        ? "Your Wavesparks Community introduction was accepted"
+        : "Your Wavesparks Community introduction was declined",
+    html: `<p>Your introduction request was ${status}.</p><p>Open <a href="${requestsUrl}">your introduction requests</a> for the latest details.</p>`,
   });
 
   revalidatePath(`/org/${slug}/requests`);

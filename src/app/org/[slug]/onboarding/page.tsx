@@ -13,11 +13,8 @@ const validationFieldMeta: Record<string, { label: string; step: number }> = {
   github_url: { label: "GitHub", step: 0 },
   website_url: { label: "Website", step: 0 },
   x_url: { label: "X", step: 0 },
-  years_of_experience: { label: "Years of experience", step: 2 },
   email_for_intro: { label: "Email for intro", step: 3 },
-  ambition_level: { label: "Ambition level", step: 3 },
-  risk_tolerance: { label: "Risk tolerance", step: 3 },
-  structure_vs_chaos: { label: "Structure vs chaos", step: 3 },
+  technical_experience_level: { label: "Technical experience level", step: 1 },
   max_mentees: { label: "Max mentees", step: 3 },
 };
 
@@ -79,10 +76,10 @@ export default async function OnboardingPage({
       <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6 lg:px-8">
         <section className="ws-hero-art rounded-lg p-5 text-[var(--surface)] shadow-sm">
           <SectionHeading
-            eyebrow="Onboarding"
+            eyebrow="Your profile"
             level={1}
-            title="Build a profile strong enough for serious intros"
-            description="This is your global profile across every Community and Event Space. Contact details stay hidden until an intro is accepted; each Space keeps its own goals and matching preference."
+            title="Share what you’re curious about and where you’re heading"
+            description="You do not need a startup or technical background. Share enough for people across Wavesparks to understand your interests and connect with you. Contact details stay private until you accept an introduction."
             tone="inverse"
           />
         </section>
@@ -104,8 +101,8 @@ export default async function OnboardingPage({
             </div>
           ) : null}
           <SectionHeading
-            title={viewer.profile ? "Refresh your profile" : "Complete your profile"}
-            description="These core details appear in every Space you join. You will set event-specific goals and offers inside each Space."
+            title={viewer.profile ? "Edit your profile" : "Complete your profile"}
+            description="These details appear everywhere you participate. You can set different goals, needs, offers, and matching preferences for each community or event."
           />
           <OnboardingForm
             action={action}

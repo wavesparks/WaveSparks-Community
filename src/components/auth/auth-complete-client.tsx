@@ -76,19 +76,19 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
           }
 
           if (response.status === 401) {
-            setError("We could not verify your Clerk session. Please try again.");
+            setError("We couldn’t confirm your sign-in. Please try again.");
             return;
           }
 
           if (response.status === 403) {
             setError(
-              "This Clerk account does not have an active Wavesparks invitation. Sign out and use the email address that was invited.",
+              "This account does not have an active Wavesparks invitation. Sign out and use the email address that was invited.",
             );
             return;
           }
 
           if (!response.ok) {
-            setError("We could not finish the workspace handoff. Please try again.");
+            setError("We couldn’t finish signing you in. Please try again.");
             return;
           }
 
@@ -114,11 +114,11 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
         }
 
         if (active) {
-          setError("We could not verify your Clerk session. Please try again.");
+          setError("We couldn’t confirm your sign-in. Please try again.");
         }
       } catch {
         if (active) {
-          setError("We could not finish the workspace handoff. Please try again.");
+          setError("We couldn’t finish signing you in. Please try again.");
         }
       }
     }
@@ -137,10 +137,10 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
         <SectionHeading
           eyebrow="Signing in"
           level={1}
-          title="Completing your workspace handoff"
+          title="Signing you in"
           description={
             error ??
-            "Keep this tab open while Wavesparks connects your Clerk session to the community workspace."
+            "Keep this tab open for a moment while Wavesparks finishes setting up your account."
           }
         />
         {error ? (
@@ -168,8 +168,8 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
           </div>
         ) : (
           <div className="flex items-center justify-center gap-2 text-sm font-semibold text-[var(--ink-soft)]">
-            <LoaderCircle className="size-4 animate-spin" />
-            Syncing secure session
+            <LoaderCircle aria-hidden className="size-4 animate-spin" />
+            Finishing sign-in
           </div>
         )}
       </Card>

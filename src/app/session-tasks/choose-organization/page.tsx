@@ -11,12 +11,12 @@ export default function ChooseOrganizationTaskPage() {
       <main className="ws-page-shell grid min-h-screen place-items-center px-4 py-8">
         <Card className="max-w-lg space-y-4">
           <SectionHeading
-            eyebrow="Configuration"
+            eyebrow="Account setup"
             level={1}
-            title="Clerk is not configured"
-            description="Organization selection is available after Clerk keys are configured."
+            title="Account setup is temporarily unavailable"
+            description="Please try again later or contact the Wavesparks team."
           />
-          <LinkButton href="/org/wavesparks">Back to My Spaces</LinkButton>
+          <LinkButton href="/org/wavesparks">Back to home</LinkButton>
         </Card>
       </main>
     );

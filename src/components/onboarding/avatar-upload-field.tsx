@@ -17,27 +17,31 @@ export function AvatarUploadField({
   const [status, setStatus] = useState<string | null>(null);
 
   async function upload(file: File) {
-    setStatus("Uploading portrait...");
+    setStatus("Uploading profile photo...");
 
     const formData = new FormData();
     formData.append("file", file);
 
-    const response = await fetch("/api/uploads/avatar", {
-      method: "POST",
-      body: formData,
-    });
-    const payload = (await response.json().catch(() => ({}))) as {
-      url?: string;
-      error?: string;
-    };
+    try {
+      const response = await fetch("/api/uploads/avatar", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        url?: string;
+        error?: string;
+      };
 
-    if (!response.ok || !payload.url) {
-      setStatus(payload.error ?? "Upload unavailable. Paste an image URL instead.");
-      return;
+      if (!response.ok || !payload.url) {
+        setStatus(payload.error ?? "We couldn't upload your photo. Try again or use an image link.");
+        return;
+      }
+
+      setPhotoUrl(payload.url);
+      setStatus("Profile photo ready.");
+    } catch {
+      setStatus("We couldn't upload your photo. Try again or use an image link.");
     }
-
-    setPhotoUrl(payload.url);
-    setStatus("Portrait uploaded.");
   }
 
   return (
@@ -46,9 +50,9 @@ export function AvatarUploadField({
         <Avatar className="size-20" name={displayName} src={photoUrl} />
         <div className="min-w-0 flex-1 space-y-3">
           <div>
-            <Label htmlFor="profile_photo_upload">Upload portrait</Label>
+            <Label htmlFor="profile_photo_upload">Profile photo</Label>
             <Input
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp"
               id="profile_photo_upload"
               onChange={(event) => {
                 const file = event.target.files?.[0];
@@ -60,7 +64,7 @@ export function AvatarUploadField({
             />
           </div>
           <div>
-            <Label htmlFor="profile_photo_url">Portrait URL fallback</Label>
+            <Label htmlFor="profile_photo_url">Or use an image link</Label>
             <Input
               id="profile_photo_url"
               onChange={(event) => {
@@ -71,7 +75,11 @@ export function AvatarUploadField({
               value={photoUrl}
             />
           </div>
-          {status ? <p className="text-xs text-[var(--ink-soft)]">{status}</p> : null}
+          {status ? (
+            <p aria-live="polite" className="text-xs text-[var(--ink-soft)]">
+              {status}
+            </p>
+          ) : null}
         </div>
       </div>
       <input name="profile_photo" type="hidden" value={photoUrl} />

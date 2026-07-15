@@ -105,8 +105,8 @@ export default async function AccountInboxPage({
     <AppShell currentPath={`/org/${slug}/requests`} viewer={viewer}>
       <div className="space-y-8">
         <SectionHeading
-          description="Your private introduction history and notifications across Spaces. Every Space-scoped item is labeled, and opening it re-checks your current access."
-          eyebrow="Account Inbox"
+          description="See your introduction history and recent notifications in one place."
+          eyebrow="Inbox"
           level={1}
           title="Introductions and notifications"
         />
@@ -155,8 +155,8 @@ export default async function AccountInboxPage({
                         {needsProfile
                           ? "Complete profile to respond"
                           : request.isIncoming && request.status === "pending"
-                            ? `Respond in ${request.spaceName ?? "Space"}`
-                            : `Open ${request.spaceName ?? "Space"}`}
+                            ? `Respond in ${request.spaceName ?? "this community"}`
+                            : `Open ${request.spaceName ?? "this community"}`}
                       </LinkButton>
                     ) : null
                   }
@@ -168,10 +168,10 @@ export default async function AccountInboxPage({
 
             {!requests.length ? (
               <Card>
-                <p className="font-semibold text-[var(--ink)]">No intro requests yet</p>
+                <p className="font-semibold text-[var(--ink)]">No introduction requests yet</p>
                 <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                  Requests started in a Space appear here with their source label. Accepted
-                  connection history remains private to your account.
+                  Introduction requests will appear here. Accepted introductions remain private
+                  to your account.
                 </p>
               </Card>
             ) : null}
@@ -188,8 +188,8 @@ export default async function AccountInboxPage({
                     viewer.membership.id,
                   )}
                 >
-                  <SubmitButton pendingLabel="Marking read" size="sm" variant="secondary">
-                    Mark all read
+                  <SubmitButton pendingLabel="Marking as read" size="sm" variant="secondary">
+                    Mark all as read
                   </SubmitButton>
                 </form>
               ) : null}

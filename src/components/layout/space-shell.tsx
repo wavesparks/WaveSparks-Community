@@ -20,8 +20,14 @@ import { Badge } from "@/components/ui/badge";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { LinkButton } from "@/components/ui/link-button";
 import { wavesparksBrand } from "@/lib/brand";
+import {
+  getCommunityDisplayName,
+  getCommunityTypeLabel,
+  WAVESPARKS_COMMUNITY_NAME,
+} from "@/lib/community-copy";
 import type { ViewerContext } from "@/lib/domain";
 import { isClerkConfigured } from "@/lib/env";
+import { getMemberDisplayName } from "@/lib/member-display-name";
 
 function formatSpaceDate(value?: string) {
   if (!value) return undefined;
@@ -43,12 +49,11 @@ function spaceDateLabel(space: SpaceShellSpace) {
   return space.eventLabel || undefined;
 }
 
-function lifecycleLabel(space: SpaceShellSpace) {
-  if (space.kind === "main") return "Main Community";
-  if (space.lifecycle === "ended") return "Ended event";
-  if (space.lifecycle === "upcoming") return "Upcoming event";
-  if (space.lifecycle === "draft") return "Draft event";
-  return "Active event";
+function lifecycleStatus(space: SpaceShellSpace) {
+  if (space.lifecycle === "ended") return "Past";
+  if (space.lifecycle === "upcoming") return "Upcoming";
+  if (space.lifecycle === "draft") return "Draft";
+  return undefined;
 }
 
 export function SpaceShell({
@@ -66,11 +71,18 @@ export function SpaceShell({
 }) {
   const theme = wavesparksBrand.theme;
   const clerkConfigured = isClerkConfigured();
-  const dateLabel = spaceDateLabel(currentSpace);
-  const scopeDescription =
+  const dateLabel = currentSpace.kind === "event" ? spaceDateLabel(currentSpace) : undefined;
+  const statusLabel = lifecycleStatus(currentSpace);
+  const communityName = getCommunityDisplayName(currentSpace);
+  const memberName = getMemberDisplayName({
+    email: viewer.user.email,
+    name: viewer.user.name,
+    preferredName: viewer.profile?.preferredName,
+  });
+  const audienceDescription =
     currentSpace.kind === "main"
-      ? "Posts, people, and AI matches here belong only to the permanent Main Community."
-      : "Posts, people, and AI matches here are visible only inside this event space.";
+      ? `Conversations, members and matches here are visible only to ${WAVESPARKS_COMMUNITY_NAME} members.`
+      : "Conversations, participants and matches here are visible only to people in this Event.";
 
   return (
     <div
@@ -94,7 +106,7 @@ export function SpaceShell({
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex min-h-16 flex-wrap items-center gap-3 py-2.5 lg:flex-nowrap">
             <Link
-              aria-label="My spaces"
+              aria-label="Home"
               className="flex shrink-0 items-center"
               href={`/org/${viewer.org.slug}`}
             >
@@ -116,7 +128,7 @@ export function SpaceShell({
                 size="sm"
                 variant="ghost"
               >
-                My spaces
+                Home
               </LinkButton>
               {viewer.canAdmin ? (
                 <LinkButton
@@ -150,7 +162,7 @@ export function SpaceShell({
                   <div className="flex items-center gap-2">
                     <Avatar
                       className="size-8"
-                      name={viewer.profile?.preferredName ?? viewer.user.name}
+                      name={memberName}
                       src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
                     />
                     <SignOutButton
@@ -177,11 +189,14 @@ export function SpaceShell({
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="truncate text-lg font-semibold text-[var(--ink)]">
-                      {currentSpace.name}
+                      {communityName}
                     </p>
-                    <Badge variant={currentSpace.lifecycle === "ended" ? "muted" : "accent"}>
-                      {lifecycleLabel(currentSpace)}
-                    </Badge>
+                    {currentSpace.kind === "event" ? (
+                      <>
+                        <Badge variant="accent">{getCommunityTypeLabel(currentSpace)}</Badge>
+                        {statusLabel ? <Badge variant="muted">{statusLabel}</Badge> : null}
+                      </>
+                    ) : null}
                     {dateLabel ? (
                       <span className="text-xs font-semibold text-[var(--ink-soft)]">
                         {dateLabel}
@@ -189,7 +204,7 @@ export function SpaceShell({
                     ) : null}
                   </div>
                   <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-[var(--ink-soft)] sm:text-sm">
-                    {scopeDescription}
+                    {audienceDescription}
                   </p>
                 </div>
               </div>
@@ -200,7 +215,7 @@ export function SpaceShell({
                   size="sm"
                 >
                   <PenLine aria-hidden className="size-4" />
-                  Post in {currentSpace.name}
+                  Post in {communityName}
                 </LinkButton>
               ) : null}
             </div>

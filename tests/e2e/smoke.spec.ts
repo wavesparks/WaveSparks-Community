@@ -20,9 +20,7 @@ test.beforeEach(async ({ page }) => {
 async function expectPrivateRouteToRequireSignIn(page: Page, path: string) {
   await page.goto(path);
   await expect(page).toHaveURL(/\/org\/wavesparks\/signin$/);
-  await expect(
-    page.getByRole("heading", { name: "Enter the Wavesparks application flow" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to Wavesparks" })).toBeVisible();
   await expect(page.getByText(privatePostTitle, { exact: true })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Wavesparks Forum" })).toHaveCount(0);
   await expect(page.getByText("Post published", { exact: true })).toHaveCount(0);
@@ -45,12 +43,12 @@ test("anonymous direct post reveals neither its Space nor content", async ({ pag
 
 test("sign-in surface explains private Space access", async ({ page }) => {
   await page.goto("/org/wavesparks/signin");
+  await expect(page.getByRole("heading", { name: "Welcome to Wavesparks" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to home" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Enter the Wavesparks application flow" }),
-  ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to My Spaces" })).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: /Sign in to Wavesparks|Clerk is not configured/ }),
+    page.getByRole("heading", {
+      name: /Sign in to Wavesparks|Sign-in is temporarily unavailable/,
+    }),
   ).toBeVisible();
   await expect(
     page.getByText("Sign in is required before any community content or member information is shown."),
@@ -65,10 +63,10 @@ test("sign-up is invitation-only and exposes no account creation form", async ({
   await expect(
     page.getByRole("heading", { name: "Check your invitation email" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to My Spaces" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to home" })).toBeVisible();
   await expect(page.getByLabel("Invitation code")).toHaveCount(0);
   await expect(
-    page.getByText("Direct public registration and shared invite codes are closed"),
+    page.getByText("Wavesparks is invitation-only. Ask the Wavesparks team to invite your email address."),
   ).toBeVisible();
 
   await page.goto("/org/wavesparks/accept-invitation");

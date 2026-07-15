@@ -3,6 +3,7 @@ import {
   getProfileVisibilityForMember,
 } from "@/server/permissions";
 import { getProfileReadiness } from "@/lib/activation";
+import { getCommunityDisplayName } from "@/lib/community-copy";
 import {
   getMembershipById,
   getSpaceById,
@@ -68,6 +69,7 @@ import type {
   ProfileLink,
   Space,
 } from "@/lib/domain";
+import { getAffiliationLabel } from "@/lib/member-copy";
 
 const opportunityTypes: PostType[] = [
   "opportunity",
@@ -264,10 +266,10 @@ export function toLimitedProfileCard(profile: Profile, membership: Membership): 
     photo: profile.profilePhoto,
     headline: profile.headline,
     currentStatus: profile.currentStatus,
-    whatTheyAreBuilding: profile.startupOneLiner,
+    whatTheyAreBuilding: profile.currentFocus || profile.startupOneLiner,
     whatTheyNeed: profile.lookingForTypes,
     keyTags: [...profile.industryTags, ...profile.skillTags].slice(0, 5),
-    affiliationLabel: membership.affiliationType,
+    affiliationLabel: getAffiliationLabel(membership.affiliationType),
     location: [profile.city, profile.country].filter(Boolean).join(", "),
   };
 }
@@ -278,7 +280,12 @@ export function toFullAdminProfile(profile: Profile, membership: Membership): Fu
     ...getProfileVisibilityForMember(profile, membership),
     emailForIntro: profile.emailForIntro,
     whatsappNumber: profile.whatsappNumber,
-    longBio: profile.longBio,
+    bio: profile.bio || profile.longBio || profile.shortBio,
+    problemInterest: profile.problemInterest,
+    currentFocus: profile.currentFocus,
+    technicalExperienceLevel: profile.technicalExperienceLevel,
+    technicalExperience: profile.technicalExperience,
+    longBio: profile.bio || profile.longBio || profile.shortBio,
     startupDescription: profile.startupDescription,
     desiredRoles: profile.desiredRoles,
     mentorOffers: profile.mentorOffers,
@@ -360,6 +367,11 @@ function toMemberDirectoryProfileView(input: {
 }): MemberDirectoryProfileView {
   return {
     ...toLimitedProfileCard(input.profile, input.membership),
+    bio: input.profile.bio || input.profile.longBio || input.profile.shortBio,
+    problemInterest: input.profile.problemInterest,
+    currentFocus: input.profile.currentFocus,
+    technicalExperienceLevel: input.profile.technicalExperienceLevel,
+    technicalExperience: input.profile.technicalExperience,
     stage: input.profile.stage,
     startupName: input.profile.startupName,
     startupDescription: input.profile.startupDescription,
@@ -420,7 +432,10 @@ function directoryProfileMatchesFilters(
     profile.fullName,
     profile.preferredName,
     profile.headline,
-    profile.shortBio,
+    profile.bio || profile.longBio || profile.shortBio,
+    profile.problemInterest,
+    profile.currentFocus,
+    profile.technicalExperience,
     profile.startupName,
     profile.startupOneLiner,
     profile.startupDescription,
@@ -1155,7 +1170,7 @@ export async function getIntroRequestViewsForSpace(
     return {
       id: request.id,
       spaceId: request.spaceId,
-      spaceName: space?.name,
+      spaceName: space ? getCommunityDisplayName(space) : undefined,
       spaceSlug: space?.slug,
       status: request.status,
       introPurpose: request.introPurpose,
@@ -1193,7 +1208,7 @@ export async function getAccountIntroHistoryViews(
   const historySpaces = await Promise.all(historySpaceIds.map(getSpaceById));
   const nameBySpaceId = new Map(
     [...accessibleSpaces, ...historySpaces.filter((space): space is Space => Boolean(space))]
-      .map((space) => [space.id, space.name]),
+      .map((space) => [space.id, getCommunityDisplayName(space)]),
   );
   const slugBySpaceId = new Map(
     [...accessibleSpaces, ...historySpaces.filter((space): space is Space => Boolean(space))]
@@ -1275,7 +1290,7 @@ export async function getNotificationViewsForSpace(
     (notification) => ({
         id: notification.id,
         spaceId: notification.spaceId,
-        spaceName: space?.name,
+        spaceName: space ? getCommunityDisplayName(space) : undefined,
         title: notification.title,
         body: notification.body,
         createdAt: notification.createdAt,
@@ -1291,7 +1306,7 @@ export async function getAccountInboxNotificationViews(
   options: { limit?: number } = {},
 ) {
   const nameBySpaceId = new Map(
-    accessibleSpaces.map((space) => [space.id, space.name]),
+    accessibleSpaces.map((space) => [space.id, getCommunityDisplayName(space)]),
   );
   const notifications = await listNotificationsForMembershipWithSpaceAccess(
     membershipId,
@@ -1453,18 +1468,18 @@ export async function getMemberActivationState(
       id: "profile",
       label: "Complete your profile",
       description: readiness.isReady
-        ? "Your profile has the context needed for matches and introductions."
-        : "Add the minimum founder context so recommendations can work harder.",
+        ? "Your profile is ready for matches and introductions."
+        : "Add the remaining profile details before browsing members or requesting introductions.",
       complete: readiness.isReady,
       href: `/org/${slug}/onboarding`,
       cta: readiness.isReady ? "Review profile" : "Finish profile",
     },
     {
       id: "post",
-      label: "Publish your first signal",
+      label: "Make your first post",
       description: hasPost
-        ? "You have shared context the community can respond to."
-        : "Post an ask, update, or useful context so the right people can spot fit.",
+        ? "You have shared something the community can respond to."
+        : "Share an update, ask a question, or post something useful to the community.",
       complete: hasPost,
       href: `/org/${slug}/compose?kind=feed`,
       cta: hasPost ? "Create another post" : "Create post",
@@ -1473,25 +1488,25 @@ export async function getMemberActivationState(
       id: "matches",
       label: "Browse your matches",
       description: hasMatchOrFollow
-        ? "Your match graph is ready. Use it to find the next useful conversation."
-        : "Review surfaced members and follow the people worth tracking.",
+        ? "Explore your matches and start a conversation."
+        : "Browse suggested members and follow the people you would like to hear from.",
       complete: hasMatchOrFollow,
       href: `/org/${slug}/matches`,
       cta: "Open matches",
     },
     {
       id: "intro",
-      label: "Request a high-context intro",
+      label: "Request an introduction",
       description: hasRequestedIntro
-        ? "You have started an intro flow with context."
-        : "Use a match or post to request an intro without exposing contact details.",
+        ? "You have sent your first introduction request."
+        : "Request an introduction from a match or post. Contact details stay private until it is accepted.",
       complete: hasRequestedIntro,
       href: hasRequestedIntro
         ? `/org/${slug}/requests`
         : hasMatchOrFollow
           ? `/org/${slug}/matches`
           : `/org/${slug}/requests`,
-      cta: hasRequestedIntro ? "View requests" : "Request intro",
+      cta: hasRequestedIntro ? "View introductions" : "Request introduction",
     },
   ] satisfies MemberActivationState["items"];
 

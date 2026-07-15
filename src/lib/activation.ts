@@ -41,18 +41,18 @@ const readinessFields: Array<ProfileReadinessField & { hasValue: (profile: Profi
   },
   {
     key: "headline",
-    label: "Headline",
+    label: "One-line introduction",
     hasValue: (profile) => Boolean(profile.headline.trim()),
   },
   {
-    key: "startup_one_liner",
-    label: "Startup one-liner",
-    hasValue: (profile) => Boolean(profile.startupOneLiner.trim()),
+    key: "bio",
+    label: "About you",
+    hasValue: (profile) => Boolean(profile.bio.trim()),
   },
   {
-    key: "startup_description",
-    label: "Startup description",
-    hasValue: (profile) => Boolean(profile.startupDescription.trim()),
+    key: "current_focus",
+    label: "What you’re exploring",
+    hasValue: (profile) => Boolean(profile.currentFocus.trim()),
   },
   {
     key: "looking_for_types",
@@ -60,18 +60,13 @@ const readinessFields: Array<ProfileReadinessField & { hasValue: (profile: Profi
     hasValue: (profile) => profile.seekingMatchTypes.length > 0,
   },
   {
-    key: "desired_roles",
-    label: "Desired roles",
-    hasValue: (profile) => profile.desiredRoles.length > 0,
-  },
-  {
     key: "skill_tags",
-    label: "Skill tags",
+    label: "Skills or learning interests",
     hasValue: (profile) => profile.skillTags.length > 0,
   },
   {
     key: "email_for_intro",
-    label: "Email for intros",
+    label: "Email for accepted introductions",
     hasValue: (profile) => Boolean(profile.emailForIntro.trim()),
   },
 ];
@@ -93,22 +88,38 @@ export function getProfileReadinessFromFormData(
   formData: FormData,
   fallbackProfile: Profile,
 ): ProfileReadiness {
+  const hasMatchingIntentSubmission =
+    formData.has("matching_intent_version") ||
+    formData.has("looking_for_types") ||
+    formData.has("seeking_match_types") ||
+    formData.has("offering_match_types");
+  const submittedSeekingMatchTypes = formData
+    .getAll("seeking_match_types")
+    .map(String)
+    .filter(Boolean);
   const profile: Profile = {
     ...fallbackProfile,
     preferredName:
       String(formData.get("preferred_name") ?? fallbackProfile.preferredName).trim(),
     headline: String(formData.get("headline") ?? fallbackProfile.headline).trim(),
-    startupOneLiner: String(
-      formData.get("startup_one_liner") ?? fallbackProfile.startupOneLiner,
+    bio: String(
+      formData.has("bio")
+        ? formData.get("bio")
+        : fallbackProfile.bio,
     ).trim(),
-    startupDescription: String(
-      formData.get("startup_description") ?? fallbackProfile.startupDescription,
+    currentFocus: String(
+      formData.has("current_focus")
+        ? formData.get("current_focus")
+        : fallbackProfile.currentFocus,
     ).trim(),
-    seekingMatchTypes: formData.getAll("seeking_match_types").map(String).filter(Boolean).length
-      ? formData.getAll("seeking_match_types").map(String).filter(Boolean)
-      : legacySeekingMatchTypes(parseTags(formData.get("looking_for_types"))),
-    desiredRoles: parseTags(formData.get("desired_roles")),
-    skillTags: parseTags(formData.get("skill_tags")),
+    seekingMatchTypes: hasMatchingIntentSubmission
+      ? submittedSeekingMatchTypes.length
+        ? submittedSeekingMatchTypes
+        : legacySeekingMatchTypes(parseTags(formData.get("looking_for_types")))
+      : fallbackProfile.seekingMatchTypes,
+    skillTags: formData.has("skill_tags")
+      ? parseTags(formData.get("skill_tags"))
+      : fallbackProfile.skillTags,
     emailForIntro:
       String(formData.get("email_for_intro") ?? fallbackProfile.emailForIntro).trim(),
   };
@@ -121,17 +132,17 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
     case "profile_saved":
       return {
         title: "Profile saved",
-        body: "Your matching context is updated. Matches and recommendations can now use the latest details.",
+        body: "Your latest details will be used for future matches and recommendations.",
       };
     case "profile_draft_saved":
       return {
         title: "Draft saved",
-        body: "Your current profile details are saved. Complete the listed fields before member interaction unlocks.",
+        body: "Your changes are saved. Complete the remaining fields before you post, comment, browse People, or request an introduction.",
       };
     case "profile_incomplete":
       return {
-        title: "Profile still needs context",
-        body: "Your draft is saved. Complete the listed fields before finishing onboarding.",
+        title: "Your profile is not finished yet",
+        body: "Your changes are saved. Complete the remaining fields to finish setting up your profile.",
       };
     case "profile_invalid":
       return {
@@ -141,17 +152,17 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
     case "post_created":
       return {
         title: "Post published",
-        body: "Your update is now visible to approved members in this community.",
+        body: "Your update is now visible to people who have access here.",
       };
     case "intro_requested":
       return {
-        title: "Intro request sent",
-        body: "The request is now in your intro inbox. You can track the response from here.",
+        title: "Introduction request sent",
+        body: "You can follow the response from Introductions.",
       };
     case "intro_existing":
       return {
-        title: "Intro already exists",
-        body: "You already have an intro request with this member in your requests inbox.",
+        title: "Introduction already requested",
+        body: "You already have an introduction request with this person.",
       };
     case "comment_added":
       return {
@@ -161,47 +172,47 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
     case "post_saved":
       return {
         title: "Post saved",
-        body: "This thread is now available from your Knowledge saved view.",
+        body: "This post is now in your saved items.",
       };
     case "post_unsaved":
       return {
         title: "Post removed from saved",
-        body: "This thread is no longer in your saved Knowledge view.",
+        body: "This post is no longer in your saved items.",
       };
     case "intro_accepted":
       return {
-        title: "Intro accepted",
-        body: "Contact details are now unlocked for both sides in the requests inbox.",
+        title: "Introduction accepted",
+        body: "Both of you can now see each other’s contact details in Introductions.",
       };
     case "intro_declined":
       return {
-        title: "Intro declined",
-        body: "The sender has been notified that you passed for now.",
+        title: "Introduction declined",
+        body: "The requester has been notified. No contact details were shared.",
       };
     case "member_followed":
       return {
-        title: "Member followed",
+        title: "Now following",
         body: "Their posts and opportunities can now be highlighted for you.",
       };
     case "member_unfollowed":
       return {
-        title: "Member unfollowed",
-        body: "They will no longer be prioritized as a followed member.",
+        title: "No longer following",
+        body: "Their posts will no longer be highlighted for you.",
       };
     case "match_type_saved":
       return {
-        title: "Matching type saved",
-        body: "The new configuration is active and a background ranking refresh has started.",
+        title: "Matching category saved",
+        body: "The new settings are active. Match suggestions are being refreshed.",
       };
     case "match_type_invalid":
       return {
-        title: "Check the matching type",
-        body: "Complete every label, keep the minimum score in range, and make the six weights total 100.",
+        title: "Check the matching category",
+        body: "Complete every field, keep the minimum match quality from 35 to 80, and make the importance values add up to 100.",
       };
     case "match_feedback_saved":
       return {
         title: "Feedback saved",
-        body: "Your private signal will be included in matching quality review.",
+        body: "Your private feedback will help us improve future match suggestions.",
       };
     case "notifications_read":
       return {
@@ -210,108 +221,108 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       };
     case "manual_intro_created":
       return {
-        title: "Manual intro created",
-        body: "The recipient has been notified and the request is now visible in the intro flow.",
+        title: "Introduction created",
+        body: "The recipient has been notified and can now respond from their inbox.",
       };
     case "member_invited":
       return {
         title: "Invitation created",
-        body: "The invitation request was accepted, or an existing account was connected. This does not guarantee email delivery.",
+        body: "The invitation is ready. If this person already had an account, their access was added immediately.",
       };
     case "member_invite_failed":
       return {
         title: "Invitation failed",
-        body: "Clerk or the email provider did not confirm delivery. The member record keeps the error and can be retried.",
+        body: "The invitation could not be created. Review the error in member details, then try again.",
       };
     case "member_invite_revoked":
       return {
         title: "Invitation revoked",
-        body: "The pending Clerk invitation can no longer be used. You can send a new invitation later.",
+        body: "The invitation link can no longer be used. You can send a new invitation later.",
       };
     case "member_existing":
       return {
-        title: "Member already exists",
-        body: "No profile, role, or community access was changed. Manage this person from their member details.",
+        title: "This person is already listed",
+        body: "No profile, role, or access was changed. Manage this person from their details page.",
       };
     case "member_added_to_cohort":
       return {
-        title: "Member added to cohort",
-        body: "The existing member was linked to the selected cohort without changing their profile or access.",
+        title: "Participant added",
+        body: "This person was added to the event. Their profile and other access were not changed.",
       };
     case "member_added_to_space":
       return {
-        title: "Space access added",
-        body: "The account now has access to the selected Space. Access to every other Space is unchanged.",
+        title: "Access added",
+        body: "This person can now join the selected community or event. Their other access was not changed.",
       };
     case "space_access_conflict":
       return {
-        title: "Space access needs explicit review",
-        body: "Rejected, suspended, or removed Space access cannot be silently restored from an invitation flow.",
+        title: "Review this person’s access",
+        body: "Their access was previously rejected, paused, or removed. Open member details to restore it intentionally.",
       };
     case "account_inactive_conflict":
       return {
-        title: "Account needs explicit review",
-        body: "A globally suspended or deprovisioned account cannot receive new Space access until it is restored.",
+        title: "Restore the account first",
+        body: "This account is paused or no longer active. Restore it before adding community or event access.",
       };
     case "event_created":
       return {
         title: "Event created",
-        body: "The Event now has its own roster, content boundary, and matching pool.",
+        body: "You can now add participants, prepare event content, and configure matching.",
       };
     case "event_updated":
       return {
         title: "Event updated",
-        body: "The Event settings were saved without changing access to another Space.",
+        body: "Your changes are saved. Access to Wavesparks Community and other events was not changed.",
       };
     case "event_archived":
       return {
         title: "Event archived",
-        body: "Participant access and matching are closed. Content and roster data are retained and can be restored.",
+        body: "Participants can no longer open this event or receive new matches. You can restore it later.",
       };
     case "event_restored":
       return {
         title: "Event restored",
-        body: "The Event is available again with its original roster and Space boundary.",
+        body: "Participants can open the event again. Its people, content, and matches are unchanged.",
       };
     case "member_inactive_conflict":
       return {
-        title: "Inactive member needs explicit review",
-        body: "Rejected or suspended access cannot be restored from an invitation flow. Use the member details instead.",
+        title: "Review this person’s access",
+        body: "Their access was previously rejected or paused. Open member details to restore it intentionally.",
       };
     case "cohort_created":
       return {
-        title: "Cohort created",
-        body: "The cohort is ready for member grouping and review.",
+        title: "Event created",
+        body: "You can now add participants and prepare the event.",
       };
     case "cohort_updated":
       return {
-        title: "Cohort updated",
-        body: "The cohort name, event label, and notes are saved.",
+        title: "Event updated",
+        body: "The event name and notes are saved.",
       };
     case "cohort_archived":
       return {
-        title: "Cohort archived",
-        body: "The group workflow is closed. Its members still belong to the community.",
+        title: "Event archived",
+        body: "Participants can no longer open this event. Their access to Wavesparks Community and other events is unchanged.",
       };
     case "cohort_students_imported":
       return {
-        title: "Members imported",
-        body: "Cohort links were created or refreshed, and Clerk confirmed each successful invitation operation.",
+        title: "Participants imported",
+        body: "The successful invitations and event access changes are complete.",
       };
     case "cohort_students_partially_imported":
       return {
-        title: "Cohort imported with invitation errors",
-        body: "Local records were saved. Review each Clerk status below and retry only the failed invitations.",
+        title: "Some participants could not be invited",
+        body: "Review the results below and retry only the failed invitations.",
       };
     case "cohort_import_too_large":
       return {
-        title: "Cohort is too large",
+        title: "The list is too large",
         body: "Import no more than 100 unique email addresses at a time.",
       };
     case "cohort_import_empty":
       return {
-        title: "No members to import",
-        body: "Add at least one member email before importing the cohort roster.",
+        title: "No participants to import",
+        body: "Add at least one email address before importing the list.",
       };
     case "cohort_import_invalid":
       return {
@@ -320,43 +331,43 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       };
     case "cohort_clerk_unconfigured":
       return {
-        title: "Clerk is not configured",
-        body: "Configure Clerk keys before sending cohort invitations.",
+        title: "Invitations are not configured",
+        body: "Complete the account service setup before sending invitations.",
       };
     case "cohort_clerk_session_required":
       return {
-        title: "Clerk organization required",
-        body: "Switch into the Clerk organization before adding members.",
+        title: "Choose your organization first",
+        body: "Switch to the Wavesparks organization before adding participants.",
       };
     case "cohort_clerk_admin_required":
       return {
-        title: "Clerk admin permission required",
-        body: "Use a Clerk org admin session to send organization invitations.",
+        title: "Admin permission required",
+        body: "Use an organization admin account to send invitations.",
       };
     case "cohort_members_promoted":
       return {
-        title: "Community access approved",
-        body: "The selected cohort members are now approved for the community.",
+        title: "Added to Wavesparks Community",
+        body: "The selected participants can now join Wavesparks Community. Their event access is unchanged.",
       };
     case "cohort_no_selection":
       return {
-        title: "No members selected",
-        body: "Select at least one cohort member before approving community access.",
+        title: "No participants selected",
+        body: "Select at least one participant to add to Wavesparks Community.",
       };
     case "member_saved":
       return {
         title: "Member saved",
-        body: "The local account and membership state were updated.",
+        body: "The account and access details are updated.",
       };
     case "membership_updated":
       return {
-        title: "Membership updated",
-        body: "The member status and admin note are saved.",
+        title: "Member updated",
+        body: "The account status, access, and admin note are saved.",
       };
     case "membership_clerk_failed":
       return {
-        title: "Community status saved, Clerk sync failed",
-        body: "The local decision is saved. Review the member's Clerk error and retry the relevant action.",
+        title: "Saved, but account update failed",
+        body: "Your decision is saved. Review the account error in member details, then try again.",
       };
     case "org_settings_saved":
       return {
@@ -365,23 +376,23 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       };
     case "post_moderation_updated":
       return {
-        title: "Post moderation updated",
-        body: "The post moderation state is saved and the feed has been refreshed.",
+        title: "Post settings saved",
+        body: "The post settings are saved and the feed is up to date.",
       };
     case "comment_moderation_updated":
       return {
-        title: "Comment moderation updated",
-        body: "The comment visibility state is saved.",
+        title: "Comment settings saved",
+        body: "The comment settings are saved.",
       };
     case "profile_flags_updated":
       return {
-        title: "Profile flags updated",
-        body: "The profile moderation flags are saved and match surfaces have been refreshed.",
+        title: "Profile review updated",
+        body: "The profile review settings are saved and match suggestions have been refreshed.",
       };
     case "matches_recomputed":
       return {
-        title: "Matches recomputed",
-        body: "The latest profile data has been used to refresh match rankings.",
+        title: "Matches refreshed",
+        body: "Match suggestions now use the latest member profiles and preferences.",
       };
     default:
       return null;
@@ -394,22 +405,21 @@ export function getPendingAccessExperience(
 ): PendingAccessExperience {
   if (status === "approved") {
     return {
-      title: "Complete your profile to unlock the community",
+      title: "Complete your profile to get started",
       body:
-        "Your membership is approved. Finish the required profile context to enter the feed and matches.",
+        "Your membership is approved. Finish the required profile details to view members and matches.",
       noteLabel: "Access note",
       primaryHref: "onboarding",
       primaryLabel: "Complete profile",
       timeline: [
         {
           title: "Membership approved",
-          description: "Your account can enter the community once profile context is ready.",
+          description: "Your account is ready once your profile is complete.",
           status: "complete",
         },
         {
           title: "Profile completion required",
-          description:
-            "Matching and intro surfaces need enough detail before access opens.",
+          description: "Add the remaining details before browsing members or requesting introductions.",
           status: "current",
         },
       ],
@@ -426,12 +436,12 @@ export function getPendingAccessExperience(
       timeline: [
         {
           title: "Application reviewed",
-          description: "The admin team reviewed your membership request and profile context.",
+          description: "The Wavesparks team reviewed your membership request and profile.",
           status: "complete",
         },
         {
           title: "Access closed",
-          description: "This account cannot enter the member feed or matching surfaces.",
+          description: "This account cannot view member content or matches.",
           status: "blocked",
         },
       ],
@@ -443,7 +453,7 @@ export function getPendingAccessExperience(
       title: "Your access is currently paused",
       body:
         approvalNote ??
-        "Suspended members cannot enter the feed or matching surfaces until access is restored.",
+        "This account cannot view member content or matches until access is restored.",
       noteLabel: "Access note",
       timeline: [
         {
@@ -453,7 +463,7 @@ export function getPendingAccessExperience(
         },
         {
           title: "Feed and matching locked",
-          description: "Contact details and member surfaces remain unavailable while paused.",
+          description: "Member content and contact details remain unavailable while paused.",
           status: "blocked",
         },
       ],
@@ -465,29 +475,27 @@ export function getPendingAccessExperience(
   return {
     title: waitlist ? "You’re on the waitlist" : "Your application is in review",
     body: waitlist
-      ? "Admins have your profile and may approve access when a relevant cohort or opening is ready."
-      : "Admins can see your full profile and will approve, waitlist, or reject access from the membership queue.",
+      ? "The Wavesparks team has your profile and will contact you if a place becomes available."
+      : "The Wavesparks team is reviewing your profile and will update your access when a decision is made.",
     noteLabel: "Access note",
     primaryHref: "onboarding",
     primaryLabel: "Continue editing your profile",
     timeline: [
       {
         title: "Profile stays editable",
-        description:
-          "You can keep sharpening your profile so admins and future matches have better context.",
+        description: "You can keep updating your profile while you wait.",
         status: "complete",
       },
       {
         title: waitlist ? "Waiting for the right opening" : "Admin review",
         description: waitlist
-          ? "The admin team will unlock access when your profile fits an active community need."
-          : "Admins review identity, founder context, collaboration asks, and intro readiness.",
+          ? "The Wavesparks team will contact you if a place becomes available."
+          : "The Wavesparks team reviews your profile and what you hope to find in the community.",
         status: "current",
       },
       {
-        title: "First member action",
-        description:
-          "Once approved, start with the feed, browse matches, or request a high-context intro.",
+        title: "Get started",
+        description: "Once approved, read the latest posts, browse members, or request an introduction.",
         status: "upcoming",
       },
     ],

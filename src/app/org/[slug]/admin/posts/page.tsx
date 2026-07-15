@@ -1,4 +1,5 @@
 import { moderateCommentAction, updatePostModerationAction } from "@/actions/admin";
+import { adminSpaceName } from "@/components/admin/admin-community-copy";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -7,6 +8,7 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
+import { postTypeLabel } from "@/lib/post-copy";
 import { getAdminPostModerationDashboard } from "@/server/view-models";
 import { listSpacesForOrg } from "@/server/store";
 
@@ -33,9 +35,9 @@ export default async function AdminPostsPage({
     getAdminPostModerationDashboard(viewer.org.id),
     listSpacesForOrg(viewer.org.id),
   ]);
-  const spaceNameById = new Map(spaces.map((space) => [space.id, space.name]));
+  const spaceNameById = new Map(spaces.map((space) => [space.id, adminSpaceName(space)]));
   const spaceLabel = (spaceId?: string) =>
-    (spaceId && spaceNameById.get(spaceId)) || "Unscoped migration row";
+    (spaceId && spaceNameById.get(spaceId)) || "Wavesparks Community";
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/posts`} viewer={viewer}>
@@ -43,13 +45,13 @@ export default async function AdminPostsPage({
         <SectionHeading
           eyebrow="Admin · Posts"
           level={1}
-          title="Moderate feed content and comments"
-          description="Organization-wide audit across all Spaces. Every row identifies its owning Space; use a Space detail page for an isolated view."
+          title="Posts and comments"
+          description="Review recent conversations from Wavesparks Community and every Event."
         />
         <StatusBanner status={singleQueryValue(query.status)} />
 
         <div className="space-y-6">
-          <SectionHeading eyebrow="Latest" title="Posts to review" />
+          <SectionHeading eyebrow="Community activity" title="Posts to review" />
           {dashboard.posts.map((post) => {
             return (
               <Card className="space-y-4" key={post.id}>
@@ -57,15 +59,15 @@ export default async function AdminPostsPage({
                   <div>
                     <h3 className="text-xl font-semibold text-[var(--ink)]">{post.title}</h3>
                     <p className="text-sm text-[var(--ink-soft)]">
-                      {post.authorName} · {post.type.replaceAll("_", " ")}
+                      {post.authorName} · {postTypeLabel(post.type)}
                     </p>
                     <Badge className="mt-2" variant={post.spaceId ? "muted" : "default"}>
                       {spaceLabel(post.spaceId)}
                     </Badge>
                   </div>
                   <div className="flex gap-2">
-                    {post.featured ? <Badge variant="accent">featured</Badge> : null}
-                    {post.hidden ? <Badge>hidden</Badge> : null}
+                    {post.featured ? <Badge variant="accent">Featured</Badge> : null}
+                    {post.hidden ? <Badge>Hidden</Badge> : null}
                   </div>
                 </div>
                 <p className="text-sm text-[var(--ink-soft)]">{post.body}</p>
@@ -110,14 +112,14 @@ export default async function AdminPostsPage({
             <Card>
               <p className="text-sm font-semibold text-[var(--ink)]">No posts to review yet</p>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                New member posts will appear here for moderation.
+                New posts will appear here for moderation.
               </p>
             </Card>
           ) : null}
         </div>
 
         <Card className="space-y-4">
-          <h3 className="text-xl font-semibold text-[var(--ink)]">Latest comment moderation</h3>
+          <h3 className="text-xl font-semibold text-[var(--ink)]">Recent comments</h3>
           <div className="space-y-3">
             {dashboard.comments.map((comment) => (
               <div

@@ -182,7 +182,7 @@ describe("production readiness checks", () => {
     );
   });
 
-  it("fails the rollout audit for missing Main spaces and null scoped resources", () => {
+  it("fails the rollout audit for a missing Wavesparks Community and null scoped resources", () => {
     expect(
       evaluateSpaceRolloutAuditRows([
         { check: "organizations_without_exactly_one_main", count: "1" },
@@ -191,7 +191,7 @@ describe("production readiness checks", () => {
       ]),
     ).toEqual({
       errors: [
-        "Space rollout audit: 1 organization(s) do not have exactly one active Main Community.",
+        "Space rollout audit: 1 organization(s) do not have exactly one active Wavesparks Community.",
         "Space rollout audit: 2 post(s) have null space_id.",
       ],
       warnings: [],

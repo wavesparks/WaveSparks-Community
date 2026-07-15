@@ -3,6 +3,7 @@ import { OrgLogoUploadField } from "@/components/admin/org-logo-upload-field";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
@@ -35,8 +36,8 @@ export default async function AdminSettingsPage({
         <SectionHeading
           eyebrow="Admin · Settings"
           level={1}
-          title="Org name, positioning, and invite rules"
-          description="The MVP settings surface is intentionally narrow: enough to support branded client communities without reopening core product decisions."
+          title="Community profile and invitations"
+          description="Update how Wavesparks appears and the guidance admins use when inviting people."
         />
         <StatusBanner status={singleQueryValue(query.status)} />
         <Card className="space-y-4">
@@ -46,10 +47,43 @@ export default async function AdminSettingsPage({
               orgName={viewer.org.name}
               slug={slug}
             />
-            <Input defaultValue={viewer.org.name} name="name" placeholder="Org name" />
-            <Input defaultValue={viewer.org.tagline} name="tagline" placeholder="Tagline" />
-            <Textarea defaultValue={viewer.org.description} name="description" />
-            <Textarea defaultValue={viewer.org.inviteSettings} name="invite_settings" />
+            <div>
+              <Label htmlFor="organization-name">Community name</Label>
+              <Input
+                defaultValue={viewer.org.name}
+                id="organization-name"
+                name="name"
+                placeholder="Wavesparks"
+              />
+            </div>
+            <div>
+              <Label htmlFor="organization-tagline">Tagline</Label>
+              <Input
+                defaultValue={viewer.org.tagline}
+                id="organization-tagline"
+                name="tagline"
+                placeholder="A short description of the community"
+              />
+            </div>
+            <div>
+              <Label htmlFor="organization-description">About the community</Label>
+              <Textarea
+                defaultValue={viewer.org.description}
+                id="organization-description"
+                name="description"
+              />
+            </div>
+            <div>
+              <Label htmlFor="organization-invite-settings">Invitation guidance</Label>
+              <p className="mb-2 text-xs leading-5 text-[var(--ink-soft)]">
+                Notes for admins about who should be invited and how access should be assigned.
+              </p>
+              <Textarea
+                defaultValue={viewer.org.inviteSettings}
+                id="organization-invite-settings"
+                name="invite_settings"
+              />
+            </div>
             <SubmitButton pendingLabel="Saving settings">Save settings</SubmitButton>
           </form>
         </Card>

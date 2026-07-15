@@ -35,13 +35,13 @@ export default async function AdminAnalyticsPage({
         <SectionHeading
           eyebrow="Admin · Analytics"
           level={1}
-          title="Activation, engagement, and outcomes"
-          description="Organization-wide account and activity totals across all Spaces. Use a Space detail page for an isolated Event or Main Community view."
+          title="Community activity"
+          description="A simple view of membership and activity across Wavesparks Community and all Events."
         />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="Connected accounts" value={connectedAccounts} />
-          <MetricCard label="Profiles completed" value={analytics.completedProfiles} />
-          <MetricCard label="Intro requests sent" value={analytics.introRequestsSent} />
+          <MetricCard label="Completed profiles" value={analytics.completedProfiles} />
+          <MetricCard label="Introduction requests" value={analytics.introRequestsSent} />
           <MetricCard label="Teams formed" value={analytics.teamsFormed} />
         </div>
         <AnalyticsBars

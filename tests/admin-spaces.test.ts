@@ -194,7 +194,7 @@ describe("Admin Space access and import store", () => {
     const main = getStore().spaces.find((space) => space.kind === "main")!;
 
     await expect(archiveEventSpace(seedOrganization.id, main.id)).rejects.toThrow(
-      "Main Community cannot be archived",
+      "Wavesparks Community cannot be archived.",
     );
     expect((await archiveEventSpace(seedOrganization.id, event.id))?.lifecycle).toBe("archived");
     await expect(
@@ -203,7 +203,7 @@ describe("Admin Space access and import store", () => {
         spaceId: event.id,
         membershipId: "mem_priya",
       }),
-    ).rejects.toThrow("Archived Spaces cannot accept new members");
+    ).rejects.toThrow("Restore this archived event before adding participants.");
     expect((await restoreEventSpace(seedOrganization.id, event.id, "ended"))?.lifecycle)
       .toBe("ended");
     await expect(
@@ -221,7 +221,7 @@ describe("Admin Space access and import store", () => {
     await expect(
       updateEventSpace(seedOrganization.id, event.id, { lifecycle: "draft" }),
     ).rejects.toThrow(
-      "A published Event cannot return to draft. Archive it explicitly to close member access.",
+      "A published Event cannot return to draft. Use Archive to close participant access.",
     );
     expect(getStore().spaces.find((space) => space.id === event.id)?.lifecycle).toBe(
       "active",

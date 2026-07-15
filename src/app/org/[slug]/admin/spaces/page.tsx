@@ -5,6 +5,7 @@ import {
   UsersRound,
 } from "lucide-react";
 
+import { adminSpaceName } from "@/components/admin/admin-community-copy";
 import { EventSpaceEditorDialog } from "@/components/admin/event-space-editor-dialog";
 import { MemberManagementNav } from "@/components/admin/member-management-nav";
 import { AppShell } from "@/components/layout/app-shell";
@@ -32,28 +33,28 @@ function formatDate(value?: string) {
 }
 
 function lifecycleLabel(space: Space) {
-  if (space.kind === "main") return "Main Community";
+  if (space.kind === "main") return "Invitation only";
   if (space.lifecycle === "ended") return "Past Event";
   return `${space.lifecycle[0].toUpperCase()}${space.lifecycle.slice(1)} Event`;
 }
 
 function lifecycleDescription(space: Space) {
   if (space.kind === "main") {
-    return "The permanent, invitation-only community. Access is granted explicitly and never inherited from an Event.";
+    return "People must be added directly to Wavesparks Community. Joining an Event does not grant access.";
   }
   if (space.lifecycle === "draft") {
     return "Visible to administrators only while the Event is being prepared.";
   }
   if (space.lifecycle === "upcoming") {
-    return "Participants with active access can enter before the Event begins.";
+    return "Participants can enter before the Event begins.";
   }
   if (space.lifecycle === "active") {
-    return "Participants can read, interact, and match only inside this Event.";
+    return "Participants can read, interact, and receive matches here.";
   }
   if (space.lifecycle === "ended") {
     return "The Event has ended, but participants keep full access and matching remains available.";
   }
-  return "Member access and matching are closed. Content and membership data remain available to administrators.";
+  return "This Event is hidden from participants. You can still review its participants and activity here.";
 }
 
 function dateLabel(space: Space) {
@@ -96,7 +97,7 @@ function SpaceCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-xl font-semibold text-[var(--ink)]">{space.name}</h3>
+            <h3 className="text-xl font-semibold text-[var(--ink)]">{adminSpaceName(space)}</h3>
             <Badge
               className={lifecycleBadgeClass(space)}
               variant={space.lifecycle === "ended" || space.lifecycle === "archived" ? "muted" : "accent"}
@@ -131,7 +132,7 @@ function SpaceCard({
           </span>
         </div>
         <LinkButton href={`/org/${slug}/admin/spaces/${space.id}`} size="sm">
-          Manage space
+          {space.kind === "main" ? "Manage community" : "Manage Event"}
         </LinkButton>
       </div>
     </Card>
@@ -179,10 +180,10 @@ export default async function AdminSpacesPage({
 
         <div className="flex flex-wrap items-start justify-between gap-4">
           <SectionHeading
-            description="Audit the permanent Main Community and every Event as independent access, content, and matching boundaries."
-            eyebrow="Admin · Access architecture"
+            description="Manage who can join Wavesparks Community and each Event, and review their activity and matching separately."
+            eyebrow="Admin · Community access"
             level={1}
-            title="Spaces"
+            title="Community & Events"
           />
           <EventSpaceEditorDialog slug={slug} />
         </div>
@@ -192,9 +193,9 @@ export default async function AdminSpacesPage({
           <div className="flex items-start gap-3">
             <ShieldCheck aria-hidden className="mt-0.5 size-5 shrink-0 text-[var(--accent)]" />
             <div>
-              <p className="font-semibold text-[var(--ink)]">Access never carries between Spaces</p>
+              <p className="font-semibold text-[var(--ink)]">Access is managed separately</p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                Joining an Event does not grant Main Community access. Joining Main does not reveal Events. Ending an Event keeps it interactive; archiving it closes member access while retaining the audit trail.
+                Joining an Event does not add someone to Wavesparks Community, and community members only see Events they joined. Past Events stay open; archived Events are hidden from participants.
               </p>
             </div>
           </div>
@@ -203,10 +204,10 @@ export default async function AdminSpacesPage({
         <section aria-labelledby="main-community-heading" className="space-y-4">
           <div>
             <h2 className="text-xl font-semibold text-[var(--ink)]" id="main-community-heading">
-              Main Community
+              Wavesparks Community
             </h2>
             <p className="mt-1 text-sm text-[var(--ink-soft)]">
-              Every organization has exactly one permanent Main Community.
+              People must be added directly to Wavesparks Community.
             </p>
           </div>
           {mainSpace ? (
@@ -219,9 +220,9 @@ export default async function AdminSpacesPage({
             </div>
           ) : (
             <Card className="border-red-600/30 bg-red-50">
-              <p className="font-semibold text-red-900">Main Community is not configured</p>
+              <p className="font-semibold text-red-900">Wavesparks Community is not ready</p>
               <p className="mt-1 text-sm text-red-800">
-                The organization cannot grant Main access until its required Main Space has been created.
+                Set up Wavesparks Community before adding members.
               </p>
             </Card>
           )}
@@ -233,7 +234,7 @@ export default async function AdminSpacesPage({
               Events
             </h2>
             <p className="mt-1 text-sm text-[var(--ink-soft)]">
-              Each Event has its own participant roster, content, interactions, and AI matching pool.
+              Each Event has its own participants, conversations, and match suggestions.
             </p>
           </div>
           <div className="grid gap-4 xl:grid-cols-2">
@@ -248,9 +249,9 @@ export default async function AdminSpacesPage({
           </div>
           {!openEvents.length ? (
             <Card>
-              <p className="font-semibold text-[var(--ink)]">No draft, upcoming, or active Events</p>
+              <p className="font-semibold text-[var(--ink)]">No current Events yet</p>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                Past and archived Events remain listed below for administration and audit.
+                Create an Event when you are ready, or review past and archived Events below.
               </p>
             </Card>
           ) : null}
@@ -285,7 +286,7 @@ export default async function AdminSpacesPage({
               Archived Events ({archivedEvents.length})
             </summary>
             <p className="mt-2 text-sm text-[var(--ink-soft)]">
-              Archived Events are hidden from members and matching is stopped. Their data remains available for audit.
+              Archived Events are hidden from participants and matching is paused. You can still review their history here.
             </p>
             <div className="mt-4 grid gap-4 xl:grid-cols-2">
               {archivedEvents.map((space) => (

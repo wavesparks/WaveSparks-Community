@@ -64,7 +64,7 @@ export async function getMySpacesContext(slug: string) {
   ]);
   const mainSpace = allSpaces.find((space) => space.kind === "main");
   if (!mainSpace) {
-    throw new Error("Main Community space is not configured.");
+    throw new Error("Wavesparks Community is not configured.");
   }
 
   return {
@@ -194,20 +194,20 @@ export async function requireSpaceAccessForAction(input: {
 
   const space = await getSpaceById(input.spaceId);
   if (!space || space.orgId !== viewer.org.id) {
-    throw new Error("Space not found.");
+    throw new Error("The selected community or event could not be found.");
   }
   const [spaceMembership, intent] = await Promise.all([
     getSpaceMembership(space.id, viewer.membership.id),
     getSpaceIntent(space.id, viewer.membership.id),
   ]);
   if (!hasEffectiveSpaceAccess(viewer.membership, space, spaceMembership)) {
-    throw new Error("Space access required.");
+    throw new Error("You do not have access to this community or event.");
   }
   if (
     input.requireProfile &&
     !canInteractInSpace(viewer.membership, viewer.profile, space, spaceMembership)
   ) {
-    throw new Error("Complete your core profile before interacting.");
+    throw new Error("Complete your profile before posting or connecting with members.");
   }
   if (
     input.requireIntent &&
@@ -219,7 +219,7 @@ export async function requireSpaceAccessForAction(input: {
       intent,
     )
   ) {
-    throw new Error("Complete this Space intent and enable matching first.");
+    throw new Error("Add your goals and matching preferences here before viewing matches.");
   }
 
   return { viewer, space, spaceMembership: spaceMembership!, intent };
@@ -237,7 +237,7 @@ export async function requireSpaceAdminForAction(slug: string, spaceId: string) 
   }
   const space = await getSpaceById(spaceId);
   if (!space || space.orgId !== viewer.org.id) {
-    throw new Error("Space not found.");
+    throw new Error("The selected community or event could not be found.");
   }
   return { viewer, space };
 }

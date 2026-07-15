@@ -24,6 +24,10 @@ import { Select } from "@/components/ui/select";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  getCommunityDisplayName,
+  getCommunityPeopleLabels,
+} from "@/lib/community-copy";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { getActiveIntroStatusCopy } from "@/lib/intro-status";
 import { matchFeedbackReasonLabels } from "@/lib/match-feedback";
@@ -54,12 +58,12 @@ function IntentStatus({ status }: { status?: string }) {
       />
       <div>
         <p className="font-semibold text-[var(--ink)]">
-          {complete ? "Space intent saved" : "More intent context is needed"}
+          {complete ? "Preferences saved" : "Tell us a little more"}
         </p>
         <p className="mt-1 leading-6 text-[var(--ink-soft)]">
           {complete
-            ? "Your matching preference and context now apply only to this Space."
-            : "Add a goal and at least one thing you are looking for or can offer before matching can start."}
+            ? "Your matches will reflect what you are looking for and can offer here."
+            : "Add a goal and at least one thing you are looking for or can offer."}
         </p>
       </div>
     </div>
@@ -80,6 +84,8 @@ export default async function SpaceMatchesPage({
     requireProfile: true,
   });
   const { intent, space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
+  const { plural: peopleLabel } = getCommunityPeopleLabels(space);
   const configs = await listMatchTypeConfigsForOrg(viewer.org.id);
   const requestedMatchType = singleQueryValue(query.match_type);
   const selectedMatchType = configs.some((config) => config.slug === requestedMatchType)
@@ -96,37 +102,38 @@ export default async function SpaceMatchesPage({
   const basePath = `/org/${slug}/s/${space.slug}/matches`;
   const status = singleQueryValue(query.status);
 
-  let unavailableTitle = "Complete your Space intent";
-  let unavailableBody = `Tell us what you need and can offer in ${space.name}. Your intent from another Space is never reused automatically.`;
+  let unavailableTitle = "Tell us who you would like to meet";
+  let unavailableBody = `Share what you are working on and how others can help in ${communityName}.`;
   if (!context.canInteract) {
-    unavailableTitle = "Complete your core profile first";
-    unavailableBody = "A complete profile is required before anyone can appear in matching.";
+    unavailableTitle = "Complete your profile to see matches";
+    unavailableBody = `Complete your profile before we introduce you to other ${peopleLabel}.`;
   } else if (!space.matchingEnabled) {
-    unavailableTitle = "Matching is paused for this Space";
-    unavailableBody = "The organizer has not enabled AI matching here. Your saved intent will remain ready if matching opens later.";
+    unavailableTitle = "New matches are paused";
+    unavailableBody =
+      "The organizer has paused new matches. Your preferences will stay saved.";
   } else if (intent?.intentComplete && !intent.matchingOptIn) {
-    unavailableTitle = "You are opted out in this Space";
-    unavailableBody = `You remain a member of ${space.name}, but you will not appear in its match pool or receive suggestions. Other Spaces are unaffected.`;
+    unavailableTitle = "Matches are turned off";
+    unavailableBody = `Turn them on below whenever you want to meet people in ${communityName}.`;
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <SectionHeading
-          description={`Suggestions are generated only between matching-ready members of ${space.name}. People from Main Community or another event cannot appear here.`}
-          eyebrow="Space-scoped AI matching"
+          description={`Meet ${peopleLabel} in ${communityName} who share your interests or may be able to help.`}
+          eyebrow="Matches"
           level={1}
-          title={`Matches within ${space.name}`}
+          title={`People to meet in ${communityName}`}
         />
         <div className="flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2 text-sm font-semibold text-[var(--ink-soft)]">
           <ShieldCheck className="size-4 text-[var(--accent)]" />
-          Match pool: {space.name}
+          Only {peopleLabel} in {communityName}
         </div>
       </div>
 
       <IntentStatus status={status} />
       {status !== "space_intent_saved" && status !== "space_intent_incomplete" ? (
-        <StatusBanner spaceName={space.name} status={status} />
+        <StatusBanner spaceName={communityName} status={status} />
       ) : null}
 
       {!context.canInteract ? (
@@ -149,7 +156,7 @@ export default async function SpaceMatchesPage({
         membershipId={viewer.membership.id}
         slug={slug}
         spaceId={space.id}
-        spaceName={space.name}
+        spaceName={communityName}
       />
 
       {context.canMatch ? (
@@ -184,10 +191,10 @@ export default async function SpaceMatchesPage({
                     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[var(--line)] pb-4">
                       <div>
                         <p className="text-sm font-semibold text-[var(--ink)]">
-                          Private match feedback
+                          Was this match helpful?
                         </p>
                         <p className="mt-1 text-xs text-[var(--ink-soft)]">
-                          Used to improve matching inside this Space.
+                          Your answer helps improve future matches.
                         </p>
                       </div>
                       <div className="flex flex-wrap items-end gap-2">
@@ -282,7 +289,7 @@ export default async function SpaceMatchesPage({
                           href={`/org/${slug}/s/${space.slug}/requests`}
                           variant="secondary"
                         >
-                          Open Space requests
+                          View introduction
                         </LinkButton>
                       </div>
                     ) : (
@@ -303,34 +310,40 @@ export default async function SpaceMatchesPage({
                         <input name="source_type" type="hidden" value="match" />
                         <input name="source_id" type="hidden" value={match.id} />
                         <div>
-                          <Label htmlFor={`${introFieldPrefix}-purpose`}>Conversation purpose</Label>
+                          <Label htmlFor={`${introFieldPrefix}-purpose`}>
+                            What would you like to discuss?
+                          </Label>
                           <Input
-                            defaultValue={`${match.matchTypeLabel.toLowerCase()} conversation`}
                             id={`${introFieldPrefix}-purpose`}
                             name="intro_purpose"
+                            placeholder="For example, finding a co-founder"
                             required
                           />
                         </div>
                         <div>
-                          <Label htmlFor={`${introFieldPrefix}-note`}>Why you would like to connect</Label>
+                          <Label htmlFor={`${introFieldPrefix}-note`}>
+                            Why would you like to meet?
+                          </Label>
                           <Textarea
-                            defaultValue={`Your profile feels aligned on ${match.overlapTags.join(", ")}. I’d love to compare notes during ${space.name} if you’re open to it.`}
                             id={`${introFieldPrefix}-note`}
                             name="note"
+                            placeholder="Share what caught your attention and why a conversation could be helpful."
                             required
                           />
                         </div>
                         <div>
-                          <Label htmlFor={`${introFieldPrefix}-message`}>Suggested first message</Label>
+                          <Label htmlFor={`${introFieldPrefix}-message`}>
+                            Your opening message
+                          </Label>
                           <Textarea
-                            defaultValue={`Thanks for being open to connect through ${space.name}. I’d love to compare notes and see where there might be fit.`}
                             id={`${introFieldPrefix}-message`}
                             name="suggested_first_message"
+                            placeholder="Write the message you would like to send if they accept."
                             required
                           />
                         </div>
                         <SubmitButton className="w-full" pendingLabel="Sending request">
-                          Request intro
+                          Request introduction
                         </SubmitButton>
                       </form>
                     )}
@@ -343,11 +356,10 @@ export default async function SpaceMatchesPage({
           {!matchCards.length ? (
             <Card>
               <p className="font-semibold text-[var(--ink)]">
-                No matches in {space.name} yet
+                No matches to show yet
               </p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                Matches appear when enough participants in this Space enable matching and
-                complete compatible intent. No one from another Space will be substituted.
+                Check back after more {peopleLabel} have shared what they are looking for.
               </p>
             </Card>
           ) : null}

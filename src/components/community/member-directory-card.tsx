@@ -3,8 +3,6 @@ import { BriefcaseBusiness, ExternalLink, Handshake, MapPin, UserPlus } from "lu
 import {
   followMembershipAction,
   followMembershipInSpaceAction,
-  requestIntroAction,
-  requestIntroInSpaceAction,
   unfollowMembershipAction,
   unfollowMembershipInSpaceAction,
 } from "@/actions/member";
@@ -106,7 +104,7 @@ export function MemberDirectoryCard({
             Needs
           </p>
           <p className="mt-1 line-clamp-2">
-            {needs.join(", ") || "Open to useful conversations"}
+            {needs.join(", ") || "Open to connecting"}
           </p>
         </div>
         <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3">
@@ -115,7 +113,7 @@ export function MemberDirectoryCard({
             Expertise
           </p>
           <p className="mt-1 line-clamp-2">
-            {expertise.join(", ") || "Founder context"}
+            {expertise.join(", ") || "Not added yet"}
           </p>
         </div>
         <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3">
@@ -162,41 +160,17 @@ export function MemberDirectoryCard({
         ) : null}
         {!isSelf && viewerMembershipId && introCopy ? (
           <LinkButton href={requestsPath} size="sm" variant="secondary">
-            {introCopy.title}
+            View introduction
           </LinkButton>
         ) : null}
         {!isSelf && viewerMembershipId && !introCopy ? (
-          <form
-            action={
-              spaceId
-                ? requestIntroInSpaceAction.bind(
-                    null,
-                    slug,
-                    spaceId,
-                    viewerMembershipId,
-                  )
-                : requestIntroAction.bind(null, slug, viewerMembershipId)
-            }
+          <LinkButton
+            href={`${profilePath}#request-introduction`}
+            size="sm"
           >
-            <input name="receiver_membership_id" type="hidden" value={profile.membershipId} />
-            <input name="source_type" type="hidden" value="profile" />
-            <input name="source_id" type="hidden" value={profile.profileId} />
-            <input name="intro_purpose" type="hidden" value="profile discovery" />
-            <input
-              name="note"
-              type="hidden"
-              value={`Your profile stood out because of ${profile.keyTags.slice(0, 3).join(", ") || "your founder context"}. I’d love to compare notes if you’re open to it.`}
-            />
-            <input
-              name="suggested_first_message"
-              type="hidden"
-              value="Thanks for being open to connect. I found your profile through the member directory and would love to compare notes."
-            />
-            <SubmitButton pendingLabel="Requesting" size="sm">
-              <UserPlus className="size-4" />
-              Request intro
-            </SubmitButton>
-          </form>
+            <UserPlus className="size-4" />
+            Request introduction
+          </LinkButton>
         ) : null}
       </div>
     </Card>

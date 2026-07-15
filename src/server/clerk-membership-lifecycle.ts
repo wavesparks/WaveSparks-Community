@@ -22,10 +22,34 @@ export type MembershipInvitationInput = {
 };
 
 function messageForError(error: unknown) {
-  if (error instanceof Error) {
-    return error.message.slice(0, 1000);
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("account is paused") ||
+    normalized.includes("suspended") ||
+    normalized.includes("deprovisioned")
+  ) {
+    return "This account is paused. Restore it in member details before continuing.";
   }
-  return String(error).slice(0, 1000);
+  if (
+    normalized.includes("invitations are unavailable") ||
+    normalized.includes("not configured") ||
+    normalized.includes("not linked") ||
+    normalized.includes("organization is required")
+  ) {
+    return "Invitations are unavailable right now. Contact an administrator.";
+  }
+  if (
+    normalized.includes("rate") ||
+    normalized.includes("too many") ||
+    normalized.includes("429")
+  ) {
+    return "The invitation service is busy. Wait a few minutes, then try again.";
+  }
+  if (normalized.includes("invitation couldn’t be created")) {
+    return "The invitation couldn’t be created. Try again in a few minutes.";
+  }
+  return "The invitation couldn’t be created. Try again in a few minutes.";
 }
 
 async function getClient() {
@@ -73,6 +97,7 @@ async function findPendingInvitation(organizationId: string, email: string) {
 }
 
 async function persistFailure(membership: Membership, error: unknown) {
+  console.error("[wavesparks] Member invitation failed", membership.id, error);
   await updateMembershipClerkState(membership.id, {
     clerkInvitationError: messageForError(error),
     clerkInvitationStatus: "failed",
@@ -121,7 +146,7 @@ async function attachExistingClerkUser(input: {
 
 export async function sendMembershipInvitation(input: MembershipInvitationInput) {
   if (!inviteableAccountStatuses.has(input.membership.accountStatus)) {
-    throw new Error("Suspended or deprovisioned accounts cannot be invited.");
+    throw new Error("This account is paused. Restore it in member details before continuing.");
   }
   if (isE2ELocalAuthEnabled() && !isClerkConfigured()) {
     const localMembership = await updateMembershipClerkState(input.membership.id, {
@@ -133,13 +158,13 @@ export async function sendMembershipInvitation(input: MembershipInvitationInput)
     return { kind: "invitation" as const, localMembership };
   }
   if (!isClerkConfigured()) {
-    throw new Error("Clerk is not configured.");
+    throw new Error("Invitations are unavailable right now. Contact an administrator.");
   }
 
   try {
     const organizationId = await resolveClerkOrganizationId(input.org);
     if (!organizationId) {
-      throw new Error("The Wavesparks Clerk organization is not linked.");
+      throw new Error("Invitations are unavailable right now. Contact an administrator.");
     }
     const clerkUser = await resolveClerkUser(input.user);
     if (clerkUser) {
@@ -188,7 +213,7 @@ export async function sendMembershipInvitation(input: MembershipInvitationInput)
     return { kind: "invitation" as const, localMembership };
   } catch (error) {
     await persistFailure(input.membership, error);
-    throw error;
+    throw new Error(messageForError(error));
   }
 }
 
@@ -283,7 +308,7 @@ export async function sendMembershipInvitationsBulk(
     if (!inviteableAccountStatuses.has(input.membership.accountStatus)) {
       await recordFailure(
         input,
-        new Error("Suspended or deprovisioned accounts cannot be invited."),
+        new Error("This account is paused. Restore it in member details before continuing."),
       );
       continue;
     }
@@ -314,7 +339,10 @@ export async function sendMembershipInvitationsBulk(
 
   if (!isClerkConfigured()) {
     for (const input of activeInputs) {
-      await recordFailure(input, new Error("Clerk is not configured."));
+      await recordFailure(
+        input,
+        new Error("Invitations are unavailable right now. Contact an administrator."),
+      );
     }
     return inputs.map((input) => outcomes.get(input.membership.id)!);
   }
@@ -335,7 +363,10 @@ export async function sendMembershipInvitationsBulk(
   }
   if (!organizationId) {
     for (const input of activeInputs) {
-      await recordFailure(input, new Error("The Wavesparks Clerk organization is not linked."));
+      await recordFailure(
+        input,
+        new Error("Invitations are unavailable right now. Contact an administrator."),
+      );
     }
     return inputs.map((input) => outcomes.get(input.membership.id)!);
   }
@@ -451,7 +482,7 @@ export async function sendMembershipInvitationsBulk(
         if (!invitation) {
           await recordFailure(
             input,
-            new Error("Clerk did not return a matching invitation."),
+            new Error("The invitation couldn’t be created. Try again in a few minutes."),
           );
           continue;
         }

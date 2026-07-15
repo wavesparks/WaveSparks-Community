@@ -46,7 +46,7 @@ export function EventSpaceEditorDialog({
         {editing ? "Edit Event" : "New Event"}
       </Button>
       <Dialog
-        description="Event access, content, interactions, and matching stay isolated from Main and every other Event."
+        description="This Event has its own participants, conversations, and matches. Joining it does not add anyone to Wavesparks Community."
         onOpenChange={setOpen}
         open={open}
         title={editing ? "Edit Event" : "Create Event"}
@@ -72,18 +72,18 @@ export function EventSpaceEditorDialog({
             />
           </div>
           <div>
-            <Label htmlFor="event-space-lifecycle">Lifecycle</Label>
+            <Label htmlFor="event-space-lifecycle">Availability</Label>
             <Select
               defaultValue={space?.lifecycle === "archived" ? "ended" : space?.lifecycle ?? "draft"}
               id="event-space-lifecycle"
               name="lifecycle"
             >
               {!space || space.lifecycle === "draft" ? (
-                <option value="draft">Draft · admin only</option>
+                <option value="draft">Draft · administrators only</option>
               ) : null}
               <option value="upcoming">Upcoming · participants can enter</option>
               <option value="active">Active</option>
-              <option value="ended">Ended · interaction stays open</option>
+              <option value="ended">Past · participants keep access</option>
             </Select>
           </div>
           <div>
@@ -121,9 +121,9 @@ export function EventSpaceEditorDialog({
               type="checkbox"
             />
             <span>
-              <span className="block text-sm font-semibold text-[var(--ink)]">Enable AI matching</span>
+              <span className="block text-sm font-semibold text-[var(--ink)]">Enable matching</span>
               <span className="mt-1 block text-xs leading-5 text-[var(--ink-soft)]">
-                Matching uses only eligible participants and intent from this Event. Ended Events continue matching; archived Events stop.
+                Matching uses only eligible participants and their preferences for this Event. Past Events continue matching; archived Events stop.
               </span>
             </span>
           </label>

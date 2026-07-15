@@ -48,6 +48,8 @@ function readyProfile(): Profile {
     ...profile,
     preferredName: "Activation",
     headline: "Founder validating trust-first workflows",
+    bio: "I build tools that help communities make thoughtful introductions.",
+    currentFocus: "Testing a simpler way for members to find useful collaborators.",
     startupOneLiner: "A workflow product for high-trust communities.",
     startupDescription: "We help founders coordinate introductions with better context.",
     lookingForTypes: ["cofounder"],
@@ -134,7 +136,7 @@ describe("member activation state", () => {
     expect(state.isComplete).toBe(true);
     expect(state.items.every((item) => item.complete)).toBe(true);
     expect(state.items.find((item) => item.id === "intro")).toMatchObject({
-      cta: "View requests",
+      cta: "View introductions",
       href: "/org/wavesparks/requests",
     });
   });
@@ -210,37 +212,52 @@ describe("profile readiness", () => {
     expect(readiness.isReady).toBe(false);
     expect(readiness.missingFields.map((field) => field.key)).toEqual([
       "headline",
-      "startup_one_liner",
-      "startup_description",
+      "bio",
+      "current_focus",
       "looking_for_types",
-      "desired_roles",
       "skill_tags",
     ]);
+  });
+
+  it("allows a learner to finish without claiming a startup or prior technical experience", () => {
+    const profile = emptyProfileForMember(activationUser, activationMembership);
+    profile.headline = "Student exploring accessible education";
+    profile.bio = "I am learning how thoughtful products can make education more inclusive.";
+    profile.currentFocus = "Working through my first design research project.";
+    profile.technicalExperienceLevel = "new";
+    profile.technicalExperience = "";
+    profile.seekingMatchTypes = ["collaborator_match"];
+    profile.skillTags = ["user research"];
+
+    expect(profile.startupName).toBe("");
+    expect(profile.startupOneLiner).toBe("");
+    expect(profile.technicalExperience).toBe("");
+    expect(getProfileReadiness(profile)).toMatchObject({ isReady: true, missingFields: [] });
   });
 });
 
 describe("status banners", () => {
   it("includes admin workflow feedback", () => {
     expect(getStatusBannerCopy("manual_intro_created")).toMatchObject({
-      title: "Manual intro created",
+      title: "Introduction created",
     });
     expect(getStatusBannerCopy("comment_added")).toMatchObject({
       title: "Comment added",
     });
     expect(getStatusBannerCopy("intro_accepted")).toMatchObject({
-      title: "Intro accepted",
+      title: "Introduction accepted",
     });
     expect(getStatusBannerCopy("intro_existing")).toMatchObject({
-      title: "Intro already exists",
+      title: "Introduction already requested",
     });
     expect(getStatusBannerCopy("intro_declined")).toMatchObject({
-      title: "Intro declined",
+      title: "Introduction declined",
     });
     expect(getStatusBannerCopy("member_followed")).toMatchObject({
-      title: "Member followed",
+      title: "Now following",
     });
     expect(getStatusBannerCopy("member_unfollowed")).toMatchObject({
-      title: "Member unfollowed",
+      title: "No longer following",
     });
     expect(getStatusBannerCopy("notifications_read")).toMatchObject({
       title: "Notifications marked read",
@@ -252,22 +269,22 @@ describe("status banners", () => {
       title: "Member saved",
     });
     expect(getStatusBannerCopy("membership_updated")).toMatchObject({
-      title: "Membership updated",
+      title: "Member updated",
     });
     expect(getStatusBannerCopy("org_settings_saved")).toMatchObject({
       title: "Settings saved",
     });
     expect(getStatusBannerCopy("post_moderation_updated")).toMatchObject({
-      title: "Post moderation updated",
+      title: "Post settings saved",
     });
     expect(getStatusBannerCopy("comment_moderation_updated")).toMatchObject({
-      title: "Comment moderation updated",
+      title: "Comment settings saved",
     });
     expect(getStatusBannerCopy("profile_flags_updated")).toMatchObject({
-      title: "Profile flags updated",
+      title: "Profile review updated",
     });
     expect(getStatusBannerCopy("matches_recomputed")).toMatchObject({
-      title: "Matches recomputed",
+      title: "Matches refreshed",
     });
   });
 });

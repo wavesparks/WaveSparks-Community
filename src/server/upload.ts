@@ -9,7 +9,7 @@ export async function uploadAsset(input: {
   contentType: string;
 }) {
   if (!env.blobReadWriteToken) {
-    throw new Error("Vercel Blob storage is not configured.");
+    throw new Error("Image storage is unavailable.");
   }
 
   const safeFileName =

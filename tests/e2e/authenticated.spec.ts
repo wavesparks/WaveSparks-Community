@@ -54,13 +54,13 @@ async function openMySpacesAndDiscoverMainFeed(page: Page) {
   await expect(page.getByRole("heading", { name: /^Welcome back,/ })).toBeVisible();
   await expect(
     page.getByText(
-      "Each space is private and separate. Posts, people, and AI matches stay inside the space where they were created.",
+      "Wavesparks Community and your events each have their own people, conversations and matches.",
     ),
   ).toBeVisible();
 
   const mainSpaceLink = page
     .locator('a[href^="/org/wavesparks/s/"][href$="/feed"]')
-    .filter({ hasText: "Main Community" })
+    .filter({ hasText: "Wavesparks Community" })
     .first();
   await expect(mainSpaceLink).toBeVisible();
   const href = await mainSpaceLink.getAttribute("href");
@@ -77,14 +77,16 @@ async function createEvent(
   input: { eventLabel: string; name: string; description?: string },
 ) {
   await page.goto("/org/wavesparks/admin/spaces");
-  await expect(page.getByRole("heading", { name: "Spaces", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Community & Events", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "New Event" }).click();
 
   const dialog = page.getByRole("dialog", { name: "Create Event" });
   await expect(dialog).toBeVisible();
   await dialog.getByLabel("Event name").fill(input.name);
   await dialog.getByLabel("Short label").fill(input.eventLabel);
-  await dialog.getByLabel("Lifecycle").selectOption("active");
+  await dialog.getByLabel("Availability").selectOption("active");
   if (input.description) {
     await dialog.getByLabel("Description").fill(input.description);
   }
@@ -109,7 +111,7 @@ async function invitePastedListToCurrentEvent(
   await dialog
     .getByLabel("Paste email and name")
     .fill(`email,name\n${input.email},${input.name}`);
-  await dialog.getByRole("button", { name: "Continue to mapping" }).click();
+  await dialog.getByRole("button", { name: "Choose columns" }).click();
 
   await dialog.getByLabel("Email column").selectOption({ label: "email" });
   await dialog.getByLabel("Name column (optional)").selectOption({ label: "name" });
@@ -121,51 +123,92 @@ async function invitePastedListToCurrentEvent(
   await expect(dialog.locator('[id^="member-import-email-"]').first()).toHaveValue(input.email);
   await dialog.getByRole("button", { name: "Invite 1 person" }).click();
 
-  await expect(dialog.getByRole("status").getByText("Import complete")).toBeVisible();
+  await expect(
+    dialog.getByRole("status").getByText("Invitation created"),
+  ).toBeVisible();
   await expect(dialog.getByText("Invitation created", { exact: true })).toBeVisible();
   await expect(dialog.getByText(input.email, { exact: true })).toBeVisible();
-  await expect(dialog.getByText("Space access added", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/^Invitation created\. Access to .+ added\.$/)).toBeVisible();
 }
 
 test.describe("authenticated member Space flows", () => {
   test.skip(!canUseLocalAuth, "This suite uses Playwright local auth.");
 
-  test("approved member enters My Spaces and uses canonical Main routes", async ({ page }) => {
+  test("member opens the community and its sections", async ({ page }) => {
     await signInMember(page);
     const mainFeedHref = await openMySpacesAndDiscoverMainFeed(page);
 
     await page.goto(mainFeedHref);
-    await expect(page.getByRole("heading", { name: "Feed in Main Community" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Updates from Wavesparks Community" }),
+    ).toBeVisible();
     await expect(page.getByText(privatePostTitle, { exact: true })).toBeVisible();
+    const privatePostHref = await page
+      .getByRole("link", { name: privatePostTitle })
+      .getAttribute("href");
+    expect(privatePostHref).toMatch(/^\/org\/wavesparks\/s\/[^/]+\/posts\/[^/]+$/);
+
+    await page.goto(privatePostHref!);
+    await expect(page.getByRole("heading", { name: privatePostTitle })).toBeVisible();
+    await expect(page.getByText("Post details", { exact: true })).toBeVisible();
 
     await page.goto(sectionHref(mainFeedHref, "people"));
-    await expect(page.getByRole("heading", { name: "People in Main Community" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "People in Wavesparks Community" }),
+    ).toBeVisible();
 
     await page.goto(sectionHref(mainFeedHref, "knowledge"));
-    await expect(page.getByRole("heading", { name: "Knowledge in Main Community" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Knowledge in Wavesparks Community" }),
+    ).toBeVisible();
 
     await page.goto(sectionHref(mainFeedHref, "matches"));
     await expect(
-      page.getByRole("heading", { name: "Matches within Main Community" }),
+      page.getByRole("heading", { name: "People to meet in Wavesparks Community" }),
     ).toBeVisible();
-    await expect(page.getByText("Match pool: Main Community", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("Only members in Wavesparks Community", { exact: true }),
+    ).toBeVisible();
+
+    await page.goto(sectionHref(mainFeedHref, "opportunities"));
+    await expect(
+      page.getByRole("heading", { name: "Opportunities in Wavesparks Community" }),
+    ).toBeVisible();
+
+    await page.goto(sectionHref(mainFeedHref, "compose"));
+    await expect(
+      page.getByRole("heading", { name: "Post in Wavesparks Community" }),
+    ).toBeVisible();
+
+    await page.goto(sectionHref(mainFeedHref, "requests"));
+    await expect(
+      page.getByRole("heading", { name: "Introductions in Wavesparks Community" }),
+    ).toBeVisible();
+
+    await page.goto("/org/wavesparks/requests");
+    await expect(
+      page.getByRole("heading", { name: "Introductions and notifications" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Wavesparks Community", { exact: true }).first(),
+    ).toBeVisible();
   });
 
-  test("connected member without Main entitlement sees a locked Main card", async ({ page }) => {
+  test("member without community access sees an invitation-only card", async ({ page }) => {
     await signInWithoutMainAccess(page);
     await page.goto("/org/wavesparks");
 
     await expect(page.getByRole("heading", { name: "Welcome back, Priya" })).toBeVisible();
-    await expect(page.getByText("Invite only", { exact: true })).toBeVisible();
+    await expect(page.getByText("Invitation only", { exact: true })).toBeVisible();
     await expect(
       page.getByText(
-        "Main Community is a separate permanent network. Access is offered after an event and never unlocks automatically.",
+        "Wavesparks Community is invitation-only. Joining an event won’t add you automatically.",
       ),
     ).toBeVisible();
     await expect(
       page
         .locator('a[href^="/org/wavesparks/s/"][href$="/feed"]')
-        .filter({ hasText: "Main Community" }),
+        .filter({ hasText: "Wavesparks Community" }),
     ).toHaveCount(0);
 
     await page.goto("/org/wavesparks/feed");
@@ -174,7 +217,7 @@ test.describe("authenticated member Space flows", () => {
 
     await page.goto("/org/wavesparks/posts/pst_1");
     await expect(page).toHaveURL(/\/org\/wavesparks(?:\?locked=main)?$/);
-    await expect(page.getByText("Invite only", { exact: true })).toBeVisible();
+    await expect(page.getByText("Invitation only", { exact: true })).toBeVisible();
     await expect(page.getByText(privatePostTitle, { exact: true })).toHaveCount(0);
   });
 });
@@ -182,23 +225,27 @@ test.describe("authenticated member Space flows", () => {
 test.describe("authenticated admin Space flows", () => {
   test.skip(!canUseLocalAuth, "This suite uses Playwright local auth.");
 
-  test("admin reaches My Spaces, Spaces, and member management", async ({ page }) => {
+  test("admin reaches Community & Events and member management", async ({ page }) => {
     await signInAdmin(page);
     const mainFeedHref = await openMySpacesAndDiscoverMainFeed(page);
     await page.goto(mainFeedHref);
-    await expect(page.getByRole("heading", { name: "Feed in Main Community" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Updates from Wavesparks Community" }),
+    ).toBeVisible();
 
     await page.goto("/org/wavesparks/admin");
-    await expect(page.getByRole("heading", { name: "Community command center" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Community overview" })).toBeVisible();
 
     await page.goto("/org/wavesparks/admin/spaces");
-    await expect(page.getByRole("heading", { name: "Spaces", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Community & Events", exact: true }),
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "New Event" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Events", exact: true })).toBeVisible();
     await expect(
       page
-        .getByLabel("Member management")
-        .getByRole("link", { name: "Spaces", exact: true }),
+        .getByLabel("Members, community, and Events")
+        .getByRole("link", { name: "Community & Events", exact: true }),
     ).toHaveAttribute("aria-current", "page");
 
     await page.goto("/org/wavesparks/admin/members");

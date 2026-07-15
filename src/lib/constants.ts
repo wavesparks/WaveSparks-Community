@@ -27,22 +27,22 @@ export const memberArchetypes = [
 export const onboardingSteps = [
   {
     key: "identity",
-    title: "Identity & Community",
-    description: "Ground each member in the right org, cohort, and credibility cues.",
+    title: "About you",
+    description: "Share the basics that help people recognize and approach you.",
   },
   {
-    key: "startup",
-    title: "What You're Building",
-    description: "Capture enough startup context to make the feed and matches meaningful.",
+    key: "interests",
+    title: "Interests & experience",
+    description: "Start with what sparks your curiosity—no startup or technical background required.",
   },
   {
-    key: "skills",
-    title: "What You Need",
-    description: "Clarify the roles, strengths, and collaboration asks that others should respond to.",
+    key: "connections",
+    title: "Connections",
+    description: "Share the people, support, and conversations you are generally open to.",
   },
   {
-    key: "compatibility",
-    title: "Compatibility & Contact",
-    description: "Round out the matching model with style, commitment, and intro preferences.",
+    key: "contact",
+    title: "Contact & preferences",
+    description: "Set your working preferences and how accepted introductions can reach you.",
   },
 ] as const;

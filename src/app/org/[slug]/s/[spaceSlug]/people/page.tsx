@@ -9,6 +9,10 @@ import { Select } from "@/components/ui/select";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
 import type { MemberDirectoryFilters } from "@/lib/domain";
+import {
+  getCommunityDisplayName,
+  getCommunityPeopleLabels,
+} from "@/lib/community-copy";
 import { pathWithQuery, singleQueryValue } from "@/lib/feed-filters";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 import { getMemberDirectoryViewsForSpace } from "@/server/view-models";
@@ -51,6 +55,8 @@ export default async function SpacePeoplePage({
     requireProfile: true,
   });
   const { space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
+  const { plural: peopleLabel } = getCommunityPeopleLabels(space);
   const filters = parseDirectoryFilters(query);
   const basePath = `/org/${slug}/s/${space.slug}/people`;
   const profiles = await getMemberDirectoryViewsForSpace(space.id, viewer.org, {
@@ -65,10 +71,10 @@ export default async function SpacePeoplePage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <SectionHeading
-          description={`Browse only the people who are active in ${space.name}. Members who only share another event or Main Community stay private.`}
-          eyebrow="Private Space directory"
+          description={`Meet the people taking part in ${communityName}.`}
+          eyebrow="People"
           level={1}
-          title={`People in ${space.name}`}
+          title={`People in ${communityName}`}
         />
         <LinkButton
           href={`/org/${slug}/s/${space.slug}/matches`}
@@ -76,10 +82,10 @@ export default async function SpacePeoplePage({
           variant="secondary"
         >
           <UsersRound className="size-4" />
-          Space matches
+          View matches
         </LinkButton>
       </div>
-      <StatusBanner spaceName={space.name} status={singleQueryValue(query.status)} />
+      <StatusBanner spaceName={communityName} status={singleQueryValue(query.status)} />
 
       <Card className="p-3">
         <form action={basePath} className="space-y-3">
@@ -91,7 +97,7 @@ export default async function SpacePeoplePage({
                 className="pl-9"
                 defaultValue={filters.q}
                 name="q"
-                placeholder="Search participants, startups, skills"
+                placeholder="Search by name, project or skill"
               />
             </label>
             <Select
@@ -99,11 +105,11 @@ export default async function SpacePeoplePage({
               defaultValue={filters.affiliation ?? ""}
               name="affiliation"
             >
-              <option value="">Any affiliation</option>
-              <option value="current participant">Current participant</option>
+              <option value="">Everyone</option>
+              <option value="current participant">Participant</option>
               <option value="alumni">Alumni</option>
               <option value="mentor">Mentor</option>
-              <option value="invited outsider">Invited outsider</option>
+              <option value="invited outsider">Guest</option>
             </Select>
             <Select
               aria-label="Filter people by startup stage"
@@ -166,13 +172,13 @@ export default async function SpacePeoplePage({
         <Card>
           <p className="font-semibold text-[var(--ink)]">
             {hasFilters
-              ? "No participants match this search"
-              : `No participant profiles are ready in ${space.name}`}
+              ? "No one matches this search"
+              : `No one is listed in ${communityName} yet`}
           </p>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
             {hasFilters
-              ? "Remove a filter or search with a broader skill, industry, or need."
-              : "People appear after joining this Space and completing enough profile context."}
+              ? "Try removing a filter or using a broader search."
+              : `New ${peopleLabel} will appear here after they create their profile.`}
           </p>
         </Card>
       ) : null}

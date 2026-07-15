@@ -131,8 +131,8 @@ function addSpace(kind: Space["kind"], id: string) {
     id,
     slug: id,
     kind,
-    name: kind === "main" ? "Main Community" : "Security Test Event",
-    eventLabel: kind === "main" ? "Permanent community" : "Security test",
+    name: kind === "main" ? "Wavesparks Community" : "Security Test Event",
+    eventLabel: kind === "main" ? "Community" : "Security test",
   };
   getStore().spaces.push(space);
   return space;
@@ -198,6 +198,11 @@ describe("member server actions", () => {
       full_name: "Jules Rivera",
       preferred_name: "Jules",
       headline: "Founder improving activation loops",
+      bio: "I am a product builder who enjoys helping communities learn together.",
+      problem_interest: "I care about the trust gap that makes online introductions awkward.",
+      current_focus: "Learning how lightweight profiles can start useful conversations.",
+      technical_experience_level: "guided",
+      technical_experience: "I can prototype product flows and write small scripts with guidance.",
       startup_one_liner: "A product for better community activation.",
       startup_description: "We help curated communities turn profiles into useful matches.",
       looking_for_types: "mentor, cofounder",
@@ -215,6 +220,11 @@ describe("member server actions", () => {
 
     await expect(getProfileByMembershipId("mem_jules")).resolves.toMatchObject({
       headline: "Founder improving activation loops",
+      bio: "I am a product builder who enjoys helping communities learn together.",
+      problemInterest: "I care about the trust gap that makes online introductions awkward.",
+      currentFocus: "Learning how lightweight profiles can start useful conversations.",
+      technicalExperienceLevel: "guided",
+      technicalExperience: "I can prototype product flows and write small scripts with guidance.",
       startupOneLiner: "A product for better community activation.",
     });
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/feed");
@@ -236,8 +246,13 @@ describe("member server actions", () => {
     const formData = formDataFromEntries({
       full_name: "Jules Rivera",
       preferred_name: "Jules",
+      headline: "",
+      bio: "",
+      current_focus: "",
+      skill_tags: "",
       email_for_intro: "jules@example.com",
       intent: "draft",
+      matching_intent_version: "2",
     });
 
     await expect(saveOnboardingAction("wavesparks", "mem_jules", formData)).rejects.toThrow(
@@ -251,14 +266,14 @@ describe("member server actions", () => {
     expect(canAccessFeed(membership, profile)).toBe(false);
   });
 
-  it("rejects invalid profile email, links, and numeric ranges before saving", async () => {
+  it("rejects invalid profile email, links, and field values before saving", async () => {
     await setViewer("mem_jules");
     const before = (await getProfileByMembershipId("mem_jules"))!;
     const formData = formDataFromEntries({
       email_for_intro: "not-an-email",
       linkedin_url: "javascript:alert(1)",
-      ambition_level: "9",
-      years_of_experience: "2.5",
+      technical_experience_level: "expert-ish",
+      max_mentees: "101",
     });
 
     await expect(saveOnboardingAction("wavesparks", "mem_jules", formData)).rejects.toThrow(
@@ -377,7 +392,7 @@ describe("member server actions", () => {
     await expect(getNotificationViews(receiver.id)).resolves.toEqual(
       expect.not.arrayContaining([
         expect.objectContaining({
-          title: "A new intro request is waiting",
+          title: "New introduction request in Wavesparks Community",
           link: "/org/wavesparks/s/main/requests",
         }),
       ]),
@@ -387,7 +402,7 @@ describe("member server actions", () => {
     await expect(getNotificationViews(receiver.id)).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          title: "A new intro request is waiting",
+          title: "New introduction request in Wavesparks Community",
           link: "/org/wavesparks/s/main/requests",
         }),
       ]),
@@ -419,7 +434,7 @@ describe("member server actions", () => {
     await expect(
       requestIntroAction("wavesparks", "mem_jules", formData),
     ).rejects.toThrow(
-      "Post source does not belong to the selected member in this Space.",
+      "This post does not belong to the selected member in this community or event.",
     );
     expect(
       getStore().introRequests.some((request) => request.sourceId === sourcePost.id),
@@ -446,7 +461,9 @@ describe("member server actions", () => {
 
     await expect(
       requestIntroAction("wavesparks", "mem_jules", formData),
-    ).rejects.toThrow("Match source does not belong to this Space pair.");
+    ).rejects.toThrow(
+      "This match does not belong to these members in this community or event.",
+    );
     expect(
       getStore().introRequests.some((request) => request.sourceId === sourceMatch.id),
     ).toBe(false);

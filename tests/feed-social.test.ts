@@ -180,7 +180,12 @@ describe("feed filters and social recommendations", () => {
   it("builds a limited searchable people directory without contact fields", async () => {
     const org = (await getOrganizationBySlug("wavesparks"))!;
     const hiddenProfile = (await getProfileByMembershipId("mem_marcus"))!;
+    const interestProfile = (await getProfileByMembershipId("mem_kai"))!;
     hiddenProfile.profileVisibleInMatching = false;
+    interestProfile.problemInterest = "low-cost-water-sensors";
+    interestProfile.bio = "community-kitchen-researcher";
+    interestProfile.currentFocus = "accessible-transit-prototype";
+    interestProfile.technicalExperience = "beginner-arduino-workshop";
 
     const climateProfiles = await getMemberDirectoryViewsForOrg(org, {
       viewerMembershipId: "mem_jules",
@@ -192,12 +197,31 @@ describe("feed filters and social recommendations", () => {
       filters: { affiliation: "mentor" },
       limit: 20,
     });
+    const signalSearches = await Promise.all(
+      [
+        "low-cost-water-sensors",
+        "community-kitchen-researcher",
+        "accessible-transit-prototype",
+        "beginner-arduino-workshop",
+      ].map((q) =>
+        getMemberDirectoryViewsForOrg(org, {
+          viewerMembershipId: "mem_jules",
+          filters: { q },
+          limit: 20,
+        }),
+      ),
+    );
 
     expect(climateProfiles.length).toBeGreaterThan(0);
     expect(climateProfiles.some((profile) => profile.membershipId === "mem_marcus")).toBe(false);
     expect(climateProfiles.every((profile) => !("emailForIntro" in profile))).toBe(true);
     expect(climateProfiles.every((profile) => !("whatsappNumber" in profile))).toBe(true);
-    expect(mentorProfiles.every((profile) => profile.affiliationLabel === "mentor")).toBe(true);
+    expect(mentorProfiles.every((profile) => profile.affiliationLabel === "Mentor")).toBe(true);
+    expect(
+      signalSearches.every((profiles) =>
+        profiles.some((profile) => profile.membershipId === "mem_kai"),
+      ),
+    ).toBe(true);
 
     const profileLinksById = await listProfileLinksByProfileIds([
       "pro_jules",

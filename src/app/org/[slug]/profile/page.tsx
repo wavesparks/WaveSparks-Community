@@ -8,6 +8,8 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
+import { distinctLegacyProfileText } from "@/lib/profile-bio";
+import { technicalExperienceLabel } from "@/lib/profile-experience";
 import { formatPercent } from "@/lib/utils";
 import { getMemberActivationState, getProfileLinks } from "@/server/view-models";
 import { listMatchTypeConfigsForOrg } from "@/server/store";
@@ -42,6 +44,10 @@ export default async function ProfilePage({
     listMatchTypeConfigsForOrg(viewer.org.id, { includeInactive: true }),
   ]);
   const configBySlug = new Map(matchTypeConfigs.map((config) => [config.slug, config]));
+  const distinctProjectLine = distinctLegacyProfileText(
+    viewer.profile.currentFocus,
+    viewer.profile.startupOneLiner,
+  );
 
   return (
     <AppShell currentPath={`/org/${slug}/profile`} viewer={viewer}>
@@ -67,11 +73,11 @@ export default async function ProfilePage({
         </div>
 
         <Card className="border-[var(--cyan)]/30 bg-[var(--cyan-soft)]">
-          <p className="font-semibold text-[var(--ink)]">One profile across all your spaces</p>
+          <p className="font-semibold text-[var(--ink)]">One profile across Wavesparks</p>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-            Changes to your name, bio, experience, and contact settings apply in Main Community and
-            every Event Space you can access. Your goals, offers, and AI matching preference are set
-            separately inside each space.
+            Changes to your name, bio, experience, and contact settings appear in Wavesparks
+            Community and every event you join. Your goals, what you need, what you can offer, and
+            matching preferences are set separately for each one.
           </p>
         </Card>
 
@@ -79,7 +85,10 @@ export default async function ProfilePage({
           <div className="space-y-6">
             <ActivationChecklistCard activation={activation} compact />
             <Card className="space-y-4">
-              <p className="text-sm text-[var(--ink-soft)]">{viewer.profile.longBio}</p>
+              <h2 className="text-xl font-semibold text-[var(--ink)]">About you</h2>
+              <p className="text-sm leading-6 text-[var(--ink-soft)]">
+                {viewer.profile.bio}
+              </p>
               <div className="flex flex-wrap gap-2">
                 {[...viewer.profile.industryTags, ...viewer.profile.skillTags].map((tag, index) => (
                   <Badge key={`profile-tag-${tag}-${index}`} variant="muted">
@@ -90,9 +99,45 @@ export default async function ProfilePage({
             </Card>
 
             <Card className="space-y-4">
-              <h2 className="text-xl font-semibold text-[var(--ink)]">What you’re building</h2>
-              <p className="text-sm text-[var(--ink-soft)]">{viewer.profile.startupOneLiner}</p>
-              <p className="text-sm text-[var(--ink-soft)]">{viewer.profile.startupDescription}</p>
+              <h2 className="text-xl font-semibold text-[var(--ink)]">
+                What you’re exploring
+              </h2>
+              <p className="text-sm leading-6 text-[var(--ink-soft)]">
+                {viewer.profile.currentFocus}
+              </p>
+              {viewer.profile.problemInterest ? (
+                <div className="rounded-lg bg-[var(--surface-muted)] p-4">
+                  <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">
+                    Problem or topic of interest
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
+                    {viewer.profile.problemInterest}
+                  </p>
+                </div>
+              ) : null}
+              {distinctProjectLine ? (
+                <p className="text-sm leading-6 text-[var(--ink-soft)]">
+                  Project: {distinctProjectLine}
+                </p>
+              ) : null}
+            </Card>
+
+            <Card className="space-y-4">
+              <h2 className="text-xl font-semibold text-[var(--ink)]">
+                Technical & product experience
+              </h2>
+              <p className="text-sm text-[var(--ink-soft)]">
+                {technicalExperienceLabel(viewer.profile.technicalExperienceLevel)}
+              </p>
+              {viewer.profile.technicalExperience ? (
+                <p className="text-sm leading-6 text-[var(--ink-soft)]">
+                  {viewer.profile.technicalExperience}
+                </p>
+              ) : (
+                <p className="text-sm leading-6 text-[var(--ink-soft)]">
+                  No experience details added yet.
+                </p>
+              )}
             </Card>
 
             <Card className="space-y-4">
@@ -131,7 +176,7 @@ export default async function ProfilePage({
                 {formatPercent(viewer.profile.profileCompletionPercent)}
               </p>
               <p className="text-sm text-[var(--ink-soft)]">
-                AI matching is configured separately inside each Space.
+                Matching preferences are set separately in Wavesparks Community and each Event.
               </p>
             </Card>
             <Card className="space-y-4">
@@ -145,10 +190,12 @@ export default async function ProfilePage({
               </div>
             </Card>
             <Card className="space-y-4">
-              <h3 className="text-xl font-semibold text-[var(--ink)]">Intro settings</h3>
-              <p className="text-sm text-[var(--ink-soft)]">Intro opt-in: {viewer.profile.introOptIn ? "on" : "off"}</p>
+              <h3 className="text-xl font-semibold text-[var(--ink)]">Introduction settings</h3>
               <p className="text-sm text-[var(--ink-soft)]">
-                WhatsApp reveals after accept: {viewer.profile.whatsappVisibleAfterAccept ? "yes" : "no"}
+                Available for introductions: {viewer.profile.introOptIn ? "Yes" : "No"}
+              </p>
+              <p className="text-sm text-[var(--ink-soft)]">
+                Share WhatsApp after accepting: {viewer.profile.whatsappVisibleAfterAccept ? "Yes" : "No"}
               </p>
             </Card>
           </div>

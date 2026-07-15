@@ -9,6 +9,10 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  getCommunityDisplayName,
+  getCommunityPeopleLabels,
+} from "@/lib/community-copy";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 
@@ -50,6 +54,8 @@ export default async function SpaceComposePage({
     requireAuth: true,
   });
   const { space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
+  const { plural: peopleLabel } = getCommunityPeopleLabels(space);
   const kind = singleQueryValue(query.kind) === "opportunity" ? "opportunity" : "feed";
   const feedPostType = defaultFeedPostType(singleQueryValue(query.type));
   const opportunityMode = kind === "opportunity";
@@ -65,10 +71,14 @@ export default async function SpaceComposePage({
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <SectionHeading
-          description="The audience is fixed by the Space in this URL, so changing a post type never changes who can see it."
+          description={`Share something with the ${peopleLabel} in ${communityName}.`}
           eyebrow={opportunityMode ? "Create opportunity" : "Create post"}
           level={1}
-          title={opportunityMode ? "Share a Space opportunity" : "Start a Space conversation"}
+          title={
+            opportunityMode
+              ? `Share an opportunity in ${communityName}`
+              : `Post in ${communityName}`
+          }
         />
         <LinkButton href={backPath} size="sm" variant="secondary">
           <ArrowLeft className="size-4" />
@@ -81,10 +91,9 @@ export default async function SpaceComposePage({
           <LockKeyhole className="size-4" />
         </div>
         <div>
-          <p className="font-semibold text-[var(--ink)]">Posting to {space.name}</p>
+          <p className="font-semibold text-[var(--ink)]">Who will see this?</p>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-            Only active members of this Space can see this post. It will not appear in
-            Main Community or any other event you belong to.
+            This post will be visible to active {peopleLabel} in {communityName}.
           </p>
         </div>
       </Card>
@@ -94,8 +103,8 @@ export default async function SpaceComposePage({
           <div>
             <p className="font-semibold text-[var(--ink)]">Complete your profile to post</p>
             <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-              You can read {space.name}, but publishing and other interactions require a
-              complete core profile.
+              You can read posts in {communityName}, but you’ll need a complete profile
+              to publish or respond.
             </p>
           </div>
           <LinkButton
@@ -126,7 +135,7 @@ export default async function SpaceComposePage({
                 {opportunityMode ? null : (
                   <>
                     <option value="general_update">General update</option>
-                    <option value="ask">Ask</option>
+                    <option value="ask">Question</option>
                     <option value="resource">Resource</option>
                     <option value="announcement">Announcement</option>
                   </>
@@ -139,23 +148,23 @@ export default async function SpaceComposePage({
 
             {opportunityMode ? (
               <div>
-                <Label htmlFor="opportunity_source">Opportunity layer</Label>
+                <Label htmlFor="opportunity_source">Shared by</Label>
                 {viewer.canAdmin ? (
                   <Select
                     defaultValue={source}
                     id="opportunity_source"
                     name="opportunity_source"
                   >
-                    <option value="official">Official organizer recommendation</option>
-                    <option value="member">Participant published</option>
-                    <option value="mentor">Mentor published</option>
+                    <option value="official">Organizers</option>
+                    <option value="member">Participants</option>
+                    <option value="mentor">Mentors</option>
                   </Select>
                 ) : (
                   <>
                     <Input
                       disabled
                       id="opportunity_source"
-                      value={source === "mentor" ? "Mentor published" : "Participant published"}
+                      value={source === "mentor" ? "Mentors" : "Participants"}
                     />
                     <input name="opportunity_source" type="hidden" value={source} />
                   </>
@@ -168,11 +177,11 @@ export default async function SpaceComposePage({
               <Input id="title" name="title" placeholder="Clear, specific headline" required />
             </div>
             <div>
-              <Label htmlFor="body">Context</Label>
+              <Label htmlFor="body">Details</Label>
               <Textarea
                 id="body"
                 name="body"
-                placeholder={`Explain what is happening in ${space.name}, who it is for, and what response would be useful.`}
+                placeholder="Add the details, who this is for, and what kind of response would help."
                 required
               />
             </div>
@@ -204,8 +213,8 @@ export default async function SpaceComposePage({
             >
               <Send className="size-4" />
               {opportunityMode
-                ? `Publish opportunity in ${space.name}`
-                : `Publish post in ${space.name}`}
+                ? `Publish opportunity in ${communityName}`
+                : `Publish post in ${communityName}`}
             </SubmitButton>
           </form>
         </Card>

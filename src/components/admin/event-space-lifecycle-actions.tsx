@@ -31,7 +31,7 @@ export function EventSpaceLifecycleActions({
       onSubmit={(event) => {
         if (
           !window.confirm(
-            "Archive this Event? Participants will lose access and matching will stop. Content and roster data will be retained.",
+            "Archive this Event? Participants will lose access and matching will stop. Posts, conversations, and participant history will be kept.",
           )
         ) {
           event.preventDefault();

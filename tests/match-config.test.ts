@@ -36,9 +36,9 @@ describe("matching type configuration", () => {
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "Direction must be mutual or seeker-to-provider.",
-        "Minimum score must be a whole number from 35 to 80.",
-        "Factor weights must total 100.",
+        "Choose how people should be paired.",
+        "Minimum match quality must be a whole number from 35 to 80.",
+        "Importance values must total 100.",
       ]),
     );
   });

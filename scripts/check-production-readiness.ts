@@ -27,7 +27,7 @@ export interface SpaceRolloutAuditRow {
 
 const spaceRolloutCheckMessages: Record<string, string> = {
   organizations_without_exactly_one_main:
-    "organization(s) do not have exactly one active Main Community",
+    "organization(s) do not have exactly one active Wavesparks Community",
   duplicate_space_memberships: "duplicate Space membership pair(s) exist",
   invalid_space_relationships: "orphan or cross-organization Space relationship(s) exist",
   null_posts_space_id: "post(s) have null space_id",

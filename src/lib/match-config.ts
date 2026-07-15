@@ -41,7 +41,7 @@ const defaultDefinitions: Array<
   {
     slug: "cofounder_match",
     name: "Co-founder",
-    description: "A reciprocal founder relationship with complementary capability and commitment.",
+    description: "Meet someone interested in building a company together.",
     direction: "mutual",
     seekerLabel: "I am looking for a co-founder",
     providerLabel: "I am open to being a co-founder",
@@ -58,7 +58,7 @@ const defaultDefinitions: Array<
   {
     slug: "mentor_match",
     name: "Mentor",
-    description: "A founder need matched to relevant experience, guidance and availability.",
+    description: "Meet someone who can offer relevant advice and experience.",
     direction: "seeker_provider",
     seekerLabel: "I am looking for a mentor or adviser",
     providerLabel: "I can mentor or advise",
@@ -75,7 +75,7 @@ const defaultDefinitions: Array<
   {
     slug: "collaborator_match",
     name: "Collaborator",
-    description: "A reciprocal project or teammate relationship built around complementary contributions.",
+    description: "Meet someone to work with on a project or idea.",
     direction: "mutual",
     seekerLabel: "I am looking for a collaborator or teammate",
     providerLabel: "I am open to collaborating",
@@ -150,18 +150,18 @@ export function validateMatchTypeConfig(input: {
     errors.push("The offering label must contain 3 to 100 characters.");
   }
   if (input.direction !== "mutual" && input.direction !== "seeker_provider") {
-    errors.push("Direction must be mutual or seeker-to-provider.");
+    errors.push("Choose how people should be paired.");
   }
   if (!Number.isInteger(input.minimumScore) || input.minimumScore < 35 || input.minimumScore > 80) {
-    errors.push("Minimum score must be a whole number from 35 to 80.");
+    errors.push("Minimum match quality must be a whole number from 35 to 80.");
   }
 
   const weights = Object.values(input.weights);
   if (weights.some((weight) => !Number.isInteger(weight) || weight < 0 || weight > 100)) {
-    errors.push("Every factor weight must be a whole number from 0 to 100.");
+    errors.push("Each importance value must be a whole number from 0 to 100.");
   }
   if (weights.reduce((sum, weight) => sum + weight, 0) !== 100) {
-    errors.push("Factor weights must total 100.");
+    errors.push("Importance values must total 100.");
   }
   return errors;
 }

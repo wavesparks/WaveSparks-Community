@@ -2,9 +2,9 @@
 
 import {
   BookOpen,
-  Bell,
   ChevronDown,
   Compass,
+  Handshake,
   History,
   LayoutDashboard,
   Sparkles,
@@ -15,6 +15,11 @@ import { usePathname } from "next/navigation";
 import { useRef } from "react";
 
 import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
+import {
+  getCommunityDisplayName,
+  getCommunityTypeLabel,
+  WAVESPARKS_COMMUNITY_NAME,
+} from "@/lib/community-copy";
 import type { Space } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +41,7 @@ const sectionLinks = [
   { href: "matches", label: "Matches", icon: Sparkles },
   { href: "knowledge", label: "Knowledge", icon: BookOpen },
   { href: "opportunities", label: "Opportunities", icon: LayoutDashboard },
-  { href: "requests", label: "Requests", icon: Bell },
+  { href: "requests", label: "Introductions", icon: Handshake },
 ] as const;
 
 const switchableSections = new Set(sectionLinks.map((link) => link.href));
@@ -48,13 +53,6 @@ function currentSection(pathname: string) {
   return section && switchableSections.has(section as (typeof sectionLinks)[number]["href"])
     ? section
     : "feed";
-}
-
-function lifecycleLabel(space: SpaceShellSpace) {
-  if (space.kind === "main") return "Permanent network";
-  if (space.lifecycle === "ended") return "Past event";
-  if (space.lifecycle === "upcoming") return "Upcoming event";
-  return "Active event";
 }
 
 function SpaceOption({
@@ -96,8 +94,14 @@ function SpaceOption({
         )}
       />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold">{space.name}</span>
-        <span className="mt-0.5 block truncate text-xs">{lifecycleLabel(space)}</span>
+        <span className="block truncate text-sm font-semibold">
+          {getCommunityDisplayName(space)}
+        </span>
+        {space.kind === "event" ? (
+          <span className="mt-0.5 block truncate text-xs">
+            {getCommunityTypeLabel(space)}
+          </span>
+        ) : null}
       </span>
       {current ? (
         <span className="mt-0.5 text-[10px] font-semibold uppercase text-[var(--accent)]">
@@ -145,11 +149,13 @@ export function SpaceSwitcher({
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold text-[var(--ink)]">
-            {currentSpace.name}
+            {getCommunityDisplayName(currentSpace)}
           </span>
-          <span className="block truncate text-xs text-[var(--ink-soft)]">
-            {lifecycleLabel(currentSpace)}
-          </span>
+          {currentSpace.kind === "event" ? (
+            <span className="block truncate text-xs text-[var(--ink-soft)]">
+              {getCommunityTypeLabel(currentSpace)}
+            </span>
+          ) : null}
         </span>
         <ChevronDown
           aria-hidden
@@ -162,7 +168,7 @@ export function SpaceSwitcher({
           {mainSpaces.length ? (
             <div>
               <p className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase text-[var(--ink-soft)]">
-                Main Community
+                {WAVESPARKS_COMMUNITY_NAME}
               </p>
               {mainSpaces.map((space) => (
                 <SpaceOption
@@ -220,7 +226,7 @@ export function SpaceSwitcher({
             href={`/org/${orgSlug}`}
             onClick={closeSwitcher}
           >
-            View all my spaces
+            Home
             <NavPendingIndicator className="size-1.5" />
           </Link>
         </div>
@@ -240,7 +246,7 @@ export function SpaceSectionNavigation({
 
   return (
     <nav
-      aria-label="Space navigation"
+      aria-label="Community navigation"
       className="-mx-1 flex min-w-0 items-center gap-1 overflow-x-auto px-1"
     >
       {sectionLinks.map((link) => {

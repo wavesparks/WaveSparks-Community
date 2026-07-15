@@ -1,5 +1,9 @@
 import Link from "next/link";
 
+import {
+  adminInvitationIssue,
+  adminSpaceName,
+} from "@/components/admin/admin-community-copy";
 import { InvitePeopleDialog } from "@/components/admin/invite-people-dialog";
 import { MemberDetailPanel } from "@/components/admin/member-detail-panel";
 import { MemberManagementNav } from "@/components/admin/member-management-nav";
@@ -17,6 +21,10 @@ import type { AccountStatus } from "@/lib/domain";
 import { isE2ELocalAuthEnabled } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
 import { singleQueryValue } from "@/lib/feed-filters";
+import {
+  getAccountStatusLabel,
+  getSpaceAccessStatusLabel,
+} from "@/lib/member-copy";
 import { cn } from "@/lib/utils";
 import {
   listMemberWorkspaceForOrg,
@@ -26,10 +34,10 @@ import {
 
 const accessOptions = [
   ["", "All account states"],
-  ["invited", "Invited"],
-  ["connected", "Connected"],
-  ["suspended", "Suspended globally"],
-  ["deprovisioned", "Deprovisioned"],
+  ["invited", "Invitation pending"],
+  ["connected", "Active"],
+  ["suspended", "Paused"],
+  ["deprovisioned", "Account closed"],
 ] as const;
 
 const invitationOptions = [
@@ -76,9 +84,7 @@ function memberListHref(
 }
 
 function accessLabel(status: AccountStatus) {
-  return status === "deprovisioned"
-    ? "Deprovisioned"
-    : status[0].toUpperCase() + status.slice(1);
+  return getAccountStatusLabel(status);
 }
 
 function invitationLabel(membership: {
@@ -141,7 +147,7 @@ export default async function AdminMembersPage({
         <MemberManagementNav active="members" slug={slug} />
         <div className="flex flex-wrap items-start justify-between gap-4">
           <SectionHeading
-            description="Search, invite, and manage account records alongside each person’s assigned Spaces."
+            description="Search, invite, and manage accounts, including access to Wavesparks Community and Events."
             eyebrow="Admin · Member management"
             level={1}
             title="Members"
@@ -162,7 +168,7 @@ export default async function AdminMembersPage({
 
         {!invitationsEnabled ? (
           <div className="rounded-lg border border-amber-600/30 bg-amber-50 p-4 text-sm text-amber-900">
-            Configure Clerk before creating invitations. Existing membership records remain manageable.
+            Invitations are temporarily unavailable. You can still manage existing members and access.
           </div>
         ) : null}
 
@@ -195,12 +201,12 @@ export default async function AdminMembersPage({
               </Select>
             </div>
             <div>
-              <Label htmlFor="member-space">Space</Label>
+              <Label htmlFor="member-space">Community or Event</Label>
               <Select defaultValue={selectedSpace ?? ""} id="member-space" name="space">
-                <option value="">All Spaces</option>
+                <option value="">Wavesparks Community &amp; all Events</option>
                 {spaces.map((space) => (
                   <option key={space.id} value={space.id}>
-                    {space.name}{space.lifecycle === "archived" ? " (archived)" : ""}
+                    {adminSpaceName(space)}{space.lifecycle === "archived" ? " (archived)" : ""}
                   </option>
                 ))}
               </Select>
@@ -224,7 +230,7 @@ export default async function AdminMembersPage({
                 {memberPage.total} {memberPage.total === 1 ? "member" : "members"}
               </h2>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                Account connection and Space access are tracked separately.
+                Account connection and community or Event access are tracked separately.
               </p>
             </div>
             {memberPage.pageCount > 1 ? (
@@ -246,7 +252,7 @@ export default async function AdminMembersPage({
                         <h3 className="font-semibold text-[var(--ink)]">
                           {profile?.preferredName || user?.name || "Unnamed member"}
                         </h3>
-                        {membership.role === "org_admin" ? <Badge variant="accent">Admin</Badge> : null}
+                        {membership.role === "org_admin" ? <Badge variant="accent">Administrator</Badge> : null}
                       </div>
                       <p className="mt-1 break-words text-sm text-[var(--ink-soft)]">
                         {user?.email || "Email unavailable"}
@@ -270,18 +276,18 @@ export default async function AdminMembersPage({
                       </Badge>
                       {membership.clerkInvitationError ? (
                         <p className="mt-2 break-words text-xs leading-5 text-red-700">
-                          {membership.clerkInvitationError}
+                          {adminInvitationIssue(membership.clerkInvitationError)}
                         </p>
                       ) : null}
                     </div>
                   </div>
 
                   <div className="flex flex-wrap gap-2 border-t border-[var(--line)] pt-3">
-                    <span className="mr-1 text-xs font-semibold uppercase text-[var(--ink-soft)]">Space access</span>
+                    <span className="mr-1 text-xs font-semibold uppercase text-[var(--ink-soft)]">Community &amp; Event access</span>
                     {memberSpaces.length ? memberSpaces.map(({ space, spaceMembership }) => (
                       <Link key={space.id} href={`/org/${slug}/admin/spaces/${space.id}`}>
                         <Badge variant={spaceMembership.accessStatus === "active" ? "accent" : "muted"}>
-                          {space.name} · {spaceMembership.accessStatus}
+                          {adminSpaceName(space)} · {getSpaceAccessStatusLabel(spaceMembership.accessStatus)}
                         </Badge>
                       </Link>
                     )) : <span className="text-xs text-[var(--ink-soft)]">None</span>}

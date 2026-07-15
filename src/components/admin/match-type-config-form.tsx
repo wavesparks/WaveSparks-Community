@@ -36,11 +36,6 @@ export function MatchTypeConfigForm({
             <h3 className="text-lg font-semibold text-[var(--ink)]">
               {config?.name ?? "New matching type"}
             </h3>
-            {config ? (
-              <p className="mt-1 text-xs text-[var(--ink-soft)]">
-                Stable key: {config.slug} · Version {config.version}
-              </p>
-            ) : null}
           </div>
           <label className="flex min-h-10 items-center gap-2 text-sm font-medium text-[var(--ink)]">
             <input
@@ -64,14 +59,14 @@ export function MatchTypeConfigForm({
             />
           </div>
           <div>
-            <Label htmlFor={`${config?.slug ?? "new"}-direction`}>Direction</Label>
+            <Label htmlFor={`${config?.slug ?? "new"}-direction`}>Who should be paired?</Label>
             <Select
               defaultValue={config?.direction ?? "mutual"}
               id={`${config?.slug ?? "new"}-direction`}
               name="direction"
             >
-              <option value="mutual">Mutual</option>
-              <option value="seeker_provider">Seeker to provider</option>
+              <option value="mutual">People looking for the same kind of connection</option>
+              <option value="seeker_provider">Someone looking with someone who can help</option>
             </Select>
           </div>
           <div className="md:col-span-2">
@@ -84,7 +79,9 @@ export function MatchTypeConfigForm({
             />
           </div>
           <div className="md:col-span-2">
-            <Label htmlFor={`${config?.slug ?? "new"}-seeker-label`}>Seeking label</Label>
+            <Label htmlFor={`${config?.slug ?? "new"}-seeker-label`}>
+              Option shown under “I’m looking for”
+            </Label>
             <Input
               defaultValue={config?.seekerLabel}
               id={`${config?.slug ?? "new"}-seeker-label`}
@@ -93,7 +90,9 @@ export function MatchTypeConfigForm({
             />
           </div>
           <div className="md:col-span-2">
-            <Label htmlFor={`${config?.slug ?? "new"}-provider-label`}>Offering label</Label>
+            <Label htmlFor={`${config?.slug ?? "new"}-provider-label`}>
+              Option shown under “I can help with”
+            </Label>
             <Input
               defaultValue={config?.providerLabel}
               id={`${config?.slug ?? "new"}-provider-label`}
@@ -104,7 +103,12 @@ export function MatchTypeConfigForm({
         </div>
 
         <div className="space-y-3">
-          <p className="text-sm font-semibold text-[var(--ink)]">Factor weights</p>
+          <div>
+            <p className="text-sm font-semibold text-[var(--ink)]">What matters most</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
+              Choose how much each detail should influence suggestions. Keep the total at 100.
+            </p>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {factorKeys.map((key) => (
               <div key={key}>
@@ -128,7 +132,7 @@ export function MatchTypeConfigForm({
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="w-44">
             <Label htmlFor={`${config?.slug ?? "new"}-minimum-score`}>
-              Minimum score
+              Minimum match quality
             </Label>
             <Input
               defaultValue={config?.minimumScore ?? 45}
@@ -140,8 +144,8 @@ export function MatchTypeConfigForm({
               type="number"
             />
           </div>
-          <SubmitButton pendingLabel="Saving type">
-            {config ? "Save type" : "Create type"}
+          <SubmitButton pendingLabel="Saving category">
+            {config ? "Save category" : "Create category"}
           </SubmitButton>
         </div>
       </form>

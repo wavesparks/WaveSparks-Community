@@ -9,6 +9,7 @@ import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
+import { getCommunityDisplayName } from "@/lib/community-copy";
 import type { IntroStatus } from "@/lib/domain";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { getSpaceViewerContext } from "@/lib/space-auth";
@@ -68,6 +69,7 @@ export default async function SpaceRequestsPage({
     requireAuth: true,
   });
   const { space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
   const selectedRequestDirection = requestDirectionFromQuery(
     singleQueryValue(query.request_direction),
   );
@@ -89,23 +91,25 @@ export default async function SpaceRequestsPage({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <SectionHeading
-          description={`Introduction requests and notifications created inside ${space.name}. Use the account Inbox for a combined view across all your Spaces.`}
-          eyebrow="Space requests"
+          description={`Your introductions and recent activity in ${communityName}.`}
+          eyebrow="Introductions"
           level={1}
-          title={`Requests in ${space.name}`}
+          title={`Introductions in ${communityName}`}
         />
         <LinkButton href={`/org/${slug}/requests`} size="sm" variant="secondary">
-          Open all-Spaces Inbox
+          All introductions
         </LinkButton>
       </div>
-      <StatusBanner spaceName={space.name} status={singleQueryValue(query.status)} />
+      <StatusBanner spaceName={communityName} status={singleQueryValue(query.status)} />
 
       {!context.canInteract ? (
         <Card className="border-amber-500/25 bg-amber-50">
-          <p className="font-semibold text-[var(--ink)]">Requests are read-only</p>
+          <p className="font-semibold text-[var(--ink)]">
+            Complete your profile to respond
+          </p>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-            Complete your core profile before responding or starting introductions in this
-            Space.
+            You can review existing introductions now. Complete your profile to respond
+            or request a new one.
           </p>
         </Card>
       ) : null}
@@ -168,17 +172,17 @@ export default async function SpaceRequestsPage({
               }
               key={request.id}
               request={request}
+              sourceName={communityName}
             />
           ))}
 
           {!requests.length ? (
             <Card>
               <p className="font-semibold text-[var(--ink)]">
-                No matching requests in {space.name}
+                No introductions in this view
               </p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                Requests started from people, matches, and posts in this Space appear here
-                with their original context.
+                Try another tab, or meet someone through People and Matches.
               </p>
             </Card>
           ) : null}
@@ -186,7 +190,7 @@ export default async function SpaceRequestsPage({
 
         <Card className="h-fit space-y-4 xl:sticky xl:top-64">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <SectionHeading eyebrow="This Space" title="Latest notifications" />
+            <SectionHeading eyebrow={communityName} title="Latest notifications" />
             {context.canInteract && hasUnreadNotifications ? (
               <form
                 action={markNotificationsReadInSpaceAction.bind(
@@ -222,7 +226,7 @@ export default async function SpaceRequestsPage({
             {!notifications.length ? (
               <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                 <p className="text-sm text-[var(--ink-soft)]">
-                  No notifications from {space.name} yet.
+                  No notifications yet.
                 </p>
               </div>
             ) : null}

@@ -7,17 +7,15 @@ import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
 import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
+import {
+  getCommunityDisplayName,
+  getCommunityPeopleLabels,
+} from "@/lib/community-copy";
 import { parseFeedFilters, pathWithQuery, singleQueryValue } from "@/lib/feed-filters";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 import { cn } from "@/lib/utils";
 import type { FeedFilters } from "@/server/view-models";
 import { getFeedViewsForSpace } from "@/server/view-models";
-
-const layers = [
-  { source: "official", label: "Official organizer recommendations" },
-  { source: "member", label: "Participant published" },
-  { source: "mentor", label: "Mentor published" },
-] as const;
 
 export default async function SpaceOpportunitiesPage({
   params,
@@ -32,6 +30,13 @@ export default async function SpaceOpportunitiesPage({
     requireAuth: true,
   });
   const { space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
+  const { plural: peopleLabel } = getCommunityPeopleLabels(space);
+  const layers = [
+    { source: "official", label: "From organizers" },
+    { source: "member", label: `From ${peopleLabel}` },
+    { source: "mentor", label: "From mentors" },
+  ] as const;
   const rawSource = singleQueryValue(query.source) ?? "official";
   const source: FeedFilters["opportunitySource"] =
     rawSource === "member" || rawSource === "mentor" || rawSource === "all"
@@ -54,7 +59,7 @@ export default async function SpaceOpportunitiesPage({
     ? layers.filter((layer) => layer.source === source)
     : layers;
   const returnPath = pathWithQuery(basePath, query);
-  const layerLinks = [...layers, { source: "all", label: "All layers" }] as const;
+  const layerLinks = [...layers, { source: "all", label: "All sources" }] as const;
   const hrefForSource = (nextSource: (typeof layerLinks)[number]["source"]) => {
     const nextParams = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
@@ -70,10 +75,10 @@ export default async function SpaceOpportunitiesPage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <SectionHeading
-          description={`Official recommendations, participant asks, and mentor opportunities shared specifically with ${space.name}.`}
-          eyebrow="Space opportunities"
+          description={`Opportunities and requests shared by organizers, ${peopleLabel} and mentors in ${communityName}.`}
+          eyebrow="Opportunities"
           level={1}
-          title={`Opportunities in ${space.name}`}
+          title={`Opportunities in ${communityName}`}
         />
         {context.canInteract ? (
           <LinkButton href={`/org/${slug}/s/${space.slug}/compose?kind=opportunity`} size="sm">
@@ -82,7 +87,7 @@ export default async function SpaceOpportunitiesPage({
           </LinkButton>
         ) : null}
       </div>
-      <StatusBanner spaceName={space.name} status={singleQueryValue(query.status)} />
+      <StatusBanner spaceName={communityName} status={singleQueryValue(query.status)} />
 
       <div className="flex flex-wrap gap-2">
         {layerLinks.map((layer) => (
@@ -107,6 +112,7 @@ export default async function SpaceOpportunitiesPage({
         defaultOpportunitySource="official"
         filters={filters}
         opportunityMode
+        peopleLabel={peopleLabel}
       />
 
       <div className="space-y-6">
@@ -120,6 +126,7 @@ export default async function SpaceOpportunitiesPage({
                   {layerPosts.map((post) => (
                     <PostCard
                       key={post.id}
+                      peopleLabel={peopleLabel}
                       post={post}
                       returnPath={returnPath}
                       slug={slug}
@@ -133,7 +140,7 @@ export default async function SpaceOpportunitiesPage({
                 </div>
               ) : (
                 <p className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4 text-sm leading-6 text-[var(--ink-soft)] shadow-sm">
-                  No {layer.label.toLowerCase()} match these filters in {space.name}.
+                  No opportunities here yet.
                 </p>
               )}
             </section>

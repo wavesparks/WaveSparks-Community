@@ -15,14 +15,13 @@ export default function SpaceNotFound() {
         <LockKeyhole aria-hidden className="size-5" />
       </div>
       <h1 className="mt-4 text-2xl font-semibold text-[var(--ink)]">
-        This item is not available in this space
+        This item isn’t available
       </h1>
       <p className="mt-2 max-w-lg text-sm leading-6 text-[var(--ink-soft)]">
-        It may belong to another private space, have been removed, or no longer be available. No
-        content from another space is shown here.
+        It may have been removed, or you may no longer have access.
       </p>
       <LinkButton className="mt-5" href={`/org/${slug}`} variant="secondary">
-        Back to my spaces
+        Back to home
       </LinkButton>
     </Card>
   );

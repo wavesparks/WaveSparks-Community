@@ -17,7 +17,13 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  getCommunityDisplayName,
+  getCommunityPeopleLabels,
+} from "@/lib/community-copy";
 import { singleQueryValue } from "@/lib/feed-filters";
+import { distinctLegacyProfileText } from "@/lib/profile-bio";
+import { technicalExperienceLabel } from "@/lib/profile-experience";
 import { getActiveIntroStatusCopy } from "@/lib/intro-status";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 import { getMemberDirectoryProfileViewForSpace } from "@/server/view-models";
@@ -39,6 +45,8 @@ export default async function SpacePersonDetailPage({
     requireProfile: true,
   });
   const { space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
+  const { plural: peopleLabel } = getCommunityPeopleLabels(space);
   const profile = await getMemberDirectoryProfileViewForSpace({
     orgId: viewer.org.id,
     spaceId: space.id,
@@ -46,6 +54,12 @@ export default async function SpacePersonDetailPage({
     viewerMembershipId: viewer.membership.id,
   });
   if (!profile) notFound();
+  const projectContext = [
+    distinctLegacyProfileText(profile.problemInterest, profile.startupDescription),
+    profile.currentProgress,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const isSelf = viewer.membership.id === profile.membershipId;
   const introCopy = getActiveIntroStatusCopy(profile.introStatus);
@@ -75,7 +89,7 @@ export default async function SpacePersonDetailPage({
           variant="secondary"
         >
           <ArrowLeft className="size-4" />
-          People in {space.name}
+          People in {communityName}
         </LinkButton>
         {!isSelf && context.canInteract ? (
           <form action={followAction}>
@@ -90,7 +104,7 @@ export default async function SpacePersonDetailPage({
           </form>
         ) : null}
       </div>
-      <StatusBanner spaceName={space.name} status={singleQueryValue(query.status)} />
+      <StatusBanner spaceName={communityName} status={singleQueryValue(query.status)} />
 
       <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
         <Card className="space-y-5">
@@ -100,7 +114,10 @@ export default async function SpacePersonDetailPage({
               <div className="flex flex-wrap gap-2">
                 <Badge>{profile.stage}</Badge>
                 <Badge variant="muted">{profile.affiliationLabel}</Badge>
-                <Badge variant="accent">Member of {space.name}</Badge>
+                <Badge variant="accent">
+                  {space.kind === "main" ? "Member of" : "Participant in"}{" "}
+                  {communityName}
+                </Badge>
               </div>
               <SectionHeading
                 description={profile.headline}
@@ -115,28 +132,43 @@ export default async function SpacePersonDetailPage({
 
           <div className="grid gap-4 md:grid-cols-2">
             <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
-              <p className="text-sm font-semibold text-[var(--ink)]">Building</p>
+              <p className="text-sm font-semibold text-[var(--ink)]">Exploring now</p>
               <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
-                {profile.whatTheyAreBuilding || profile.startupDescription}
+                {profile.currentFocus || profile.whatTheyAreBuilding || "Still exploring"}
               </p>
             </div>
             <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
-              <p className="text-sm font-semibold text-[var(--ink)]">Looking for</p>
+              <p className="text-sm font-semibold text-[var(--ink)]">Interested in</p>
               <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
-                {[...profile.whatTheyNeed, ...profile.desiredRoles].join(", ") ||
-                  "Useful founder conversations"}
+                {profile.problemInterest ||
+                  [...profile.whatTheyNeed, ...profile.desiredRoles].join(", ") ||
+                  "Meeting people with shared interests"}
               </p>
             </div>
           </div>
 
           <div className="space-y-3">
-            <p className="text-sm font-semibold text-[var(--ink)]">Startup context</p>
-            <p className="text-sm leading-6 text-[var(--ink-soft)]">
-              {profile.startupDescription}
-            </p>
-            <p className="text-sm leading-6 text-[var(--ink-soft)]">
-              {profile.currentProgress}
-            </p>
+            <p className="text-sm font-semibold text-[var(--ink)]">About</p>
+            <p className="text-sm leading-6 text-[var(--ink-soft)]">{profile.bio}</p>
+            {profile.technicalExperience ? (
+              <div className="rounded-lg border border-[var(--line)] p-4">
+                <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">
+                  Technical & product experience ·{" "}
+                  {technicalExperienceLabel(profile.technicalExperienceLevel)}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
+                  {profile.technicalExperience}
+                </p>
+              </div>
+            ) : null}
+            {projectContext ? (
+              <div>
+                <p className="text-sm font-semibold text-[var(--ink)]">What they’re working on</p>
+                <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
+                  {projectContext}
+                </p>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -167,16 +199,15 @@ export default async function SpacePersonDetailPage({
         </Card>
 
         <div className="space-y-6">
-          <Card className="space-y-4">
-            <SectionHeading title={`Request an intro in ${space.name}`} />
+          <Card className="scroll-mt-64 space-y-4" id="request-introduction">
+            <SectionHeading title={`Introductions in ${communityName}`} />
             {!context.canInteract ? (
               <div className="rounded-lg border border-amber-500/25 bg-amber-50 p-4">
                 <p className="text-sm font-semibold text-[var(--ink)]">
                   Complete your profile first
                 </p>
                 <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                  You can read this profile, but introductions require a complete core
-                  profile.
+                  To request an introduction, complete your profile first.
                 </p>
                 <LinkButton
                   className="mt-3"
@@ -191,7 +222,7 @@ export default async function SpacePersonDetailPage({
               <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                 <p className="text-sm font-semibold text-[var(--ink)]">This is your profile</p>
                 <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                  Other active members of {space.name} can request an introduction here.
+                  Other {peopleLabel} in {communityName} can request an introduction here.
                 </p>
               </div>
             ) : introCopy ? (
@@ -205,7 +236,7 @@ export default async function SpacePersonDetailPage({
                   href={`/org/${slug}/s/${space.slug}/requests`}
                   variant="secondary"
                 >
-                  Open Space requests
+                  View introduction
                 </LinkButton>
               </div>
             ) : (
@@ -226,45 +257,45 @@ export default async function SpacePersonDetailPage({
                 <input name="source_type" type="hidden" value="profile" />
                 <input name="source_id" type="hidden" value={profile.profileId} />
                 <div>
-                  <Label htmlFor="profile-intro-purpose">Conversation purpose</Label>
+                  <Label htmlFor="profile-intro-purpose">What would you like to discuss?</Label>
                   <Input
-                    defaultValue="profile discovery"
                     id="profile-intro-purpose"
                     name="intro_purpose"
+                    placeholder="For example, advice on entering a new market"
                     required
                   />
                 </div>
                 <div>
-                  <Label htmlFor="profile-intro-note">Why you would like to connect</Label>
+                  <Label htmlFor="profile-intro-note">Why would you like to meet?</Label>
                   <Textarea
-                    defaultValue={`Your work on ${profile.startupName || profile.whatTheyAreBuilding} feels relevant to what I’m exploring in ${space.name}. I’d love to compare notes if you’re open to it.`}
                     id="profile-intro-note"
                     name="note"
+                    placeholder="Share what caught your attention and why a conversation could be helpful."
                     required
                   />
                 </div>
                 <div>
-                  <Label htmlFor="profile-intro-message">Suggested first message</Label>
+                  <Label htmlFor="profile-intro-message">Your opening message</Label>
                   <Textarea
-                    defaultValue={`Thanks for being open to connect. I found your profile through ${space.name} and would love to compare notes.`}
                     id="profile-intro-message"
                     name="suggested_first_message"
+                    placeholder="Write the message you would like to send if they accept."
                     required
                   />
                 </div>
                 <SubmitButton className="w-full" pendingLabel="Sending request">
                   <UserPlus className="size-4" />
-                  Request intro
+                  Request introduction
                 </SubmitButton>
               </form>
             )}
           </Card>
 
           <Card className="space-y-3">
-            <SectionHeading title="Space and contact privacy" />
+            <SectionHeading title="Contact privacy" />
             <p className="text-sm leading-6 text-[var(--ink-soft)]">
-              This profile is visible because you both belong to {space.name}. Email and
-              WhatsApp stay hidden until an introduction is accepted.
+              Email and WhatsApp stay private until both of you agree to the
+              introduction.
             </p>
           </Card>
         </div>

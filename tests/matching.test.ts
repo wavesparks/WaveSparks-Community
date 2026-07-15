@@ -9,6 +9,7 @@ import {
 } from "@/data/seed-data";
 import type { MatchTypeConfig } from "@/lib/domain";
 import {
+  buildFallbackExplanation,
   buildMatchingEmbeddingTexts,
   cosineSimilarity,
   computeMatchBreakdown,
@@ -26,6 +27,25 @@ import {
 describe("matching engine", () => {
   beforeEach(() => {
     resetStore();
+  });
+
+  it("uses the canonical bio plus interest and technical experience signals once", () => {
+    const profile = {
+      ...seedProfiles[0],
+      bio: "More detail around CANONICAL-BIO-SIGNAL for matching",
+      shortBio: "canonical-bio-signal…",
+      longBio: "More detail around CANONICAL-BIO-SIGNAL for matching",
+      problemInterest: "inclusive-learning-signal",
+      currentFocus: "prototype-research-signal",
+      technicalExperience: "first-python-project-signal",
+    };
+
+    const result = buildMatchingEmbeddingTexts(profile);
+
+    expect(result.offeringText.toLowerCase().match(/canonical-bio-signal/g)).toHaveLength(1);
+    expect(result.seekingProfileText).toContain("inclusive-learning-signal");
+    expect(result.seekingProfileText).toContain("prototype-research-signal");
+    expect(result.offeringText).toContain("first-python-project-signal");
   });
 
   it("generates explainable matches while excluding non-approved members", () => {
@@ -91,6 +111,29 @@ describe("matching engine", () => {
     expect(Object.values(breakdown).reduce((sum, value) => sum + value, 0)).toBeLessThanOrEqual(
       100,
     );
+  });
+
+  it("uses member-friendly language in match explanations", () => {
+    const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
+    const target = seedProfiles.find((profile) => profile.id === "pro_rhea")!;
+    const explanation = buildFallbackExplanation(
+      source,
+      target,
+      {
+        semantic: 30,
+        skills: 25,
+        venture: 15,
+        availability: 10,
+        work_style: 8,
+        location: 5,
+      },
+      "cofounder_match",
+    );
+
+    expect(explanation).toContain(`${target.preferredName} may be a good person to meet`);
+    expect(explanation).toContain("in common");
+    expect(explanation).not.toContain("surfaced because");
+    expect(explanation).not.toContain("Shared signals");
   });
 
   it("does not give unrelated fallback text an inflated semantic score", () => {

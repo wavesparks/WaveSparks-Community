@@ -100,6 +100,11 @@ function buildPreviewProfile(spec: PreviewAccountSpec, membershipId: string) {
     headline: spec.headline,
     shortBio: spec.shortBio,
     longBio: `${spec.shortBio} This profile is reserved for product preview and QA validation.`,
+    bio: `${spec.shortBio} This profile is reserved for product preview and QA validation.`,
+    problemInterest: template.problemInterest,
+    currentFocus: template.currentFocus,
+    technicalExperienceLevel: template.technicalExperienceLevel,
+    technicalExperience: template.technicalExperience,
     schoolOrCompany: "Wavesparks",
     currentStatus: spec.kind,
     startupName: spec.kind === "founder" ? "Preview Startup" : "Wavesparks",
@@ -157,7 +162,7 @@ export async function provisionPreviewAccounts({
   const provisioned = [];
   const mainSpace = (await listSpacesForOrg(orgId)).find((space) => space.kind === "main");
   if (!mainSpace) {
-    throw new Error("Main Community Space is not configured.");
+    throw new Error("Wavesparks Community is not configured.");
   }
 
   for (const spec of previewAccountSpecs) {
@@ -184,7 +189,7 @@ export async function provisionPreviewAccounts({
       membershipId: membership.id,
       accessStatus: "active",
       joinedVia: "direct",
-      decisionNote: "Explicit Main Community access for product preview.",
+      decisionNote: "Wavesparks Community access for product preview.",
     });
     const profile = await upsertProfile(
       buildPreviewProfile(spec, membership.id),

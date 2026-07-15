@@ -453,6 +453,13 @@ export const profiles = pgTable("profiles", {
   headline: text("headline").notNull(),
   shortBio: text("short_bio").notNull(),
   longBio: text("long_bio").notNull(),
+  bio: text("bio").notNull().default(""),
+  problemInterest: text("problem_interest").notNull().default(""),
+  currentFocus: text("current_focus").notNull().default(""),
+  technicalExperienceLevel: text("technical_experience_level")
+    .notNull()
+    .default("not_sure"),
+  technicalExperience: text("technical_experience").notNull().default(""),
   city: text("city").notNull(),
   country: text("country").notNull(),
   timezone: text("timezone").notNull(),

@@ -11,6 +11,10 @@ import {
 import { notFound } from "next/navigation";
 
 import { AddToMainCommunityPanel } from "@/components/admin/add-to-main-community-panel";
+import {
+  adminSpaceName,
+  WAVESPARKS_COMMUNITY_NAME,
+} from "@/components/admin/admin-community-copy";
 import { EventSpaceEditorDialog } from "@/components/admin/event-space-editor-dialog";
 import { EventSpaceLifecycleActions } from "@/components/admin/event-space-lifecycle-actions";
 import { InvitePeopleDialog } from "@/components/admin/invite-people-dialog";
@@ -26,6 +30,7 @@ import type { Space } from "@/lib/domain";
 import { isE2ELocalAuthEnabled } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
 import { singleQueryValue } from "@/lib/feed-filters";
+import { postTypeLabel } from "@/lib/post-copy";
 import {
   getSpaceAuditMetrics,
   getSpaceById,
@@ -48,32 +53,49 @@ function formatDate(value?: string) {
 }
 
 function lifecycleLabel(space: Space) {
-  if (space.kind === "main") return "Main Community";
+  if (space.kind === "main") return "Invitation only";
   if (space.lifecycle === "ended") return "Past Event";
   return `${space.lifecycle[0].toUpperCase()}${space.lifecycle.slice(1)} Event`;
 }
 
 function lifecycleExplanation(space: Space) {
   if (space.kind === "main") {
-    return "Main is permanent and invitation-only. It cannot be ended or archived.";
+    return "Wavesparks Community is invitation-only and always available to people who have access.";
   }
   if (space.lifecycle === "draft") {
-    return "This Event is visible to administrators only. Members cannot enter it yet.";
+    return "This Event is visible to administrators only. Participants cannot enter it yet.";
   }
   if (space.lifecycle === "upcoming") {
-    return "Participants with active access can enter this Event before its start date.";
+    return "Participants can enter this Event before its start date.";
   }
   if (space.lifecycle === "active") {
-    return "Participants can read, post, interact, and match within this Event.";
+    return "Participants can read, post, connect, and receive matches here.";
   }
   if (space.lifecycle === "ended") {
-    return "This is a Past Event. Participants retain full interaction and matching access.";
+    return "This is a Past Event. Participants can still take part and receive matches.";
   }
-  return "This Event is hidden from participants. Member access and matching are closed, while all data is retained for audit.";
+  return "This Event is hidden from participants. Access and matching are paused, but its history is still available to administrators.";
 }
 
 function participantName(record: Awaited<ReturnType<typeof listActiveSpaceMemberRecords>>[number]) {
-  return record.profile?.preferredName || record.user?.name || "Unnamed member";
+  return record.profile?.preferredName || record.user?.name || "Unnamed person";
+}
+
+function introductionStatusLabel(status: string) {
+  if (status === "pending") return "Awaiting response";
+  return `${status.charAt(0).toUpperCase()}${status.slice(1)}`;
+}
+
+function scoreBandLabel(scoreBand: "high" | "good" | "emerging") {
+  if (scoreBand === "high") return "Strong match";
+  if (scoreBand === "good") return "Good match";
+  return "Worth exploring";
+}
+
+function matchRunStatusLabel(status: "running" | "completed" | "failed") {
+  if (status === "running") return "Updating";
+  if (status === "completed") return "Updated";
+  return "Needs attention";
 }
 
 const sectionLinks = [
@@ -145,14 +167,19 @@ export default async function AdminSpaceDetailPage({
       intent?.intentComplete &&
       intent.matchingOptIn,
   ).length;
-  const kindLabel = space.kind === "main" ? "Main Community" : "Event";
+  const displayName = adminSpaceName(space);
+  const kindLabel = space.kind === "main" ? WAVESPARKS_COMMUNITY_NAME : "Event";
   const participantNoun = space.kind === "main" ? "members" : "participants";
   const Icon = space.kind === "main" ? LockKeyhole : CalendarDays;
   const overviewMetrics = [
-    { icon: UsersRound, label: "Active access", value: participantRecords.length },
-    { icon: UserRoundCheck, label: "Core profile ready", value: profileReadyCount },
-    { icon: CheckCircle2, label: "Space intent ready", value: intentReadyCount },
-    { icon: Sparkles, label: "Matching eligible", value: matchingEligibleCount },
+    {
+      icon: UsersRound,
+      label: space.kind === "main" ? "Active members" : "Active participants",
+      value: participantRecords.length,
+    },
+    { icon: UserRoundCheck, label: "Profiles completed", value: profileReadyCount },
+    { icon: CheckCircle2, label: "Preferences completed", value: intentReadyCount },
+    { icon: Sparkles, label: "Ready for matching", value: matchingEligibleCount },
   ];
   const invitationsEnabled = isClerkConfigured() || isE2ELocalAuthEnabled();
 
@@ -165,7 +192,7 @@ export default async function AdminSpaceDetailPage({
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <LinkButton href={`/org/${slug}/admin/spaces`} size="sm" variant="ghost">
-              All spaces
+              Community &amp; Events
             </LinkButton>
             <Badge variant={space.lifecycle === "ended" || space.lifecycle === "archived" ? "muted" : "accent"}>
               {lifecycleLabel(space)}
@@ -184,7 +211,7 @@ export default async function AdminSpaceDetailPage({
                 description={space.description || lifecycleExplanation(space)}
                 eyebrow={`Admin · ${kindLabel}`}
                 level={1}
-                title={space.name}
+                title={displayName}
               />
             </div>
             {space.kind === "event" && space.lifecycle !== "archived" ? (
@@ -194,7 +221,7 @@ export default async function AdminSpaceDetailPage({
         </div>
 
         <nav
-          aria-label="Space administration sections"
+          aria-label="Community and Event sections"
           className="overflow-x-auto border-b border-[var(--line)]"
         >
           <div className="flex min-w-max gap-5">
@@ -212,8 +239,8 @@ export default async function AdminSpaceDetailPage({
 
         <section className="scroll-mt-6 space-y-4" id="overview">
           <SectionHeading
-            description="A single audit view of this Space boundary. Counts below never include people from another Space."
-            eyebrow="Space health"
+            description={`Review people and activity for ${displayName} only. Nothing from other Events is included.`}
+            eyebrow={space.kind === "main" ? "Community overview" : "Event overview"}
             title="Overview"
           />
 
@@ -249,8 +276,8 @@ export default async function AdminSpaceDetailPage({
         <section className="scroll-mt-6 space-y-4" id="participants">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <SectionHeading
-              description={`Only connected accounts with active access to this Space appear here. Other Spaces do not contribute to this roster.`}
-              eyebrow="Access roster"
+              description={`Only people who can currently enter ${displayName} appear here.`}
+              eyebrow={space.kind === "main" ? "Community members" : "Event participants"}
               title={`${space.kind === "main" ? "Members" : "Participants"} (${participantRecords.length})`}
             />
             <div className="flex flex-wrap gap-2">
@@ -300,17 +327,17 @@ export default async function AdminSpaceDetailPage({
                       <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Account</p>
                       <div className="mt-1 flex flex-wrap gap-2">
                         <Badge variant="accent">Connected</Badge>
-                        {membership.role === "org_admin" ? <Badge>Global admin</Badge> : null}
+                        {membership.role === "org_admin" ? <Badge>Administrator</Badge> : null}
                       </div>
                     </div>
                     <div>
                       <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Matching</p>
                       <p className="mt-1 text-sm font-medium text-[var(--ink)]">
                         {matchingReady
-                          ? "Eligible in this Space"
+                          ? "Ready to be matched here"
                           : intent?.matchingOptIn === false
                             ? "Opted out"
-                            : "Setup incomplete"}
+                            : "Profile or preferences incomplete"}
                       </p>
                     </div>
                   </div>
@@ -323,7 +350,7 @@ export default async function AdminSpaceDetailPage({
             <Card>
               <p className="font-semibold text-[var(--ink)]">No active {participantNoun}</p>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                Account membership alone does not grant access. People appear here only after an active Space entitlement is assigned.
+                People appear here after they have been added and connected their account.
               </p>
             </Card>
           ) : null}
@@ -343,19 +370,19 @@ export default async function AdminSpaceDetailPage({
 
         <section className="scroll-mt-6 space-y-4" id="content">
           <SectionHeading
-            description="Posts, comments, follows, saved posts, intros, and notifications created here remain inside this Space."
-            eyebrow="Isolation boundary"
+            description={`All activity shown here belongs to ${displayName}.`}
+            eyebrow="Activity"
             title="Content"
           />
           <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
               ["Posts", auditMetrics.posts],
-              ["Visible comments", auditMetrics.visibleComments],
-              ["Follows", auditMetrics.follows],
+              ["Comments", auditMetrics.visibleComments],
+              ["People followed", auditMetrics.follows],
               ["Saved posts", auditMetrics.savedPosts],
-              ["Notifications", auditMetrics.notifications],
-              ["Intro requests", auditMetrics.introRequests],
-              ["Pending intros", auditMetrics.pendingIntroRequests],
+              ["Notifications sent", auditMetrics.notifications],
+              ["Introduction requests", auditMetrics.introRequests],
+              ["Awaiting response", auditMetrics.pendingIntroRequests],
             ].map(([label, value]) => (
               <Card className="p-4" key={label}>
                 <dt className="text-xs font-semibold uppercase text-[var(--ink-soft)]">
@@ -371,17 +398,14 @@ export default async function AdminSpaceDetailPage({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="font-semibold text-[var(--ink)]">Recent posts</p>
-                  <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                    Latest posts written specifically in this Space.
-                  </p>
+                  <p className="mt-1 text-sm text-[var(--ink-soft)]">Recently shared in {displayName}.</p>
                 </div>
-                <Badge variant="muted">Read-only audit</Badge>
               </div>
               <div className="space-y-3">
                 {recentPosts.map((post) => {
                   const authorName =
                     participantNameByMembershipId.get(post.authorMembershipId) ??
-                    "Account not in active roster";
+                    "Not currently active here";
                   const commentCount = visibleCommentCounts.get(post.id) ?? 0;
 
                   return (
@@ -396,10 +420,10 @@ export default async function AdminSpaceDetailPage({
                             {authorName} · {formatDate(post.createdAt)}
                           </p>
                         </div>
-                        <Badge>{post.type.replaceAll("_", " ")}</Badge>
+                        <Badge>{postTypeLabel(post.type)}</Badge>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--ink-soft)]">
-                        <span>{commentCount} visible comments</span>
+                        <span>{commentCount} {commentCount === 1 ? "comment" : "comments"}</span>
                         {post.hidden ? <Badge variant="muted">Hidden</Badge> : null}
                         {post.commentsLocked ? <Badge variant="muted">Comments locked</Badge> : null}
                       </div>
@@ -408,7 +432,7 @@ export default async function AdminSpaceDetailPage({
                 })}
                 {!recentPosts.length ? (
                   <p className="rounded-lg border border-dashed border-[var(--line)] p-4 text-sm text-[var(--ink-soft)]">
-                    No posts have been created in this Space yet.
+                    No posts have been shared here yet.
                   </p>
                 ) : null}
               </div>
@@ -416,9 +440,9 @@ export default async function AdminSpaceDetailPage({
 
             <Card className="space-y-4">
               <div>
-                <p className="font-semibold text-[var(--ink)]">Recent intro requests</p>
+                <p className="font-semibold text-[var(--ink)]">Recent introductions</p>
                 <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                  Private connection requests retain this Space as their source.
+                  Private introduction requests from {displayName}.
                 </p>
               </div>
               <div className="space-y-3">
@@ -435,14 +459,14 @@ export default async function AdminSpaceDetailPage({
                         </p>
                       </div>
                       <Badge variant={request.status === "accepted" ? "accent" : "default"}>
-                        {request.status}
+                        {introductionStatusLabel(request.status)}
                       </Badge>
                     </div>
                   </div>
                 ))}
                 {!recentIntroRequests.length ? (
                   <p className="rounded-lg border border-dashed border-[var(--line)] p-4 text-sm text-[var(--ink-soft)]">
-                    No intro requests originated in this Space yet.
+                    No introduction requests have started here yet.
                   </p>
                 ) : null}
               </div>
@@ -452,55 +476,55 @@ export default async function AdminSpaceDetailPage({
 
         <section className="scroll-mt-6 space-y-4" id="matching">
           <SectionHeading
-            description="Candidates are selected only from this active roster and use this Space’s intent and recent content."
-            eyebrow="AI matching"
+            description={`Suggestions are based only on people, preferences, and recent activity in ${displayName}.`}
+            eyebrow="Member matching"
             title="Matching"
           />
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <Card>
-              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Space setting</p>
+              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Matching status</p>
               <div className="mt-3 flex items-center gap-2">
                 <Badge variant={space.matchingEnabled ? "accent" : "muted"}>
                   {space.matchingEnabled ? "Matching enabled" : "Matching disabled"}
                 </Badge>
-                {space.lifecycle === "archived" ? <Badge variant="muted">Stopped by archive</Badge> : null}
+                {space.lifecycle === "archived" ? <Badge variant="muted">Paused while archived</Badge> : null}
               </div>
               <p className="mt-3 text-sm leading-6 text-[var(--ink-soft)]">
-                Ended Events keep matching enabled. Archived Events stop matching and hide results from members.
+                Past Events keep matching available. Archiving an Event pauses matching and hides suggestions from participants.
               </p>
             </Card>
             <Card>
-              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Current candidate pool</p>
+              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">People ready to match</p>
               <p className="mt-2 text-3xl font-semibold text-[var(--ink)]">{matchingEligibleCount}</p>
               <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
-                Connected, active, core-profile-ready participants with a completed Space intent who have not opted out.
+                People who completed their profile and preferences and chose to receive matches.
               </p>
             </Card>
             <Card>
-              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Generated recommendations</p>
+              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Match suggestions</p>
               <p className="mt-2 text-3xl font-semibold text-[var(--ink)]">{auditMetrics.matches}</p>
               <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
-                {auditMetrics.visibleMatches} are currently visible after member dismissal and admin moderation.
+                {auditMetrics.visibleMatches} are currently visible to {participantNoun}.
               </p>
             </Card>
             <Card>
-              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Latest recompute</p>
-              <p className="mt-2 text-lg font-semibold capitalize text-[var(--ink)]">
-                {latestMatchRun?.status ?? "Never run"}
+              <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Last refreshed</p>
+              <p className="mt-2 text-lg font-semibold text-[var(--ink)]">
+                {latestMatchRun ? matchRunStatusLabel(latestMatchRun.status) : "Not refreshed yet"}
               </p>
               <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
                 {latestMatchRun
-                  ? `Started ${formatDate(latestMatchRun.startedAt)} for this Space only.`
-                  : "No Space-scoped matching run has been recorded yet."}
+                  ? `Last update started ${formatDate(latestMatchRun.startedAt)}.`
+                  : "Match suggestions have not been refreshed yet."}
               </p>
             </Card>
           </div>
 
           <Card className="space-y-4">
             <div>
-              <p className="font-semibold text-[var(--ink)]">Highest-scoring recommendations</p>
+              <p className="font-semibold text-[var(--ink)]">Top match suggestions</p>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                A read-only snapshot of recommendations generated within this Space.
+                The strongest current suggestions in {displayName}.
               </p>
             </div>
             <div className="grid gap-3 lg:grid-cols-3">
@@ -512,18 +536,18 @@ export default async function AdminSpaceDetailPage({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="font-semibold text-[var(--ink)]">
-                        {sourceProfile?.preferredName || "Source"} → {targetProfile?.preferredName || "Target"}
+                        {sourceProfile?.preferredName || "Member unavailable"} and {targetProfile?.preferredName || "Member unavailable"}
                       </p>
                       <p className="mt-1 text-xs font-semibold uppercase text-[var(--ink-soft)]">
                         {match.matchType.replaceAll("_", " ")}
                       </p>
                     </div>
                     <Badge variant={match.scoreBand === "high" ? "accent" : "default"}>
-                      {match.score}
+                      {scoreBandLabel(match.scoreBand)}
                     </Badge>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {match.hiddenByAdmin ? <Badge variant="muted">Hidden by admin</Badge> : null}
+                    {match.hiddenByAdmin ? <Badge variant="muted">Hidden</Badge> : null}
                     {match.dismissedBySource ? <Badge variant="muted">Dismissed</Badge> : null}
                   </div>
                 </div>
@@ -531,7 +555,7 @@ export default async function AdminSpaceDetailPage({
             </div>
             {!recentMatchRecords.length ? (
               <p className="rounded-lg border border-dashed border-[var(--line)] p-4 text-sm text-[var(--ink-soft)]">
-                No recommendations have been generated for this Space yet.
+                No match suggestions are available here yet.
               </p>
             ) : null}
           </Card>
@@ -539,21 +563,19 @@ export default async function AdminSpaceDetailPage({
 
         <section className="scroll-mt-6 space-y-4" id="settings">
           <SectionHeading
-            description="Stable identity and lifecycle information for this Space."
-            eyebrow="Configuration"
+            description="Review this community or Event and manage when people can access it."
+            eyebrow="Details"
             title="Settings"
           />
           <Card>
             <dl className="grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-3">
               {[
-                ["Name", space.name],
+                ["Name", displayName],
                 ["Type", kindLabel],
-                ["Lifecycle", lifecycleLabel(space)],
-                ["Stable slug", space.slug],
+                ["Status", lifecycleLabel(space)],
                 ["Start date", space.kind === "event" ? formatDate(space.startsAt) : "Not applicable"],
                 ["End date", space.kind === "event" ? formatDate(space.endsAt) : "Not applicable"],
                 ["Created", formatDate(space.createdAt)],
-                ["Space ID", space.id],
                 ["Matching", space.matchingEnabled ? "Enabled" : "Disabled"],
               ].map(([label, value]) => (
                 <div key={label}>
@@ -565,12 +587,12 @@ export default async function AdminSpaceDetailPage({
           </Card>
           <Card className="border-[var(--line)] bg-[var(--surface-muted)]">
             <p className="font-semibold text-[var(--ink)]">
-              {space.kind === "main" ? "Permanent Main Community" : "Lifecycle controls"}
+              {space.kind === "main" ? WAVESPARKS_COMMUNITY_NAME : "Event availability"}
             </p>
             <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
               {space.kind === "main"
-                ? "Main cannot be ended or archived. Access must be granted or removed explicitly per member."
-                : "Edit dates and lifecycle above. Archiving closes member access without deleting content; restoring preserves the Event’s original scope."}
+                ? "Wavesparks Community stays open. Add or remove each member directly."
+                : "Edit dates and availability above. Archiving hides the Event without deleting its content; restoring reopens the same Event and its history."}
             </p>
             {space.kind === "event" ? (
               <div className="mt-4 border-t border-[var(--line)] pt-4">

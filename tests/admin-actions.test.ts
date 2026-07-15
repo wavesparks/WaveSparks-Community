@@ -302,7 +302,7 @@ describe("admin server actions", () => {
     );
     expect(membership).toMatchObject({
       clerkInvitationStatus: "failed",
-      clerkInvitationError: "Clerk invitation failed",
+      clerkInvitationError: "The invitation couldn’t be created. Try again in a few minutes.",
       status: "pending",
     });
   });
@@ -390,7 +390,7 @@ describe("admin server actions", () => {
     });
     expect(emailLog).toHaveBeenCalledWith(
       "[wavesparks] email skipped",
-      "You’ve been invited to Wavesparks",
+      "Your Wavesparks invitation",
       email,
     );
     const user = getStore().users.find((candidate) => candidate.email === email);
@@ -440,7 +440,7 @@ describe("admin server actions", () => {
     });
 
     await expect(createManagedAccountAction("wavesparks", formData)).rejects.toThrow(
-      "Administrator access must be explicitly confirmed.",
+      "Confirm that you want to make this person an administrator.",
     );
     expect(
       getStore().users.some((candidate) => candidate.email === "new.admin@example.com"),
@@ -607,7 +607,7 @@ describe("admin server actions", () => {
     expect(
       result.rows.every(
         (row) =>
-          row.message === "Invitation created. Access to Main Community granted.",
+          row.message === "Invitation created. Access to Wavesparks Community added.",
       ),
     ).toBe(true);
     for (const row of rows) {
@@ -661,7 +661,7 @@ describe("admin server actions", () => {
       status: "failed",
       retryable: true,
       message:
-        "Clerk did not return a matching invitation. Access to Main Community granted.",
+        "The invitation couldn’t be created. Try again in a few minutes. Access to Wavesparks Community added.",
     });
     const failedUser = getStore().users.find(
       (user) => user.email === "partial-2@example.com",
@@ -669,7 +669,7 @@ describe("admin server actions", () => {
     expect(
       getStore().memberships.find((membership) => membership.userId === failedUser?.id),
     ).toMatchObject({
-      clerkInvitationError: "Clerk did not return a matching invitation.",
+      clerkInvitationError: "The invitation couldn’t be created. Try again in a few minutes.",
       clerkInvitationStatus: "failed",
     });
   });
@@ -701,7 +701,7 @@ describe("admin server actions", () => {
         .every(
           (row) =>
             row.message ===
-            "Too many requests Access to Main Community granted.",
+            "The invitation service is busy. Wait a few minutes, then try again. Access to Wavesparks Community added.",
         ),
     ).toBe(true);
     expect(result.rows[10]).toMatchObject({
@@ -777,7 +777,7 @@ describe("admin server actions", () => {
     });
     expect(emailLog).toHaveBeenCalledWith(
       "[wavesparks] email skipped",
-      "You’ve been invited to Wavesparks",
+      "Your Wavesparks invitation",
       connectedEmail,
     );
   });
@@ -849,7 +849,7 @@ describe("admin server actions", () => {
     expect(createOrganizationInvitationBulkMock).not.toHaveBeenCalled();
     expect(emailLog).toHaveBeenCalledWith(
       "[wavesparks] email skipped",
-      "You’ve been invited to Wavesparks",
+      "Your Wavesparks invitation",
       "jules@example.com",
     );
   });
@@ -1013,7 +1013,7 @@ describe("admin server actions", () => {
     await expect(
       promoteCohortMembersAction("wavesparks", cohort.id, formData),
     ).rejects.toThrow(
-      "Legacy Cohort promotion is disabled. Use Add to Main Community from the Event Space.",
+      "This old event action is no longer available. Add participants to Wavesparks Community from the event page.",
     );
 
     const [record] = await listCohortMemberRecordsForCohort(seedOrganization.id, cohort.id);
@@ -1049,7 +1049,7 @@ describe("admin server actions", () => {
     await expect(
       promoteCohortMembersAction("wavesparks", cohort.id, formData),
     ).rejects.toThrow(
-      "Legacy Cohort promotion is disabled. Use Add to Main Community from the Event Space.",
+      "This old event action is no longer available. Add participants to Wavesparks Community from the event page.",
     );
     expect(await getMembershipById(imported.membership.id)).toMatchObject({
       status: "suspended",
@@ -1066,6 +1066,7 @@ describe("admin server actions", () => {
       receiver_membership_id: receiverMembership.id,
       intro_purpose: "mentor guidance",
       note: "This intro is curated by an admin.",
+      suggested_first_message: "Would you be open to a short conversation?",
     });
 
     await expect(
@@ -1100,7 +1101,7 @@ describe("admin server actions", () => {
     await expect(getNotificationViews(receiverMembership.id)).resolves.toEqual(
       expect.not.arrayContaining([
         expect.objectContaining({
-          title: "An admin created an introduction in Main Community",
+          title: "A Wavesparks introduction in Wavesparks Community",
           link: "/org/wavesparks/s/main/requests",
         }),
       ]),
@@ -1115,7 +1116,7 @@ describe("admin server actions", () => {
     await expect(getNotificationViews(receiverMembership.id)).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          title: "An admin created an introduction in Main Community",
+          title: "A Wavesparks introduction in Wavesparks Community",
           link: "/org/wavesparks/s/main/requests",
         }),
       ]),
@@ -1138,6 +1139,8 @@ describe("admin server actions", () => {
       requester_membership_id: adminMembership.id,
       receiver_membership_id: adminMembership.id,
       intro_purpose: "invalid self intro",
+      note: "The same person cannot be introduced to themselves.",
+      suggested_first_message: "Would you be open to connecting?",
     });
 
     await expect(createManualIntroAction("wavesparks", sameMemberForm)).rejects.toThrow(
@@ -1156,6 +1159,8 @@ describe("admin server actions", () => {
       requester_membership_id: adminMembership.id,
       receiver_membership_id: "mem_jules",
       intro_purpose: "invalid opted-out intro",
+      note: "This person is not currently open to introductions.",
+      suggested_first_message: "Would you be open to connecting?",
     });
 
     await expect(createManualIntroAction("wavesparks", optedOutForm)).rejects.toThrow(
@@ -1184,10 +1189,12 @@ describe("admin server actions", () => {
       requester_membership_id: adminMembership.id,
       receiver_membership_id: "mem_jules",
       intro_purpose: "cross-Space attempt",
+      note: "Both people should belong to the same Event.",
+      suggested_first_message: "Would you be open to connecting?",
     });
 
     await expect(createManualIntroAction("wavesparks", formData)).rejects.toThrow(
-      "Both members must have active access to this Space.",
+      "Both people need active access to this community or event.",
     );
     expect(
       getStore().introRequests.some(
@@ -1208,7 +1215,7 @@ describe("admin server actions", () => {
     await expect(
       updateMembershipAction("wavesparks", "mem_priya", formData),
     ).rejects.toThrow(
-      "Legacy community status updates are disabled. Manage account safety and Space access separately.",
+      "This old member action is no longer available. Manage account status and community or event access separately.",
     );
 
     await expect(getMembershipById("mem_priya")).resolves.toMatchObject({

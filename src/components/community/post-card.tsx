@@ -18,15 +18,11 @@ import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
 import { LinkButton } from "@/components/ui/link-button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import type { FeedPostView } from "@/lib/domain";
+import { postTypeLabel } from "@/lib/post-copy";
 import { formatDate } from "@/lib/utils";
 
-const opportunitySourceLabels = {
-  member: "User published",
-  mentor: "Mentor published",
-  official: "Official",
-} as const;
-
 export function PostCard({
+  peopleLabel = "members",
   post,
   returnPath,
   slug,
@@ -34,6 +30,7 @@ export function PostCard({
   spaceSlug,
   viewerMembershipId,
 }: {
+  peopleLabel?: "members" | "participants";
   post: FeedPostView;
   returnPath?: string;
   slug: string;
@@ -96,7 +93,12 @@ export function PostCard({
   const postPath = spaceSlug
     ? `/org/${slug}/s/${spaceSlug}/posts/${post.id}`
     : `/org/${slug}/posts/${post.id}`;
-  const typeLabel = post.type.replaceAll("_", " ");
+  const typeLabel = postTypeLabel(post.type);
+  const opportunitySourceLabel = post.opportunitySource === "member"
+    ? `From ${peopleLabel}`
+    : post.opportunitySource === "mentor"
+      ? "From mentors"
+      : "From organizers";
   const authorSignals = [
     post.author.affiliationLabel,
     post.author.currentStatus,
@@ -108,7 +110,7 @@ export function PostCard({
       <div className="flex flex-wrap items-start gap-2 pl-1">
         <Badge variant={post.featured ? "accent" : "default"}>{typeLabel}</Badge>
         {post.opportunitySource ? (
-          <Badge variant="muted">{opportunitySourceLabels[post.opportunitySource]}</Badge>
+          <Badge variant="muted">{opportunitySourceLabel}</Badge>
         ) : null}
         {post.recommendationReasons.map((reason, index) => (
           <Badge key={`recommendation-${reason}-${index}`} variant="accent">

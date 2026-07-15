@@ -14,12 +14,14 @@ export function FilterBar({
   clearHref,
   opportunityMode = false,
   defaultOpportunitySource = "all",
+  peopleLabel = "members",
   showRecommendedFilter = true,
 }: {
   filters: FeedFilters;
   clearHref: string;
   opportunityMode?: boolean;
   defaultOpportunitySource?: FeedFilters["opportunitySource"];
+  peopleLabel?: "members" | "participants";
   showRecommendedFilter?: boolean;
 }) {
   const effectiveFilters = showRecommendedFilter
@@ -63,10 +65,10 @@ export function FilterBar({
                   defaultValue={filters.opportunitySource ?? defaultOpportunitySource ?? "all"}
                   name="source"
                 >
-                  <option value="official">Official admin recommended</option>
-                  <option value="member">User published</option>
-                  <option value="mentor">Mentor published</option>
-                  <option value="all">All layers</option>
+                  <option value="official">From organizers</option>
+                  <option value="member">From {peopleLabel}</option>
+                  <option value="mentor">From mentors</option>
+                  <option value="all">All sources</option>
                 </Select>
               ) : null}
               <Select defaultValue={filters.postType ?? "all"} name="type">
@@ -76,7 +78,7 @@ export function FilterBar({
                 {opportunityMode ? null : (
                   <>
                     <option value="general_update">General update</option>
-                    <option value="ask">Ask</option>
+                    <option value="ask">Question</option>
                   </>
                 )}
                 <option value="opportunity">Opportunity</option>
@@ -91,11 +93,11 @@ export function FilterBar({
               </Select>
               <Input defaultValue={filters.tag} name="tag" placeholder="Tag" />
               <Select defaultValue={filters.authorAffiliation ?? ""} name="affiliation">
-                <option value="">Any affiliation</option>
-                <option value="current participant">Current participant</option>
+                <option value="">Everyone</option>
+                <option value="current participant">Participant</option>
                 <option value="alumni">Alumni</option>
                 <option value="mentor">Mentor</option>
-                <option value="invited outsider">Invited outsider</option>
+                <option value="invited outsider">Guest</option>
               </Select>
               <Select defaultValue={filters.authorStage ?? ""} name="stage">
                 <option value="">Any stage</option>

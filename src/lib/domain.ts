@@ -228,6 +228,11 @@ export interface Profile {
   headline: string;
   shortBio: string;
   longBio: string;
+  bio: string;
+  problemInterest: string;
+  currentFocus: string;
+  technicalExperienceLevel: string;
+  technicalExperience: string;
   city: string;
   country: string;
   timezone: string;
@@ -474,6 +479,11 @@ export interface LimitedProfileCard {
 export interface FullAdminProfile extends LimitedProfileCard {
   emailForIntro: string;
   whatsappNumber: string;
+  bio: string;
+  problemInterest: string;
+  currentFocus: string;
+  technicalExperienceLevel: string;
+  technicalExperience: string;
   longBio: string;
   startupDescription: string;
   desiredRoles: string[];
@@ -513,6 +523,11 @@ export interface MemberDirectoryFilters {
 }
 
 export interface MemberDirectoryProfileView extends LimitedProfileCard {
+  bio: string;
+  problemInterest: string;
+  currentFocus: string;
+  technicalExperienceLevel: string;
+  technicalExperience: string;
   stage: string;
   startupName: string;
   startupDescription: string;

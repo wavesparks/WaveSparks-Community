@@ -7,6 +7,7 @@ import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
 import { isClerkConfigured } from "@/lib/env";
 import { singleQueryValue } from "@/lib/feed-filters";
+import { getAccountStatusLabel } from "@/lib/member-copy";
 
 export default async function PendingPage({
   params,
@@ -34,8 +35,8 @@ export default async function PendingPage({
         <SectionHeading
           description={
             inactive
-              ? "Your account cannot currently enter Main Community or any Event Space. Contact the community team if you believe this is a mistake."
-              : "Your invitation is connected to this email, but account setup has not finished yet. Complete the Clerk organization invitation, then sign in again."
+              ? "Your account cannot currently open Wavesparks Community or any of your events. Contact the Wavesparks team if you believe this is a mistake."
+              : "Your invitation is linked to this email, but your account setup is not finished. Open your invitation email to complete it, then sign in again."
           }
           eyebrow="Account access"
           level={1}
@@ -43,8 +44,8 @@ export default async function PendingPage({
         />
         <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
           <p className="text-sm font-semibold text-[var(--ink)]">Account status</p>
-          <p className="mt-1 text-sm capitalize text-[var(--ink-soft)]">
-            {viewer.membership.accountStatus}
+          <p className="mt-1 text-sm text-[var(--ink-soft)]">
+            {getAccountStatusLabel(viewer.membership.accountStatus)}
           </p>
         </div>
         <SignOutButton

@@ -4,6 +4,7 @@ import { AlertCircle, CheckCircle2, LoaderCircle, UsersRound } from "lucide-reac
 import { useState } from "react";
 
 import { addMembersToMainCommunityAction } from "@/actions/admin";
+import { adminFriendlyMessage } from "@/components/admin/admin-community-copy";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +20,7 @@ type Result = Awaited<ReturnType<typeof addMembersToMainCommunityAction>>;
 
 const resultLabels: Record<Result["rows"][number]["status"], string> = {
   added: "Added",
-  already_in_main: "Already in Main",
+  already_in_main: "Already in Wavesparks Community",
   account_conflict: "Account conflict",
   failed: "Failed",
 };
@@ -42,7 +43,7 @@ export function AddToMainCommunityPanel({
 
   async function addSelected() {
     if (!selected.length || !window.confirm(
-      `Add ${selected.length} ${selected.length === 1 ? "person" : "people"} to Main Community? Their Event access and data will remain unchanged.`,
+      `Add ${selected.length} ${selected.length === 1 ? "person" : "people"} to Wavesparks Community? They will keep access to this Event and all of its activity.`,
     )) return;
 
     setBusy(true);
@@ -57,7 +58,11 @@ export function AddToMainCommunityPanel({
       setResult(next);
       setSelected([]);
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Unable to add people to Main.");
+      setError(
+        actionError instanceof Error
+          ? adminFriendlyMessage(actionError.message)
+          : "We couldn’t add these people to Wavesparks Community. Please try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -67,9 +72,9 @@ export function AddToMainCommunityPanel({
     <div className="space-y-4 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="font-semibold text-[var(--ink)]">Add to Main Community</p>
+          <p className="font-semibold text-[var(--ink)]">Add to Wavesparks Community</p>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-            This grants a separate Main entitlement. It does not copy Event posts, follows, matches, feedback, or intros.
+            Give the selected participants access to Wavesparks Community. Their Event posts, follows, matches, feedback, and introductions stay in this Event.
           </p>
         </div>
         <Button
@@ -101,12 +106,12 @@ export function AddToMainCommunityPanel({
           </label>
         ))}
         {!participants.length ? (
-          <p className="p-4 text-sm text-[var(--ink-soft)]">No active Event participants are available.</p>
+          <p className="p-4 text-sm text-[var(--ink-soft)]">There are no active participants to add right now.</p>
         ) : null}
       </div>
 
       <div>
-        <Label htmlFor={`main-add-note-${sourceSpaceId}`}>Decision note (optional)</Label>
+        <Label htmlFor={`main-add-note-${sourceSpaceId}`}>Note (optional)</Label>
         <Input
           id={`main-add-note-${sourceSpaceId}`}
           onChange={(event) => setDecisionNote(event.target.value)}
@@ -124,7 +129,7 @@ export function AddToMainCommunityPanel({
 
       <Button disabled={busy || !selected.length} onClick={() => void addSelected()} type="button">
         {busy ? <LoaderCircle aria-hidden className="size-4 animate-spin" /> : <UsersRound aria-hidden className="size-4" />}
-        Add {selected.length || "selected"} to Main Community
+        Add {selected.length || "selected"} to Wavesparks Community
       </Button>
 
       {result ? (
@@ -147,7 +152,7 @@ export function AddToMainCommunityPanel({
               <CheckCircle2 aria-hidden className="mt-0.5 size-4 shrink-0 text-emerald-700" />
             )}
             <p className="text-sm text-[var(--ink)]">
-              Added {result.summary.added}; already in Main {result.summary.alreadyInMain}; conflicts {result.summary.accountConflict}; failed {result.summary.failed}.
+              Added {result.summary.added}; already in Wavesparks Community {result.summary.alreadyInMain}; needs review {result.summary.accountConflict}; failed {result.summary.failed}.
             </p>
           </div>
           <div className="divide-y divide-[var(--line)] rounded-lg border border-[var(--line)]">
@@ -156,7 +161,9 @@ export function AddToMainCommunityPanel({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-[var(--ink)]">{row.name}</p>
                   <p className="truncate text-xs text-[var(--ink-soft)]">{row.email}</p>
-                  <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">{row.message}</p>
+                  <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
+                    {adminFriendlyMessage(row.message)}
+                  </p>
                 </div>
                 <Badge
                   className={row.status === "failed"

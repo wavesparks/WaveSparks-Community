@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import {
+  SpaceSectionNavigation,
   SpaceSwitcher,
   type SpaceShellSpace,
 } from "@/components/layout/space-shell-navigation";
@@ -50,7 +51,7 @@ const spaces: SpaceShellSpace[] = [
 describe("SpaceSwitcher", () => {
   afterEach(() => cleanup());
 
-  it("preserves the current section and closes after selecting another Space", () => {
+  it("uses member-facing labels, preserves the section, and closes after selection", () => {
     const { container } = render(
       <SpaceSwitcher
         currentSpace={spaces[1]}
@@ -61,16 +62,40 @@ describe("SpaceSwitcher", () => {
     const details = container.querySelector("details");
     expect(details).not.toBeNull();
 
-    const mainLink = screen.getByRole("link", { name: /Main Community/ });
+    const mainLink = screen.getByRole("link", { name: /Wavesparks Community/ });
     expect(mainLink).toHaveAttribute(
       "href",
       "/org/wavesparks/s/main/knowledge",
     );
+    expect(screen.getByText("Your events")).toBeInTheDocument();
+    expect(screen.getByText("Past events")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Home" })).toHaveAttribute(
+      "href",
+      "/org/wavesparks",
+    );
+    expect(screen.queryByText("Main Community")).not.toBeInTheDocument();
+    expect(screen.queryByText("Permanent network")).not.toBeInTheDocument();
 
     if (!details) return;
     details.open = true;
     mainLink.addEventListener("click", (event) => event.preventDefault(), { once: true });
     fireEvent.click(mainLink);
     expect(details.open).toBe(false);
+  });
+
+  it("labels the requests route as Introductions", () => {
+    navigation.pathname = "/org/wavesparks/s/event-alpha/requests";
+    render(
+      <SpaceSectionNavigation
+        orgSlug="wavesparks"
+        spaceSlug="event-alpha"
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: /Introductions/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.queryByRole("link", { name: /^Requests$/ })).not.toBeInTheDocument();
   });
 });

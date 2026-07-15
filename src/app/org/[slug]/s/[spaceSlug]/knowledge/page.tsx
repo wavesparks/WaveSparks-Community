@@ -10,6 +10,10 @@ import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
+import {
+  getCommunityDisplayName,
+  getCommunityPeopleLabels,
+} from "@/lib/community-copy";
 import { pathWithQuery, singleQueryValue } from "@/lib/feed-filters";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 import { cn } from "@/lib/utils";
@@ -48,6 +52,8 @@ export default async function SpaceKnowledgePage({
     requireAuth: true,
   });
   const { space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
+  const { plural: peopleLabel } = getCommunityPeopleLabels(space);
   const mode = knowledgeModeFromQuery(singleQueryValue(query.mode));
   const q = singleQueryValue(query.q);
   const basePath = `/org/${slug}/s/${space.slug}/knowledge`;
@@ -64,10 +70,10 @@ export default async function SpaceKnowledgePage({
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <SectionHeading
-          description={`Resources and reusable discussions shared inside ${space.name}. Saved items and search results never cross into another Space.`}
-          eyebrow="Space library"
+          description={`Resources and useful discussions shared by ${peopleLabel} in ${communityName}.`}
+          eyebrow="Knowledge library"
           level={1}
-          title={`Knowledge in ${space.name}`}
+          title={`Knowledge in ${communityName}`}
         />
         {context.canInteract ? (
           <LinkButton
@@ -80,12 +86,12 @@ export default async function SpaceKnowledgePage({
           </LinkButton>
         ) : null}
       </div>
-      <StatusBanner spaceName={space.name} status={singleQueryValue(query.status)} />
+      <StatusBanner spaceName={communityName} status={singleQueryValue(query.status)} />
 
       <div className="flex flex-wrap gap-2">
         {[
           { label: "Library", mode: "all" as const },
-          { label: "Saved in this Space", mode: "saved" as const },
+          { label: "Saved", mode: "saved" as const },
         ].map((item) => (
           <Link
             className={cn(
@@ -107,13 +113,15 @@ export default async function SpaceKnowledgePage({
         <form action={basePath} className="flex flex-wrap items-center gap-3">
           {mode === "saved" ? <input name="mode" type="hidden" value="saved" /> : null}
           <label className="relative min-w-[220px] flex-1">
-            <span className="sr-only">Search knowledge in {space.name}</span>
+            <span className="sr-only">Search knowledge in {communityName}</span>
             <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--ink-soft)]" />
             <Input
               className="pl-9"
               defaultValue={q}
               name="q"
-              placeholder={mode === "saved" ? "Search saved posts" : "Search this Space"}
+              placeholder={
+                mode === "saved" ? "Search saved posts" : `Search ${communityName}`
+              }
             />
           </label>
           {q ? (
@@ -136,6 +144,7 @@ export default async function SpaceKnowledgePage({
           <div className="space-y-2" key={post.id}>
             <Badge variant="accent">{reasonLabels[post.knowledgeReason]}</Badge>
             <PostCard
+              peopleLabel={peopleLabel}
               post={post}
               returnPath={returnPath}
               slug={slug}
@@ -151,15 +160,15 @@ export default async function SpaceKnowledgePage({
         <Card>
           <p className="font-semibold text-[var(--ink)]">
             {mode === "saved"
-              ? `No saved posts in ${space.name}`
-              : `No knowledge found in ${space.name}`}
+              ? `No saved posts in ${communityName}`
+              : `No resources found in ${communityName}`}
           </p>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
             {mode === "saved"
-              ? "Save useful threads from this Space to build a private, Space-specific library."
+              ? "Save useful posts you want to return to."
               : q
-                ? "Try a broader search. Results from other Spaces are intentionally excluded."
-                : "Resources shared by active members of this Space will collect here."}
+                ? "Try a broader search."
+                : `Resources shared by ${peopleLabel} will appear here.`}
           </p>
         </Card>
       ) : null}

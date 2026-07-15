@@ -12,6 +12,10 @@ import {
   pathWithQuery,
   singleQueryValue,
 } from "@/lib/feed-filters";
+import {
+  getCommunityDisplayName,
+  getCommunityPeopleLabels,
+} from "@/lib/community-copy";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 import { getFeedViewsForSpace } from "@/server/view-models";
 
@@ -28,6 +32,8 @@ export default async function SpaceFeedPage({
     requireAuth: true,
   });
   const { space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
+  const { plural: peopleLabel } = getCommunityPeopleLabels(space);
   const filters = parseFeedFilters(query);
   const basePath = `/org/${slug}/s/${space.slug}/feed`;
   const returnPath = pathWithQuery(basePath, query);
@@ -51,10 +57,10 @@ export default async function SpaceFeedPage({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <SectionHeading
-          description={`Updates, asks, resources, and conversations from ${space.name}. Nothing from another Space is mixed into this feed.`}
-          eyebrow="This Space only"
+          description={`Latest updates, questions, resources, and conversations from ${communityName}.`}
+          eyebrow="Feed"
           level={1}
-          title={`Feed in ${space.name}`}
+          title={`Updates from ${communityName}`}
         />
         <div className="flex flex-col gap-2 sm:flex-row">
           {context.canInteract ? (
@@ -68,20 +74,22 @@ export default async function SpaceFeedPage({
             variant="secondary"
           >
             <Sparkles className="size-4" />
-            Space matches
+            View matches
           </LinkButton>
         </div>
       </div>
 
-      <StatusBanner spaceName={space.name} status={singleQueryValue(query.status)} />
+      <StatusBanner spaceName={communityName} status={singleQueryValue(query.status)} />
 
       {!context.canInteract ? (
         <Card className="flex flex-col gap-4 border-amber-500/25 bg-amber-50 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="font-semibold text-[var(--ink)]">Reading is available</p>
+            <p className="font-semibold text-[var(--ink)]">
+              You can browse now and join in after completing your profile
+            </p>
             <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-              Complete your core profile to post, follow, save, comment, or request
-              introductions in this Space.
+              Complete your profile to post, comment, follow people, save posts and
+              request introductions.
             </p>
           </div>
           <LinkButton
@@ -97,19 +105,24 @@ export default async function SpaceFeedPage({
       <FilterBar
         clearHref={basePath}
         filters={filters}
+        peopleLabel={peopleLabel}
         showRecommendedFilter={context.canMatch}
       />
 
       {recommendedPosts.length ? (
-        <section aria-label="Recommended posts in this Space" className="space-y-3">
+        <section
+          aria-label={`Recommended posts for ${communityName}`}
+          className="space-y-3"
+        >
           <SectionHeading
-            eyebrow="Inside this Space"
-            title="Recommended from people you follow or match with"
+            eyebrow="For you"
+            title="From people you follow and your matches"
           />
           <div className="space-y-3">
             {recommendedPosts.map((post) => (
               <PostCard
                 key={post.id}
+                peopleLabel={peopleLabel}
                 post={post}
                 returnPath={returnPath}
                 slug={slug}
@@ -128,6 +141,7 @@ export default async function SpaceFeedPage({
         {posts.map((post) => (
           <PostCard
             key={post.id}
+            peopleLabel={peopleLabel}
             post={post}
             returnPath={returnPath}
             slug={slug}
@@ -146,14 +160,14 @@ export default async function SpaceFeedPage({
               <p className="font-semibold text-[var(--ink)]">
                 {activeFilters
                   ? "No posts match these filters"
-                  : `No posts in ${space.name} yet`}
+                  : `No posts in ${communityName} yet`}
               </p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
                 {activeFilters
-                  ? "Clear the filters to return to this Space’s full feed."
+                  ? "Clear the filters to see every post again."
                   : context.canInteract
-                    ? "Start the first useful conversation for the people in this Space."
-                    : "When active members publish here, their posts will appear without exposing content from any other Space."}
+                    ? `Start the first conversation in ${communityName}.`
+                    : `New posts from ${communityName} will appear here.`}
               </p>
             </div>
           </div>
@@ -176,8 +190,7 @@ export default async function SpaceFeedPage({
         <div>
           <p className="font-semibold text-[var(--ink)]">Who can see this?</p>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-            Only active members of {space.name}. Membership in another event or Main
-            Community does not grant access here.
+            Only active {peopleLabel} in {communityName} can see these posts.
           </p>
         </div>
         <LinkButton
@@ -186,7 +199,7 @@ export default async function SpaceFeedPage({
           variant="secondary"
         >
           <UsersRound className="size-4" />
-          View participants
+          View people
         </LinkButton>
       </Card>
     </div>

@@ -29,11 +29,11 @@ export function SpaceIntentForm({
         </div>
         <div>
           <h2 className="text-lg font-semibold text-[var(--ink)]">
-            Your intent for {spaceName}
+            What you’re looking for in {spaceName}
           </h2>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-            This context is private to this Space and only shapes matches with other
-            active members here. Update it when your event goal changes.
+            Tell us your goals, what you need, and what you can offer. Update this when
+            your priorities change.
           </p>
         </div>
       </div>
@@ -86,10 +86,9 @@ export function SpaceIntentForm({
             value="on"
           />
           <span>
-            <span className="block font-semibold">Enable AI matching in this Space</span>
+            <span className="block font-semibold">Include me in match suggestions</span>
             <span className="mt-1 block leading-5 text-[var(--ink-soft)]">
-              Turn this off to stay in {spaceName} without appearing in its match pool.
-              Your setting does not affect any other Space.
+              Turn this off if you don’t want to receive or appear in matches for {spaceName}.
             </span>
           </span>
         </label>
@@ -98,7 +97,9 @@ export function SpaceIntentForm({
             A goal plus at least one “looking for” or “can offer” item is required for
             matching.
           </p>
-          <SubmitButton pendingLabel="Saving intent">Save Space intent</SubmitButton>
+          <SubmitButton pendingLabel="Saving preferences">
+            Save matching preferences
+          </SubmitButton>
         </div>
       </form>
     </Card>

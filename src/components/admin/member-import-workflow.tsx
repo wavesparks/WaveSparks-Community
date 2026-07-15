@@ -19,6 +19,11 @@ import {
   previewMemberImportAction,
   retryMemberInvitationsAction,
 } from "@/actions/admin";
+import {
+  adminFriendlyMessage,
+  adminSpaceName,
+  adminSpaceOptionLabel,
+} from "@/components/admin/admin-community-copy";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +42,7 @@ import type {
   MemberImportResultStatus,
   MemberImportRow,
 } from "@/lib/member-import";
+import { getMemberImportOutcome } from "@/lib/member-import-outcome";
 import { cn } from "@/lib/utils";
 
 export interface MemberImportWorkflowProps {
@@ -72,20 +78,20 @@ const classificationOrder: MemberImportClassification[] = [
 
 const classificationLabels: Record<MemberImportClassification, string> = {
   ready: "Ready to invite",
-  retryable: "Retryable invitation",
-  already_invited: "Already invited",
-  already_connected: "Already connected",
-  existing_member: "Existing member",
-  duplicate: "Duplicate",
-  invalid: "Invalid",
-  inactive_conflict: "Account / Space conflict",
+  retryable: "Ready to retry",
+  already_invited: "Invitation already sent",
+  already_connected: "Account already connected",
+  existing_member: "Account already exists",
+  duplicate: "Repeated email",
+  invalid: "Needs correction",
+  inactive_conflict: "Access needs review",
 };
 
 const resultLabels: Record<MemberImportResultStatus, string> = {
   invited: "Invitation created",
-  connected: "Connected",
-  space_added: "Space access added",
-  cohort_added: "Added to cohort",
+  connected: "Account connected",
+  space_added: "Added",
+  cohort_added: "Added to Event",
   skipped: "Skipped",
   failed: "Failed",
 };
@@ -128,7 +134,9 @@ function summarizeResult(rows: MemberImportResultRow[]): MemberImportResult["sum
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Something went wrong. Try again.";
+  return error instanceof Error
+    ? adminFriendlyMessage(error.message)
+    : "Something went wrong. Try again.";
 }
 
 export function MemberImportWorkflow({
@@ -181,7 +189,7 @@ export function MemberImportWorkflow({
           : null;
 
     if (!sourceFile) {
-      setError(sourceMode === "file" ? "Choose a CSV or XLSX file." : "Paste at least one row.");
+      setError(sourceMode === "file" ? "Choose a CSV or Excel file." : "Paste at least one person.");
       return;
     }
 
@@ -200,7 +208,11 @@ export function MemberImportWorkflow({
         | MemberImportErrorResponse;
 
       if (!response.ok || !("rows" in payload)) {
-        throw new Error("error" in payload ? payload.error : "The file could not be parsed.");
+        throw new Error(
+          "error" in payload
+            ? payload.error
+            : "We couldn't read this file. Check the format and try again.",
+        );
       }
 
       setParsed(payload);
@@ -216,7 +228,7 @@ export function MemberImportWorkflow({
 
   async function runPreview(nextRows: MemberImportRow[]) {
     if (!nextRows.length) {
-      setError("Keep at least one row in the list.");
+      setError("Add at least one person before continuing.");
       return;
     }
 
@@ -255,7 +267,7 @@ export function MemberImportWorkflow({
     );
     if (formulaRow) {
       setError(
-        `Row ${formulaRow.rowNumber} contains a formula in a mapped field. Replace it with a plain value.`,
+        `Row ${formulaRow.rowNumber} uses a formula in one of the selected columns. Replace it with plain text.`,
       );
       return;
     }
@@ -302,6 +314,12 @@ export function MemberImportWorkflow({
         ),
     ).length ?? 0;
   const actionableCount = (preview?.canInviteCount ?? 0) + spaceOnlyCount;
+  const destination = availableSpaces.find((space) => space.id === destinationSpaceId);
+  const destinationName = destination
+    ? adminSpaceName(destination)
+    : preview?.destinationSpaceName
+      ? adminFriendlyMessage(preview.destinationSpaceName)
+      : "the selected community or Event";
 
   async function confirmImport() {
     if (!invitationsEnabled || !preview || previewDirty || !actionableCount) {
@@ -401,11 +419,8 @@ export function MemberImportWorkflow({
     result?.rows.filter(
       (row) => row.status === "failed" && row.retryable && row.membershipId,
     ).length ?? 0;
-  const resultTone = !result?.summary.failed
-    ? "success"
-    : result.summary.failed === result.rows.length
-      ? "error"
-      : "warning";
+  const resultOutcome = result ? getMemberImportOutcome(result) : null;
+  const resultTone = resultOutcome?.tone ?? "success";
   const ResultIcon =
     resultTone === "success"
       ? CheckCircle2
@@ -415,7 +430,7 @@ export function MemberImportWorkflow({
 
   return (
     <div className="space-y-5">
-      <ol aria-label="Import progress" className="grid grid-cols-3 gap-2 text-xs font-semibold">
+      <ol aria-label="Invitation progress" className="grid grid-cols-3 gap-2 text-xs font-semibold">
         {["Add list", "Review", "Results"].map((label, index) => {
           const currentIndex =
             step === "source" || step === "mapping" ? 0 : step === "preview" ? 1 : 2;
@@ -454,7 +469,7 @@ export function MemberImportWorkflow({
           className="rounded-lg border border-amber-600/30 bg-amber-50 p-4 text-sm text-amber-900"
           role="status"
         >
-          Configure Clerk before confirming this import. You can still parse and review the list.
+          Invitations are temporarily unavailable. You can still add and review your list.
         </div>
       ) : null}
 
@@ -499,8 +514,8 @@ export function MemberImportWorkflow({
                 type="file"
               />
               <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
-                Use the first worksheet. Maximum 2 MB, 100 data rows, and 20 columns. Email is
-                required; name is optional.
+                You can add up to 100 people from the first sheet. The file must be 2 MB or less
+                and include an email column; names are optional.
               </p>
             </div>
           ) : (
@@ -517,7 +532,7 @@ export function MemberImportWorkflow({
                 value={pastedList}
               />
               <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
-                Paste CSV-formatted text. Quoted names and commas are supported.
+                Add one person per line as email, name. Put quotation marks around names that contain a comma.
               </p>
             </div>
           )}
@@ -534,7 +549,7 @@ export function MemberImportWorkflow({
             </Button>
             <Button disabled={busy} onClick={() => void parseSource()} type="button">
               {busy ? <LoaderCircle aria-hidden className="size-4 animate-spin" /> : null}
-              Continue to mapping
+              Choose columns
             </Button>
           </div>
         </div>
@@ -547,7 +562,7 @@ export function MemberImportWorkflow({
             <div>
               <p className="text-sm font-semibold text-[var(--ink)]">{parsed.fileName}</p>
               <p className="mt-1 text-xs text-[var(--ink-soft)]">
-                {parsed.rows.length} data {parsed.rows.length === 1 ? "row" : "rows"} · {parsed.format.toUpperCase()}
+                {parsed.rows.length} {parsed.rows.length === 1 ? "person" : "people"} found · {parsed.format.toUpperCase()} file
               </p>
             </div>
           </div>
@@ -725,11 +740,11 @@ export function MemberImportWorkflow({
                             {classificationLabels[reviewedRow.classification]}
                           </Badge>
                           <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
-                            {reviewedRow.message}
+                            {adminFriendlyMessage(reviewedRow.message)}
                           </p>
                           {reviewedRow.warnings.map((warning) => (
                             <p className="mt-1 text-xs leading-5 text-amber-800" key={warning}>
-                              {warning}
+                              {adminFriendlyMessage(warning)}
                             </p>
                           ))}
                         </>
@@ -750,7 +765,7 @@ export function MemberImportWorkflow({
                 );
               })}
               {!rows.length ? (
-                <p className="p-4 text-sm text-[var(--ink-soft)]">No rows remain in this list.</p>
+                <p className="p-4 text-sm text-[var(--ink-soft)]">No one remains in this list.</p>
               ) : null}
             </div>
           </div>
@@ -759,7 +774,7 @@ export function MemberImportWorkflow({
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => setStep("mapping")} type="button" variant="ghost">
                 <ArrowLeft aria-hidden className="size-4" />
-                Mapping
+                Columns
               </Button>
               {!previewDirty &&
               preview.rows.some((row) =>
@@ -780,7 +795,7 @@ export function MemberImportWorkflow({
                           row.email,
                           row.name,
                           classificationLabels[row.classification],
-                          row.message,
+                          adminFriendlyMessage(row.message),
                         ]),
                     ])
                   }
@@ -788,7 +803,7 @@ export function MemberImportWorkflow({
                   variant="secondary"
                 >
                   <Download aria-hidden className="size-4" />
-                  Download problem rows
+                  Download rows to fix
                 </Button>
               ) : null}
             </div>
@@ -805,8 +820,8 @@ export function MemberImportWorkflow({
               >
                 {busy ? <LoaderCircle aria-hidden className="size-4 animate-spin" /> : null}
                 {preview.canInviteCount
-                  ? `Invite ${preview.canInviteCount} ${preview.canInviteCount === 1 ? "person" : "people"}${spaceOnlyCount ? ` + add access for ${spaceOnlyCount}` : ""}`
-                  : `Add ${spaceOnlyCount} ${spaceOnlyCount === 1 ? "person" : "people"} to ${preview.destinationSpaceName}`}
+                  ? `Invite ${preview.canInviteCount} ${preview.canInviteCount === 1 ? "person" : "people"}${spaceOnlyCount ? ` and add ${spaceOnlyCount} existing ${spaceOnlyCount === 1 ? "member" : "members"}` : ""}`
+                  : `Add ${spaceOnlyCount} ${spaceOnlyCount === 1 ? "person" : "people"} to ${destinationName}`}
               </Button>
             )}
           </div>
@@ -835,14 +850,10 @@ export function MemberImportWorkflow({
             />
             <div>
               <p className="text-sm font-semibold text-[var(--ink)]">
-                {resultTone === "success"
-                  ? "Import complete"
-                  : resultTone === "warning"
-                    ? "Import completed with some failures"
-                    : "Import failed"}
+                {resultOutcome?.title}
               </p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                Invitation created means the request was accepted; it does not guarantee email delivery.
+                {resultOutcome?.body}
               </p>
             </div>
           </div>
@@ -850,8 +861,8 @@ export function MemberImportWorkflow({
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             {[
               ["Invited", result.summary.invited],
-              ["Connected", result.summary.connected],
-              ["Space access added", result.summary.spaceAdded ?? result.summary.cohortAdded],
+              ["Account connected", result.summary.connected],
+              ["Added", result.summary.spaceAdded ?? result.summary.cohortAdded],
               ["Skipped", result.summary.skipped],
               ["Failed", result.summary.failed],
             ].map(([label, count]) => (
@@ -892,7 +903,9 @@ export function MemberImportWorkflow({
                     </Badge>
                   </ResultField>
                   <ResultField label="Details">
-                    <span className="text-xs leading-5 text-[var(--ink-soft)]">{row.message}</span>
+                    <span className="text-xs leading-5 text-[var(--ink-soft)]">
+                      {adminFriendlyMessage(row.message)}
+                    </span>
                   </ResultField>
                 </div>
               ))}
@@ -901,12 +914,12 @@ export function MemberImportWorkflow({
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4">
             <Button onClick={reset} type="button" variant="secondary">
-              Import another list
+              Add another list
             </Button>
             {retryableFailureCount ? (
               <Button disabled={busy} onClick={() => void retryFailures()} type="button">
                 {busy ? <LoaderCircle aria-hidden className="size-4 animate-spin" /> : <RefreshCw aria-hidden className="size-4" />}
-                Retry {retryableFailureCount} failed
+                Try {retryableFailureCount} failed {retryableFailureCount === 1 ? "invitation" : "invitations"} again
               </Button>
             ) : null}
           </div>
@@ -936,9 +949,9 @@ function BatchSettings({
 }: BatchSettingsProps) {
   return (
     <fieldset className="grid gap-4 rounded-lg border border-[var(--line)] p-4 sm:grid-cols-2">
-      <legend className="px-1 text-sm font-semibold text-[var(--ink)]">Settings for this list</legend>
+      <legend className="px-1 text-sm font-semibold text-[var(--ink)]">Add this list</legend>
       <div>
-        <Label htmlFor="member-import-access">Space access</Label>
+        <Label htmlFor="member-import-access">When can they join?</Label>
         <Select
           id="member-import-access"
           onChange={(event) =>
@@ -946,25 +959,25 @@ function BatchSettings({
           }
           value={accessStatus}
         >
-          <option value="waitlist">Waitlist</option>
-          <option value="active">Active access</option>
+          <option value="waitlist">After approval</option>
+          <option value="active">Immediately</option>
         </Select>
         <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
-          Existing active access is never downgraded. Conflicts require an explicit decision.
+          People who already have access will keep it. Anyone with paused or removed access will be left unchanged for review.
         </p>
       </div>
       <div>
-        <Label htmlFor="member-import-space">Destination Space</Label>
+        <Label htmlFor="member-import-space">Add everyone to</Label>
         <Select
           id="member-import-space"
           onChange={(event) => onChange(accessStatus, event.target.value)}
           required
           value={destinationSpaceId}
         >
-          <option value="" disabled>Choose a Space</option>
+          <option value="" disabled>Choose Wavesparks Community or an Event</option>
           {spaces.map((space) => (
             <option key={space.id} value={space.id}>
-              {space.name} · {space.kind === "main" ? "Main Community" : "Event"}
+              {adminSpaceOptionLabel(space)}
               {space.lifecycle === "ended" ? " (Past)" : ""}
             </option>
           ))}

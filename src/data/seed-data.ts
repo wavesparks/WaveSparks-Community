@@ -7,6 +7,8 @@ import {
   legacySeekingMatchTypes,
   stableDefaultMatchTypeConfigs,
 } from "@/lib/match-config";
+import { getProfileReadiness } from "@/lib/activation";
+import { canonicalLegacyBio } from "@/lib/profile-bio";
 import type {
   AnalyticsEvent,
   Comment,
@@ -52,6 +54,11 @@ type SeedProfileInput = Omit<
   | "embeddingStatus"
   | "embeddingError"
   | "embeddingUpdatedAt"
+  | "bio"
+  | "problemInterest"
+  | "currentFocus"
+  | "technicalExperienceLevel"
+  | "technicalExperience"
 > &
   Partial<Pick<Profile, "seekingMatchTypes" | "offeringMatchTypes">>;
 
@@ -67,6 +74,13 @@ function buildProfile(input: SeedProfileInput): Profile {
   ];
   const draft = {
     ...input,
+    bio: canonicalLegacyBio(input.shortBio, input.longBio),
+    problemInterest: input.startupDescription,
+    currentFocus: input.startupOneLiner,
+    // General years of experience do not establish coding or product-design
+    // confidence. Let members self-describe this in the new question.
+    technicalExperienceLevel: "not_sure",
+    technicalExperience: input.priorProjects,
     seekingMatchTypes,
     offeringMatchTypes,
     seekingEmbeddingText: "",
@@ -74,7 +88,7 @@ function buildProfile(input: SeedProfileInput): Profile {
     embeddingStatus: "ready" as const,
   } satisfies Profile;
   const texts = buildMatchingEmbeddingTexts(draft);
-  return {
+  const profile = {
     ...draft,
     seekingEmbeddingText: texts.seekingProfileText,
     offeringEmbeddingText: texts.offeringText,
@@ -82,6 +96,12 @@ function buildProfile(input: SeedProfileInput): Profile {
     offeringEmbedding: buildEmbedding(texts.offeringText),
     embeddingModel: LOCAL_EMBEDDING_MODEL,
     embeddingUpdatedAt: draft.updatedAt,
+  };
+  const readiness = getProfileReadiness(profile);
+  return {
+    ...profile,
+    onboardingComplete: readiness.isReady,
+    profileCompletionPercent: readiness.completionPercent,
   };
 }
 
@@ -97,15 +117,14 @@ export const seedOrganization: Organization = {
     ink: "#221b44",
   },
   tagline: "The warm founder network for serious early-stage builders.",
-  description:
-    "A semi-private community where founders, mentors, and operators get surfaced through context, not noise.",
+  description: "Wavesparks members can meet, share updates, and find useful connections here.",
   membershipRules: [
-    "Access is admin-approved after sign-in.",
-    "Approved members can search limited profiles while contact details stay private.",
-    "Contact details unlock only after an intro is accepted.",
+    "Access to Wavesparks Community and each event is managed separately.",
+    "People can only see content and profiles in places they have joined.",
+    "Contact details are shared only after an introduction is accepted.",
   ],
   allowedDomains: ["wavesparks.co", "yfs.community"],
-  inviteSettings: "Invited insiders and invited outsiders can both apply, but all access is admin-gated.",
+  inviteSettings: "Only people invited by an administrator can join. Community and event access are managed separately.",
   status: "active",
   createdAt: daysAgo(120),
 };

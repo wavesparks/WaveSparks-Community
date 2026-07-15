@@ -4,6 +4,24 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { MatchCardView } from "@/lib/domain";
 
+function matchStrengthLabel(scoreBand: MatchCardView["scoreBand"]) {
+  if (scoreBand === "high") return "Strong match";
+  if (scoreBand === "good") return "Good match";
+  return "Possible match";
+}
+
+function matchExplanationForPeople(explanation: string) {
+  const legacyExplanation = explanation.match(
+    /^.+? surfaced because (.+?) aligns with .+? on (.+?)\.(?: Shared signals include (.+?)\.)?$/,
+  );
+  if (!legacyExplanation) return explanation;
+
+  const [, targetName, reasons, sharedInterests] = legacyExplanation;
+  return `You and ${targetName} may have ${reasons} in common.${
+    sharedInterests ? ` You also share an interest in ${sharedInterests}.` : ""
+  }`;
+}
+
 export function MatchCard({
   match,
   children,
@@ -32,19 +50,15 @@ export function MatchCard({
             </p>
           </div>
         </div>
-        <div className="w-full border-t border-[var(--line)] pt-3 sm:w-auto sm:min-w-28 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0 sm:text-right">
-          <p className="text-xs font-semibold uppercase text-[var(--accent)]">
-            Fit score
-          </p>
-          <p className="text-2xl font-semibold text-[var(--ink)]">{match.score}</p>
-          <p className="text-sm text-[var(--ink-soft)]">
-            {match.scoreBand} · {match.confidence} confidence
-          </p>
-        </div>
+        <Badge variant="accent">{matchStrengthLabel(match.scoreBand)}</Badge>
       </div>
       <div className="border-t border-[var(--line)] pt-4">
-        <p className="text-xs font-semibold uppercase text-[var(--accent)]">Why this surfaced</p>
-        <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">{match.explanationText}</p>
+        <p className="text-xs font-semibold uppercase text-[var(--accent)]">
+          Why you might connect
+        </p>
+        <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+          {matchExplanationForPeople(match.explanationText)}
+        </p>
       </div>
       <div className="flex flex-wrap gap-2">
         {match.overlapTags.map((tag, index) => (
@@ -54,10 +68,10 @@ export function MatchCard({
         ))}
       </div>
       <div className="border-t border-[var(--line)] pt-4 text-sm leading-6 text-[var(--ink-soft)]">
-        <p className="font-semibold text-[var(--ink)]">What they’re building / offering</p>
+        <p className="font-semibold text-[var(--ink)]">What they’re building or offering</p>
         <p className="mt-2">{match.target.whatTheyAreBuilding}</p>
       </div>
-      {children ?? <Button className="w-full">Request intro</Button>}
+      {children ?? <Button className="w-full">Request introduction</Button>}
     </Card>
   );
 }

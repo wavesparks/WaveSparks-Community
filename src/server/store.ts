@@ -23,6 +23,10 @@ import {
 } from "@/data/seed-data";
 import { env, isBootstrapAdminEmail } from "@/lib/env";
 import { localRoleFromClerkRole } from "@/lib/clerk-roles";
+import {
+  getCommunityDisplayName,
+  WAVESPARKS_COMMUNITY_NAME,
+} from "@/lib/community-copy";
 import { sanitizeMatchFeedbackReasons } from "@/lib/match-feedback";
 import {
   buildDailySeriesFromCounts,
@@ -437,9 +441,9 @@ function defaultMainSpaceForOrg(organization: Organization): Space {
     slug: "main",
     kind: "main",
     lifecycle: "active",
-    name: "Main Community",
+    name: WAVESPARKS_COMMUNITY_NAME,
     description: organization.description,
-    eventLabel: "Permanent community",
+    eventLabel: "Community",
     matchingEnabled: true,
     createdAt,
     updatedAt: createdAt,
@@ -856,6 +860,11 @@ function profileFromRow(row: typeof dbSchema.profiles.$inferSelect): Profile {
     headline: row.headline,
     shortBio: row.shortBio,
     longBio: row.longBio,
+    bio: row.bio,
+    problemInterest: row.problemInterest,
+    currentFocus: row.currentFocus,
+    technicalExperienceLevel: row.technicalExperienceLevel,
+    technicalExperience: row.technicalExperience,
     city: row.city,
     country: row.country,
     timezone: row.timezone,
@@ -2202,6 +2211,11 @@ function anonymizedProfile(profile: Profile): Profile {
     headline: "",
     shortBio: "",
     longBio: "",
+    bio: "",
+    problemInterest: "",
+    currentFocus: "",
+    technicalExperienceLevel: "",
+    technicalExperience: "",
     city: "",
     country: "",
     timezone: "",
@@ -2641,7 +2655,7 @@ export async function updateEventSpace(
   const existing = await getSpaceById(spaceId);
   if (!existing || existing.orgId !== orgId) return undefined;
   if (existing.kind !== "event") {
-    throw new Error("Main Community settings cannot be changed as an Event.");
+    throw new Error("Wavesparks Community settings cannot be changed from the Events page.");
   }
   if (existing.lifecycle === "archived") {
     throw new Error("Restore an archived Event before editing it.");
@@ -2659,7 +2673,7 @@ export async function updateEventSpace(
   const lifecycle = input.lifecycle ?? existing.lifecycle;
   if (existing.lifecycle !== "draft" && lifecycle === "draft") {
     throw new Error(
-      "A published Event cannot return to draft. Archive it explicitly to close member access.",
+      "A published Event cannot return to draft. Use Archive to close participant access.",
     );
   }
   const now = new Date().toISOString();
@@ -2725,7 +2739,7 @@ export async function archiveEventSpace(orgId: string, spaceId: string) {
   const existing = await getSpaceById(spaceId);
   if (!existing || existing.orgId !== orgId) return undefined;
   if (existing.kind === "main") {
-    throw new Error("Main Community cannot be archived.");
+    throw new Error("Wavesparks Community cannot be archived.");
   }
   if (existing.lifecycle === "archived") return existing;
 
@@ -2762,7 +2776,7 @@ export async function restoreEventSpace(
   const existing = await getSpaceById(spaceId);
   if (!existing || existing.orgId !== orgId) return undefined;
   if (existing.kind === "main") {
-    throw new Error("Main Community does not use Event lifecycle controls.");
+    throw new Error("Wavesparks Community does not use event dates or event status.");
   }
   if (existing.lifecycle !== "archived") return existing;
 
@@ -2861,10 +2875,10 @@ export async function grantSpaceMembership(input: {
     getSpaceMembership(input.spaceId, input.membershipId),
   ]);
   if (!space || space.orgId !== input.orgId) {
-    throw new Error("Destination Space not found.");
+    throw new Error("The selected community or event could not be found.");
   }
   if (space.lifecycle === "archived") {
-    throw new Error("Archived Spaces cannot accept new members.");
+    throw new Error("Restore this archived event before adding participants.");
   }
   if (!membership || membership.orgId !== input.orgId) {
     throw new Error("Membership does not belong to this organization.");
@@ -2881,7 +2895,7 @@ export async function grantSpaceMembership(input: {
   if (input.sourceSpaceId) {
     const sourceSpace = await getSpaceById(input.sourceSpaceId);
     if (!sourceSpace || sourceSpace.orgId !== input.orgId) {
-      throw new Error("Source Space not found.");
+      throw new Error("The source Event could not be found.");
     }
   }
 
@@ -2951,7 +2965,7 @@ export async function grantSpaceMembership(input: {
           ),
         )
         .returning();
-      if (!row) throw new Error("Unable to activate Space access.");
+      if (!row) throw new Error("Unable to activate access.");
       Object.assign(next, spaceMembershipFromRow(row));
     }
     await ensureLegacyEventMembership(space, membership);
@@ -3001,7 +3015,7 @@ export async function grantSpaceMembership(input: {
     } else {
       created = false;
       const concurrent = await getSpaceMembership(space.id, membership.id);
-      if (!concurrent) throw new Error("Unable to grant Space access.");
+      if (!concurrent) throw new Error("Unable to add access.");
       persisted = concurrent;
     }
   }
@@ -3080,7 +3094,9 @@ export async function setSpaceMembershipAccessStatus(input: {
     getMembershipById(input.membershipId),
     getSpaceMembership(input.spaceId, input.membershipId),
   ]);
-  if (!space || space.orgId !== input.orgId) throw new Error("Space not found.");
+  if (!space || space.orgId !== input.orgId) {
+    throw new Error("The selected community or event could not be found.");
+  }
   if (!membership || membership.orgId !== input.orgId) {
     throw new Error("Membership does not belong to this organization.");
   }
@@ -3092,7 +3108,7 @@ export async function setSpaceMembershipAccessStatus(input: {
     throw new Error(`Account is ${membership.accountStatus}.`);
   }
   if (space.kind === "main" && space.lifecycle !== "active") {
-    throw new Error("Main Community lifecycle is invalid.");
+    throw new Error("Wavesparks Community is not available right now.");
   }
   if (space.kind === "event" && space.lifecycle === "archived" && input.accessStatus === "active") {
     throw new Error("Restore the Event before activating member access.");
@@ -3141,7 +3157,7 @@ export async function setSpaceMembershipAccessStatus(input: {
         },
       })
       .returning();
-    if (!row) throw new Error("Unable to update Space access.");
+    if (!row) throw new Error("Unable to update access.");
     Object.assign(next, spaceMembershipFromRow(row));
   }
   if (space.kind === "event" && input.accessStatus !== "removed") {
@@ -3159,7 +3175,7 @@ export async function addMembershipsToMainCommunity(input: {
 }): Promise<AddToMainCommunityResult[]> {
   const membershipIds = [...new Set(input.membershipIds.filter(Boolean))];
   if (membershipIds.length > 100) {
-    throw new Error("Add no more than 100 people to Main at a time.");
+    throw new Error("Add no more than 100 people to Wavesparks Community at a time.");
   }
   const spaces = await listSpacesForOrg(input.orgId);
   const sourceSpace = spaces.find((space) => space.id === input.sourceSpaceId);
@@ -3168,10 +3184,10 @@ export async function addMembershipsToMainCommunity(input: {
     throw new Error("Source Event not found.");
   }
   if (sourceSpace.lifecycle === "archived") {
-    throw new Error("Restore the archived Event before adding participants to Main.");
+    throw new Error("Restore the archived event before adding participants to Wavesparks Community.");
   }
   if (!mainSpace || mainSpace.lifecycle !== "active") {
-    throw new Error("Main Community is not configured correctly.");
+    throw new Error("Wavesparks Community is not configured correctly.");
   }
   const actor = await getMembershipById(input.actorMembershipId);
   if (!actor || actor.orgId !== input.orgId || actor.role !== "org_admin") {
@@ -3209,7 +3225,10 @@ export async function addMembershipsToMainCommunity(input: {
         results.push({
           membershipId,
           status: "account_conflict",
-          message: `The account is ${membership.accountStatus}; restore it explicitly first.`,
+          message:
+            membership.accountStatus === "suspended"
+              ? "This account is paused. Restore it before continuing."
+              : "This account is no longer active. Restore it before continuing.",
         });
         continue;
       }
@@ -3217,7 +3236,7 @@ export async function addMembershipsToMainCommunity(input: {
         results.push({
           membershipId,
           status: "already_in_main",
-          message: "Already in Main Community; no changes were made.",
+          message: "Already in Wavesparks Community; no changes were made.",
           spaceMembership: mainAccess,
         });
         continue;
@@ -3230,7 +3249,7 @@ export async function addMembershipsToMainCommunity(input: {
         results.push({
           membershipId,
           status: "account_conflict",
-          message: `Main Community access is ${mainAccess.accessStatus}; resolve it in member details.`,
+          message: `Wavesparks Community access is ${mainAccess.accessStatus}. Review it in member details before continuing.`,
           spaceMembership: mainAccess,
         });
         continue;
@@ -3250,21 +3269,21 @@ export async function addMembershipsToMainCommunity(input: {
         results.push({
           membershipId,
           status: "account_conflict",
-          message: `Main Community access is ${grant.conflictStatus}; resolve it explicitly.`,
+          message: `Wavesparks Community access is ${grant.conflictStatus}. Review it in member details before continuing.`,
           spaceMembership: grant.spaceMembership,
         });
       } else if (grant.outcome === "already_active") {
         results.push({
           membershipId,
           status: "already_in_main",
-          message: "Already in Main Community; no changes were made.",
+          message: "Already in Wavesparks Community; no changes were made.",
           spaceMembership: grant.spaceMembership,
         });
       } else {
         results.push({
           membershipId,
           status: "added",
-          message: "Added to Main Community. Event access was not changed.",
+          message: "Added to Wavesparks Community. Event access was not changed.",
           spaceMembership: grant.spaceMembership,
         });
       }
@@ -3272,7 +3291,10 @@ export async function addMembershipsToMainCommunity(input: {
       results.push({
         membershipId,
         status: "failed",
-        message: error instanceof Error ? error.message : "Unable to add this person to Main.",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to add this person to Wavesparks Community.",
       });
     }
   }
@@ -4068,10 +4090,10 @@ export async function listMemberImportCandidatesForOrg(
     ? await getSpaceById(destinationSpaceId)
     : undefined;
   if (destinationSpaceId && (!destinationSpace || destinationSpace.orgId !== orgId)) {
-    throw new Error("Destination Space not found.");
+    throw new Error("The selected community or event could not be found.");
   }
   if (destinationSpace?.lifecycle === "archived") {
-    throw new Error("Archived Spaces cannot accept new members.");
+    throw new Error("Restore this archived event before adding participants.");
   }
   const legacyCohort = destinationSpace?.kind === "event"
     ? await getCohortById(destinationSpace.id)
@@ -4596,7 +4618,7 @@ export async function addMembershipToCohort(
     joinedVia: "direct",
   });
   if (grant.outcome === "conflict") {
-    throw new Error("Event Space access requires explicit conflict resolution.");
+    throw new Error("Review this person’s existing event access before continuing.");
   }
 
   const linked = await upsertCohortMember({
@@ -4631,12 +4653,12 @@ function importedMembershipForUser(input: {
     archetypes: eventSpace
       ? ["cohort_participant", "student"]
       : ["invited_outsider"],
-    programName: eventSpace?.name ?? "Main Community",
+    programName: eventSpace?.name ?? WAVESPARKS_COMMUNITY_NAME,
     cohortNameOrYear: eventSpace
       ? eventSpace.eventLabel || eventSpace.name
-      : "Main Community",
+      : WAVESPARKS_COMMUNITY_NAME,
     invitedByUserId: input.invitedByUserId,
-    approvalNote: `Invited with access to ${destinationSpace.name}.`,
+    approvalNote: `Invited with access to ${getCommunityDisplayName(destinationSpace)}.`,
     approvedAt: input.status === "approved" ? now : undefined,
     createdAt: now,
     updatedAt: now,
@@ -4698,31 +4720,33 @@ export async function bulkImportMembersForOrg(input: {
 
   const canonicalRequest = input.destinationSpaceId !== undefined;
   if (canonicalRequest && !input.destinationSpaceId?.trim()) {
-    throw new Error("Choose a destination Space.");
+    throw new Error("Choose Wavesparks Community or an event.");
   }
   if (canonicalRequest && !input.accessStatus) {
-    throw new Error("Choose Space access for this import.");
+    throw new Error("Choose active access or waitlist for this import.");
   }
   const spaces = await listSpacesForOrg(input.orgId);
   const destinationSpaceId = input.destinationSpaceId?.trim()
     || input.cohortId?.trim()
     || spaces.find((space) => space.kind === "main")?.id;
   const destinationSpace = spaces.find((space) => space.id === destinationSpaceId);
-  if (!destinationSpace) throw new Error("Destination Space not found.");
+  if (!destinationSpace) {
+    throw new Error("The selected community or event could not be found.");
+  }
   if (destinationSpace.lifecycle === "archived") {
     throw new Error(
       canonicalRequest
-        ? "Archived Spaces cannot accept new members."
+        ? "Restore this archived event before adding participants."
         : "Archived cohorts cannot accept new members.",
     );
   }
   if (destinationSpace.kind === "main" && destinationSpace.lifecycle !== "active") {
-    throw new Error("Main Community lifecycle is invalid.");
+    throw new Error("Wavesparks Community is not available right now.");
   }
   const accessStatus = input.accessStatus
     ?? (input.status === "approved" ? "active" : "waitlist");
   if (accessStatus !== "active" && accessStatus !== "waitlist") {
-    throw new Error("Invalid Space access selection.");
+    throw new Error("Choose active access or waitlist.");
   }
   const legacyMembershipStatus = canonicalRequest ? "pending" : input.status ?? "pending";
 
@@ -6389,7 +6413,7 @@ async function requireActiveMembershipsInSpace(
 ) {
   const space = await getSpaceById(spaceId);
   if (!space || !spaceLifecycleAllowsMemberAccess(space)) {
-    throw new Error("Space is not available to members.");
+    throw new Error("This community or event is not available right now.");
   }
 
   const records = await Promise.all(
@@ -6407,7 +6431,7 @@ async function requireActiveMembershipsInSpace(
         spaceMembership?.accessStatus !== "active",
     )
   ) {
-    throw new Error("Both members must have active access to this Space.");
+    throw new Error("Both people need active access to this community or event.");
   }
   return space;
 }
@@ -6519,11 +6543,11 @@ export async function savePostForMembership(
 ) {
   const post = await getPostById(postId);
   if (!post?.spaceId || post.orgId !== orgId) {
-    throw new Error("Post not found in an accessible Space.");
+    throw new Error("This post is not available to you.");
   }
   const space = await requireActiveMembershipsInSpace(post.spaceId, [membershipId]);
   if (space.orgId !== orgId) {
-    throw new Error("Post not found in an accessible Space.");
+    throw new Error("This post is not available to you.");
   }
 
   if (!usesDatabase) {
@@ -6581,7 +6605,7 @@ export async function savePostForMembership(
 export async function unsavePostForMembership(membershipId: string, postId: string) {
   const post = await getPostById(postId);
   if (!post?.spaceId) {
-    throw new Error("Post not found in an accessible Space.");
+    throw new Error("This post is not available to you.");
   }
   await requireActiveMembershipsInSpace(post.spaceId, [membershipId]);
 
@@ -6669,7 +6693,7 @@ export async function savePostForMembershipInSpace(
   const space = await requireActiveMembershipsInSpace(spaceId, [membershipId]);
   const post = await getPostByIdInSpace(spaceId, postId);
   if (!post || post.orgId !== orgId || space.orgId !== orgId) {
-    throw new Error("Post not found in this Space.");
+    throw new Error("Post not found in this community or event.");
   }
   return savePostForMembership(orgId, membershipId, postId);
 }
@@ -6681,7 +6705,7 @@ export async function unsavePostForMembershipInSpace(
 ) {
   await requireActiveMembershipsInSpace(spaceId, [membershipId]);
   if (!(await getPostByIdInSpace(spaceId, postId))) {
-    throw new Error("Post not found in this Space.");
+    throw new Error("Post not found in this community or event.");
   }
   return unsavePostForMembership(membershipId, postId);
 }
@@ -8520,7 +8544,7 @@ export async function addNotification(notification: Notification) {
       spaceMembership?.orgId !== notification.orgId ||
       spaceMembership.accessStatus !== "active"
     ) {
-      throw new Error("Notification recipient does not have access to this Space.");
+      throw new Error("The notification recipient no longer has access to this community or event.");
     }
     const linkPath = notification.link.split(/[?#]/, 1)[0];
     const spacePath = `/s/${space.slug}`;
@@ -8641,7 +8665,7 @@ export async function createCommentInSpace(
     getPostByIdInSpace(spaceId, input.postId),
   ]);
   if (!post || post.orgId !== space.orgId) {
-    throw new Error("Post not found in this Space.");
+    throw new Error("Post not found in this community or event.");
   }
   return createComment(input, {
     orgId: space.orgId,
@@ -8651,7 +8675,7 @@ export async function createCommentInSpace(
 
 export async function upsertProfile(
   profile: Profile,
-  links: ProfileLink[],
+  links: ProfileLink[] | undefined,
   options: { orgId?: string; recomputeMatches?: boolean } = {},
 ) {
   const shouldRecomputeMatches = options.recomputeMatches ?? true;
@@ -8668,8 +8692,10 @@ export async function upsertProfile(
       store.profiles.unshift(profile);
     }
 
-    store.profileLinks = store.profileLinks.filter((link) => link.profileId !== profile.id);
-    store.profileLinks.unshift(...links);
+    if (links) {
+      store.profileLinks = store.profileLinks.filter((link) => link.profileId !== profile.id);
+      store.profileLinks.unshift(...links);
+    }
 
     const membership = store.memberships.find(
       (candidate) => candidate.id === profile.membershipId,
@@ -8695,9 +8721,11 @@ export async function upsertProfile(
     await db.insert(dbSchema.profiles).values(profileInsert(profile));
   }
 
-  await db.delete(dbSchema.profileLinks).where(eq(dbSchema.profileLinks.profileId, profile.id));
-  if (links.length) {
-    await db.insert(dbSchema.profileLinks).values(links);
+  if (links) {
+    await db.delete(dbSchema.profileLinks).where(eq(dbSchema.profileLinks.profileId, profile.id));
+    if (links.length) {
+      await db.insert(dbSchema.profileLinks).values(links);
+    }
   }
 
   const [membershipUpdate] = await db
@@ -8753,14 +8781,16 @@ export async function createIntroRequestInSpace(
     input.requesterMembershipId,
     input.receiverMembershipId,
   ]);
-  if (space.orgId !== input.orgId) throw new Error("Space not found.");
+  if (space.orgId !== input.orgId) {
+    throw new Error("The selected community or event could not be found.");
+  }
   const pending = await getPendingIntroRequestBetweenMembershipsInOrg(
     input.orgId,
     input.requesterMembershipId,
     input.receiverMembershipId,
   );
   if (pending) {
-    throw new Error("A pending intro already exists for this pair in this Space.");
+    throw new Error("These two people already have a pending introduction request here.");
   }
   return createIntroRequest(input, options);
 }
@@ -9273,8 +9303,7 @@ async function getSpaceMatchRecomputeInput(spaceId: string) {
   return { organization, space, records: matchingRecords, configs, posts };
 }
 
-const localEmbeddingReason =
-  "OPENAI_API_KEY is not configured; deterministic local embeddings are in use.";
+const localEmbeddingReason = "Matching used the built-in fallback method.";
 
 async function prepareProfileEmbeddings(profiles: Profile[]) {
   const hasProvider = hasConfiguredEmbeddingProvider();
@@ -9323,9 +9352,8 @@ async function prepareProfileEmbeddings(profiles: Profile[]) {
   try {
     generated = await generateEmbeddingVectors(inputs);
   } catch (error) {
-    providerError = error instanceof Error
-      ? error.message.slice(0, 500)
-      : "Embedding request failed.";
+    console.error("[wavesparks] Profile matching preparation failed", error);
+    providerError = "Matching used a fallback method for this update.";
     generated = { model: LOCAL_EMBEDDING_MODEL, vectors: inputs.map(buildLocalEmbedding) };
   }
   const degradedReason =
@@ -9431,9 +9459,8 @@ async function prepareSpaceIntentEmbeddings(
   try {
     generated = await generateEmbeddingVectors(inputs);
   } catch (error) {
-    providerError = error instanceof Error
-      ? error.message.slice(0, 500)
-      : "Embedding request failed.";
+    console.error("[wavesparks] Event matching preparation failed", error);
+    providerError = "Matching used a fallback method for this update.";
     generated = { model: LOCAL_EMBEDDING_MODEL, vectors: inputs.map(buildLocalEmbedding) };
   }
   const degradedReason =
@@ -9598,8 +9625,8 @@ export async function recomputeMatchesForSpace(spaceId: string) {
       await finishMatchRun(run, "completed", {
         skipped: true,
         reason: input.space.matchingEnabled
-          ? `Space lifecycle is ${input.space.lifecycle}.`
-          : "Matching is disabled for this Space.",
+          ? `Event status is ${input.space.lifecycle}.`
+          : "Matching is turned off.",
         matches: 0,
       });
       return [];
@@ -9632,9 +9659,10 @@ export async function recomputeMatchesForSpace(spaceId: string) {
     });
     return matches;
   } catch (error) {
+    console.error("[wavesparks] Match refresh failed", spaceId, error);
     await finishMatchRun(run, "failed", {
       spaceId: input.space.id,
-      error: error instanceof Error ? error.message.slice(0, 500) : "Match recompute failed.",
+      error: "Matches couldn’t be refreshed. Try again in a few minutes.",
     });
     throw error;
   }

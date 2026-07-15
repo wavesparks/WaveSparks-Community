@@ -10,25 +10,16 @@ import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { listMembershipProfileRecordsForOrg } from "@/server/store";
 import { toFullAdminProfile } from "@/server/view-models";
-import type { FullAdminProfile, MembershipStatus } from "@/lib/domain";
+import type { FullAdminProfile } from "@/lib/domain";
 
 const profileQueues = [
-  { label: "All", status: undefined, flag: undefined },
-  { label: "Approved", status: "approved", flag: undefined },
-  { label: "Pending", status: "pending", flag: undefined },
-  { label: "Featured", status: undefined, flag: "featured" },
-  { label: "Stale", status: undefined, flag: "stale" },
+  { label: "All", flag: undefined },
+  { label: "Featured", flag: "featured" },
+  { label: "Needs review", flag: "stale" },
 ] satisfies Array<{
   label: string;
-  status?: MembershipStatus;
   flag?: "featured" | "stale";
 }>;
-
-function profileStatusFromQuery(value?: string) {
-  return profileQueues.some((queue) => queue.status === value)
-    ? (value as MembershipStatus)
-    : undefined;
-}
 
 function profileFlagFromQuery(value?: string) {
   return value === "featured" || value === "stale" ? value : undefined;
@@ -36,9 +27,6 @@ function profileFlagFromQuery(value?: string) {
 
 function profileQueueHref(slug: string, queue: (typeof profileQueues)[number]) {
   const params = new URLSearchParams();
-  if (queue.status) {
-    params.set("profile_status", queue.status);
-  }
   if (queue.flag) {
     params.set("profile_flag", queue.flag);
   }
@@ -66,14 +54,12 @@ export default async function AdminProfilesPage({
     return null;
   }
 
-  const selectedProfileStatus = profileStatusFromQuery(singleQueryValue(query.profile_status));
   const selectedProfileFlag = profileFlagFromQuery(singleQueryValue(query.profile_flag));
   const profiles = (await listMembershipProfileRecordsForOrg(viewer.org.id, {
     featured: selectedProfileFlag === "featured" ? true : undefined,
     limit: 100,
     profileRequired: true,
     stale: selectedProfileFlag === "stale" ? true : undefined,
-    status: selectedProfileStatus,
   }))
     .map(({ membership, profile }) =>
       profile ? toFullAdminProfile(profile, membership) : null,
@@ -87,8 +73,8 @@ export default async function AdminProfilesPage({
           <SectionHeading
             eyebrow="Admin · Profiles"
             level={1}
-            title="Browse full profiles and admin-only fields"
-            description="This is the only surface where full profiles, contact fields, and moderation flags are visible in one place."
+            title="Member profiles"
+            description="Review member details, contact information, and profiles that need attention."
           />
           <LinkButton href={`/org/${slug}/admin/profiles/export`}>Export CSV</LinkButton>
         </div>
@@ -96,12 +82,10 @@ export default async function AdminProfilesPage({
 
         <div className="space-y-6">
           <div className="space-y-4">
-            <SectionHeading eyebrow="Latest" title="Profile records" />
+            <SectionHeading eyebrow="Members" title="Profiles" />
             <div className="flex flex-wrap gap-2">
               {profileQueues.map((queue) => {
-                const active =
-                  queue.status === selectedProfileStatus &&
-                  queue.flag === selectedProfileFlag;
+                const active = queue.flag === selectedProfileFlag;
 
                 return (
                   <LinkButton
@@ -125,8 +109,14 @@ export default async function AdminProfilesPage({
                 </div>
                 <div className="flex gap-2">
                   <Badge variant="muted">{profile.affiliationLabel}</Badge>
-                  <Badge variant={profile.status === "approved" ? "accent" : "default"}>
-                    {profile.status}
+                  <Badge
+                    variant={
+                      profile.profileCompletionPercent === 100 ? "accent" : "default"
+                    }
+                  >
+                    {profile.profileCompletionPercent === 100
+                      ? "Profile complete"
+                      : `${profile.profileCompletionPercent}% complete`}
                   </Badge>
                 </div>
               </div>
@@ -137,7 +127,7 @@ export default async function AdminProfilesPage({
                   <p>{profile.whatsappNumber}</p>
                 </div>
                 <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm text-[var(--ink-soft)]">
-                  <p className="font-semibold text-[var(--ink)]">Roles & offers</p>
+                  <p className="font-semibold text-[var(--ink)]">Interests and ways to help</p>
                   <p className="mt-2">{profile.desiredRoles.join(", ") || "None listed"}</p>
                   <p>{profile.mentorOffers.join(", ") || "No mentor offers"}</p>
                 </div>
@@ -160,7 +150,7 @@ export default async function AdminProfilesPage({
                 <input name="featured" type="hidden" value={String(profile.featured)} />
                 <input name="stale" type="hidden" value={String(!profile.stale)} />
                 <SubmitButton pendingLabel="Updating" variant="secondary">
-                  {profile.stale ? "Mark fresh" : "Mark stale"}
+                  {profile.stale ? "Mark as reviewed" : "Mark as needs review"}
                 </SubmitButton>
               </form>
             </Card>
@@ -169,7 +159,7 @@ export default async function AdminProfilesPage({
             <Card>
               <p className="text-sm font-semibold text-[var(--ink)]">No profiles found yet</p>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                Completed member profiles will appear here. Use export for full CSV access.
+                Completed member profiles will appear here. You can also download them as a CSV.
               </p>
             </Card>
           ) : null}

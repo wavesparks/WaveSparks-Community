@@ -17,8 +17,13 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  getCommunityDisplayName,
+  getCommunityPeopleLabels,
+} from "@/lib/community-copy";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { getActiveIntroStatusCopy } from "@/lib/intro-status";
+import { postStatusLabel, postTypeLabel } from "@/lib/post-copy";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 import { formatDate } from "@/lib/utils";
 import {
@@ -31,15 +36,17 @@ function InteractionGate({
   slug,
   spaceSlug,
 }: {
-  action: "reply" | "request an intro";
+  action: "reply" | "request an introduction";
   slug: string;
   spaceSlug: string;
 }) {
   return (
     <div className="rounded-lg border border-amber-500/25 bg-amber-50 p-4">
-      <p className="text-sm font-semibold text-[var(--ink)]">Member setup required</p>
+      <p className="text-sm font-semibold text-[var(--ink)]">
+        Complete your profile to continue
+      </p>
       <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-        Finish your core profile to {action} in this Space.
+        Complete your profile before you can {action}.
       </p>
       <LinkButton
         className="mt-3"
@@ -68,6 +75,9 @@ export default async function SpacePostDetailPage({
     requireAuth: true,
   });
   const { space, viewer } = context;
+  const communityName = getCommunityDisplayName(space);
+  const { plural: peopleLabel, singular: personLabel } =
+    getCommunityPeopleLabels(space);
   const { existingIntroStatus, isPostSaved, thread } =
     await getPostThreadIntroContextForSpace({
       postId,
@@ -95,9 +105,9 @@ export default async function SpacePostDetailPage({
   const postPath = `/org/${slug}/s/${space.slug}/posts/${post.id}`;
   const requestsPath = `/org/${slug}/s/${space.slug}/requests`;
   const commentUnavailableReason = post.commentsLocked
-    ? "Comments are locked for this thread."
+    ? "Comments are closed on this post."
     : post.status !== "active"
-      ? "This thread is no longer active."
+      ? "This post is no longer open for comments."
       : null;
 
   return (
@@ -109,15 +119,15 @@ export default async function SpacePostDetailPage({
         variant="ghost"
       >
         <ArrowLeft className="size-4" />
-        Back to {space.name} feed
+        Back to {communityName}
       </LinkButton>
-      <StatusBanner spaceName={space.name} status={singleQueryValue(query.status)} />
+      <StatusBanner spaceName={communityName} status={singleQueryValue(query.status)} />
 
       <Card className="flex items-start gap-3 border-[var(--accent)]/20 bg-[var(--accent-soft)] p-4">
         <LockKeyhole className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" />
         <p className="text-sm leading-6 text-[var(--ink-soft)]">
-          This thread belongs to <strong className="text-[var(--ink)]">{space.name}</strong>
-          . Only active members of this Space can open it.
+          Only {peopleLabel} in <strong className="text-[var(--ink)]">{communityName}</strong>{" "}
+          can open this post.
         </p>
       </Card>
 
@@ -125,9 +135,11 @@ export default async function SpacePostDetailPage({
         <div className="space-y-6">
           <Card className="space-y-5 p-5">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge>{post.type.replaceAll("_", " ")}</Badge>
-              {post.status !== "active" ? <Badge variant="muted">{post.status}</Badge> : null}
-              {post.commentsLocked ? <Badge variant="muted">comments locked</Badge> : null}
+              <Badge>{postTypeLabel(post.type)}</Badge>
+              {post.status !== "active" ? (
+                <Badge variant="muted">{postStatusLabel(post.status)}</Badge>
+              ) : null}
+              {post.commentsLocked ? <Badge variant="muted">Comments closed</Badge> : null}
               <span className="ml-auto text-xs font-semibold uppercase text-[var(--ink-soft)]">
                 {formatDate(post.createdAt)}
               </span>
@@ -221,7 +233,7 @@ export default async function SpacePostDetailPage({
                       ) : null}
                       <div className="min-w-0">
                         <p className="font-semibold text-[var(--ink)]">
-                          {card?.displayName || "Former member"}
+                          {card?.displayName || `Former ${personLabel}`}
                         </p>
                         <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
                           {comment.body}
@@ -234,7 +246,7 @@ export default async function SpacePostDetailPage({
                 <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                   <p className="text-sm font-semibold text-[var(--ink)]">No comments yet</p>
                   <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                    Be the first member of {space.name} to add context.
+                    Be the first {personLabel} in {communityName} to share a thought.
                   </p>
                 </div>
               )}
@@ -262,7 +274,7 @@ export default async function SpacePostDetailPage({
                 <Textarea
                   id="space-comment-body"
                   name="body"
-                  placeholder={`Add a useful response for ${space.name}.`}
+                  placeholder="Add your response"
                   required
                 />
                 <SubmitButton pendingLabel="Adding comment">Add comment</SubmitButton>
@@ -279,19 +291,20 @@ export default async function SpacePostDetailPage({
               <div className="grid size-9 place-items-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
                 <UserPlus className="size-4" />
               </div>
-              <SectionHeading title="Request Space intro" />
+              <SectionHeading title="Request an introduction" />
             </div>
             {!context.canInteract ? (
               <InteractionGate
-                action="request an intro"
+                action="request an introduction"
                 slug={slug}
                 spaceSlug={space.slug}
               />
             ) : author.membershipId === viewer.membership.id ? (
               <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
-                <p className="text-sm font-semibold text-[var(--ink)]">This is your thread</p>
+                <p className="text-sm font-semibold text-[var(--ink)]">You wrote this post</p>
                 <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                  Other active members of {space.name} can request an intro from this post.
+                  Other {peopleLabel} in {communityName} can request an introduction from this
+                  post.
                 </p>
               </div>
             ) : introCopy ? (
@@ -301,7 +314,7 @@ export default async function SpacePostDetailPage({
                   <p className="mt-1 text-sm text-[var(--ink-soft)]">{introCopy.body}</p>
                 </div>
                 <LinkButton className="w-full" href={requestsPath} variant="secondary">
-                  Open Space requests
+                  View introduction
                 </LinkButton>
               </div>
             ) : (
@@ -322,34 +335,34 @@ export default async function SpacePostDetailPage({
                 <input name="source_type" type="hidden" value="post" />
                 <input name="source_id" type="hidden" value={post.id} />
                 <div>
-                  <Label htmlFor="post-intro-purpose">Conversation purpose</Label>
+                  <Label htmlFor="post-intro-purpose">What would you like to discuss?</Label>
                   <Input
-                    defaultValue="post conversation"
                     id="post-intro-purpose"
                     name="intro_purpose"
+                    placeholder="For example, a question about this post"
                     required
                   />
                 </div>
                 <div>
-                  <Label htmlFor="post-intro-note">Why you would like to connect</Label>
+                  <Label htmlFor="post-intro-note">Why would you like to meet?</Label>
                   <Textarea
-                    defaultValue={`Your post on “${post.title}” in ${space.name} feels directly relevant to what I’m working on. I’d love to connect if you’re open to it.`}
                     id="post-intro-note"
                     name="note"
+                    placeholder="Share what caught your attention and why a conversation could be helpful."
                     required
                   />
                 </div>
                 <div>
-                  <Label htmlFor="post-intro-message">Suggested first message</Label>
+                  <Label htmlFor="post-intro-message">Your opening message</Label>
                   <Textarea
-                    defaultValue={`Thanks for sharing this in ${space.name}. I’d love to compare notes and see where there might be mutual fit.`}
                     id="post-intro-message"
                     name="suggested_first_message"
+                    placeholder="Write the message you would like to send if they accept."
                     required
                   />
                 </div>
                 <SubmitButton className="w-full" pendingLabel="Sending request">
-                  Request intro
+                  Request introduction
                 </SubmitButton>
               </form>
             )}
@@ -357,12 +370,14 @@ export default async function SpacePostDetailPage({
 
           <Card className="space-y-3 p-5">
             <p className="text-xs font-semibold uppercase text-[var(--accent)]">
-              Thread context
+              Post details
             </p>
             <div className="grid gap-2 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[var(--ink-soft)]">Space</span>
-                <span className="truncate font-semibold text-[var(--ink)]">{space.name}</span>
+                <span className="text-[var(--ink-soft)]">Shared in</span>
+                <span className="truncate font-semibold text-[var(--ink)]">
+                  {communityName}
+                </span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[var(--ink-soft)]">Comments</span>
@@ -370,7 +385,9 @@ export default async function SpacePostDetailPage({
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[var(--ink-soft)]">Status</span>
-                <span className="font-semibold capitalize text-[var(--ink)]">{post.status}</span>
+                <span className="font-semibold text-[var(--ink)]">
+                  {postStatusLabel(post.status)}
+                </span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[var(--ink-soft)]">Author</span>

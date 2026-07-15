@@ -37,6 +37,24 @@ describe("permission guards", () => {
     expect(canViewAdminRoute(memberUser, memberMembership)).toBe(false);
   });
 
+  it("revokes admin-route access when an admin account is no longer connected", async () => {
+    const adminMembership = (await getMembershipById("mem_avery"))!;
+    const adminUser = (await getUserById(adminMembership.userId))!;
+
+    expect(
+      canViewAdminRoute(adminUser, {
+        ...adminMembership,
+        accountStatus: "suspended",
+      }),
+    ).toBe(false);
+    expect(
+      canViewAdminRoute(adminUser, {
+        ...adminMembership,
+        accountStatus: "deprovisioned",
+      }),
+    ).toBe(false);
+  });
+
   it("bootstraps the letsbuild account as an approved admin", async () => {
     const user = await upsertSessionUser({
       email: "letsbuild@wavesparks.co",

@@ -1,4 +1,5 @@
 import { recomputeMatchesAction } from "@/actions/admin";
+import { adminSpaceName } from "@/components/admin/admin-community-copy";
 import { MatchTypeConfigForm } from "@/components/admin/match-type-config-form";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,18 @@ import {
 
 function scoreBandFromQuery(value?: string) {
   return value === "high" || value === "good" || value === "emerging" ? value : undefined;
+}
+
+function scoreBandLabel(scoreBand: MatchRecord["scoreBand"]) {
+  if (scoreBand === "high") return "Strong match";
+  if (scoreBand === "good") return "Good match";
+  return "Worth exploring";
+}
+
+function matchRunStatusLabel(status: "running" | "completed" | "failed") {
+  if (status === "running") return "Updating";
+  if (status === "completed") return "Updated";
+  return "Needs attention";
 }
 
 interface MatchQueue {
@@ -77,13 +90,13 @@ export default async function AdminMatchesPage({
     getMatchFeedbackSummaryForOrg(viewer.org.id),
     listSpacesForOrg(viewer.org.id),
   ]);
-  const spaceNameById = new Map(spaces.map((space) => [space.id, space.name]));
+  const spaceNameById = new Map(spaces.map((space) => [space.id, adminSpaceName(space)]));
   const spaceLabel = (spaceId?: string) =>
-    (spaceId && spaceNameById.get(spaceId)) || "Unscoped migration row";
+    (spaceId && spaceNameById.get(spaceId)) || "Wavesparks Community";
   const matchQueues: MatchQueue[] = [
     { label: "All" },
-    { label: "High score", scoreBand: "high" },
-    { label: "Good score", scoreBand: "good" },
+    { label: "Strong matches", scoreBand: "high" },
+    { label: "Good matches", scoreBand: "good" },
     ...configs.map((config) => ({ label: config.name, matchType: config.slug })),
   ];
   const configBySlug = new Map(configs.map((config) => [config.slug, config]));
@@ -95,11 +108,11 @@ export default async function AdminMatchesPage({
           <SectionHeading
             eyebrow="Admin · Matches"
             level={1}
-            title="Review generated matches and recompute"
-            description="Organization-wide matching audit. Every recommendation and run identifies its Space; use a Space detail page for an isolated view."
+            title="Review match suggestions"
+            description="See the suggestions people receive in Wavesparks Community and each Event."
           />
           <form action={recomputeMatchesAction.bind(null, slug)}>
-            <SubmitButton pendingLabel="Recomputing">Recompute matches</SubmitButton>
+            <SubmitButton pendingLabel="Refreshing">Refresh matches</SubmitButton>
           </form>
         </div>
         <StatusBanner status={singleQueryValue(query.status)} />
@@ -135,25 +148,22 @@ export default async function AdminMatchesPage({
                       {spaceLabel(match.spaceId)}
                     </Badge>
                     <h3 className="mt-2 text-xl font-semibold text-[var(--ink)]">
-                      {sourceProfile?.preferredName ?? "Source"} → {targetProfile?.preferredName ?? "Target"}
+                      {sourceProfile?.preferredName ?? "Member unavailable"} and {targetProfile?.preferredName ?? "Member unavailable"}
                     </h3>
                   </div>
                   <Badge variant={match.scoreBand === "high" ? "accent" : "default"}>
-                    {match.score}
+                    {scoreBandLabel(match.scoreBand)}
                   </Badge>
                 </div>
                 <p className="text-sm text-[var(--ink-soft)]">{match.explanationText}</p>
-                <p className="text-xs text-[var(--ink-soft)]">
-                  {match.confidence} confidence · {match.algorithmVersion}
-                </p>
               </Card>
             );
           })}
           {!matchCards.length ? (
             <Card>
-              <p className="text-sm font-semibold text-[var(--ink)]">No matches in this queue</p>
+              <p className="text-sm font-semibold text-[var(--ink)]">No matches found</p>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                Try another score band or recompute matches after member profiles change.
+                Try another filter, or refresh matches after people update their profiles.
               </p>
             </Card>
           ) : null}
@@ -161,8 +171,8 @@ export default async function AdminMatchesPage({
 
         <section className="space-y-4">
           <SectionHeading
-            title="Matching types"
-            description="Each active type appears in member profiles as separate seeking and offering choices. Weights must total 100."
+            title="Matching categories"
+            description="Choose what people can look for and offer. The importance settings for each category must add up to 100."
           />
           <div className="grid gap-5 xl:grid-cols-2">
             {configs.map((config) => (
@@ -175,7 +185,7 @@ export default async function AdminMatchesPage({
         <section className="space-y-4">
           <SectionHeading
             title="Member feedback"
-            description="Private responses are shown only as organization-level quality signals. Dismissed matches stay dismissed after recomputation."
+            description="See whether suggestions are useful without revealing who left the feedback. Suggestions someone dismissed will not return after a refresh."
           />
           <div className="grid border-y border-[var(--line)] sm:grid-cols-3 sm:divide-x sm:divide-[var(--line)]">
             {[
@@ -208,7 +218,7 @@ export default async function AdminMatchesPage({
               ))}
             </div>
           ) : (
-            <p className="text-sm text-[var(--ink-soft)]">No member feedback recorded yet.</p>
+            <p className="text-sm text-[var(--ink-soft)]">No feedback recorded yet.</p>
           )}
           {feedbackSummary.reasons.length ? (
             <p className="text-sm text-[var(--ink-soft)]">
@@ -224,13 +234,15 @@ export default async function AdminMatchesPage({
         </section>
 
         <section className="space-y-4">
-          <SectionHeading title="Recent runs" />
+          <SectionHeading title="Recent updates" />
           <div className="divide-y divide-[var(--line)] border-y border-[var(--line)]">
             {runs.map((run) => (
               <div className="flex flex-wrap items-center justify-between gap-3 py-3" key={run.id}>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-semibold text-[var(--ink)]">{run.status}</p>
+                    <p className="text-sm font-semibold text-[var(--ink)]">
+                      {matchRunStatusLabel(run.status)}
+                    </p>
                     <Badge variant={run.spaceId ? "muted" : "default"}>
                       {spaceLabel(run.spaceId)}
                     </Badge>
@@ -240,17 +252,15 @@ export default async function AdminMatchesPage({
                   </p>
                 </div>
                 <p className="text-sm text-[var(--ink-soft)]">
-                  {Number(run.metadata.matches ?? 0)} matches · {Number(run.metadata.embeddingsDegraded ?? 0)} degraded embeddings
+                  {Number(run.metadata.matches ?? 0)} matches
+                  {Number(run.metadata.embeddingsDegraded ?? 0) > 0
+                    ? ` · Standard profile matching used for ${Number(run.metadata.embeddingsDegraded ?? 0)} profiles`
+                    : ""}
                 </p>
-                {typeof run.metadata.embeddingDegradedReason === "string" ? (
-                  <p className="mt-1 text-xs text-[var(--danger)]">
-                    {run.metadata.embeddingDegradedReason}
-                  </p>
-                ) : null}
               </div>
             ))}
             {!runs.length ? (
-              <p className="py-4 text-sm text-[var(--ink-soft)]">No matching runs recorded yet.</p>
+              <p className="py-4 text-sm text-[var(--ink-soft)]">Matches have not been refreshed yet.</p>
             ) : null}
           </div>
         </section>

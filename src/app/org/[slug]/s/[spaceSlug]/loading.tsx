@@ -4,7 +4,7 @@ function Skeleton({ className }: { className: string }) {
 
 export default function SpaceLoading() {
   return (
-    <div aria-label="Loading space" className="space-y-8" role="status">
+    <div aria-label="Loading" className="space-y-8" role="status">
       <div className="space-y-3">
         <Skeleton className="h-3 w-28" />
         <Skeleton className="h-9 w-full max-w-lg" />

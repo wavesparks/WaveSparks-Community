@@ -17,7 +17,7 @@ export default async function SignUpPage({
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-5xl flex-col justify-center gap-6">
         <LinkButton className="w-fit" href={`/org/${slug}`} variant="ghost">
           <ArrowLeft className="size-4" />
-          Back to My Spaces
+          Back to home
         </LinkButton>
 
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr]">
@@ -30,7 +30,7 @@ export default async function SignUpPage({
                 eyebrow="Create account"
                 level={1}
                 title="Join Wavesparks by invitation"
-                description="Community content is private. New accounts are created only from a personal invitation, and each account can enter only its assigned Spaces."
+                description="Wavesparks is invitation only. You will only see Wavesparks Community and the events you have been invited to."
                 tone="inverse"
               />
             </div>
@@ -41,17 +41,17 @@ export default async function SignUpPage({
               <SectionHeading
                 eyebrow="Invitation required"
                 title="Check your invitation email"
-                description="Each invitation contains a private Clerk ticket for one email address. Open that link to create an account or connect an existing Clerk account."
+                description="Open the personal link in your invitation email to create an account or sign in with the invited address."
               />
               <LinkButton href={`/org/${slug}/signin`}>
                 Sign in with an invited account
               </LinkButton>
             </Card>
             <Card className="space-y-3 text-sm leading-6 text-[var(--ink-soft)]">
-              <p className="font-semibold text-[var(--ink)]">Ask an admin for an invitation</p>
+              <p className="font-semibold text-[var(--ink)]">Ask for an invitation</p>
               <p>
-                Direct public registration and shared invite codes are closed. Ask a Wavesparks
-                admin to send a personal invitation to your email address.
+                Wavesparks is invitation-only. Ask the Wavesparks team to invite your email
+                address.
               </p>
               <LinkButton className="w-fit" href={`/org/${slug}/signin`} variant="secondary">
                 Sign in with an invited account

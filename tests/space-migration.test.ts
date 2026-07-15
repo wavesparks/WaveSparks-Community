@@ -41,4 +41,35 @@ describe("Space migration safety", () => {
     expect(sql).toContain("posts_author_org_fk");
     expect(sql).toContain("intro_requests_requester_org_fk");
   });
+
+  it("renames the member-facing community without changing stable ids or slugs", () => {
+    const sql = migration("0011_wavesparks_community_name.sql");
+
+    expect(sql).toContain("'Wavesparks Community'");
+    expect(sql).toContain('WHERE\n\t"kind" = \'main\'');
+    expect(sql).toContain("replace(\"title\", 'Main Community', 'Wavesparks Community')");
+    expect(sql).toContain("Meet someone interested in building a company together.");
+    expect(sql).not.toContain('UPDATE "spaces"\nSET\n\t"slug"');
+  });
+
+  it("adds and backfills the inclusive onboarding profile fields", () => {
+    const sql = migration("0012_lively_nuke.sql");
+
+    expect(sql).toContain('ADD COLUMN "bio"');
+    expect(sql).toContain('ADD COLUMN "current_focus"');
+    expect(sql).toContain('ADD COLUMN "technical_experience"');
+    expect(sql).toContain('WHEN NULLIF(BTRIM("long_bio"), \'\') IS NULL');
+    expect(sql).toContain('ELSE BTRIM("short_bio") || E\'\\n\\n\' || BTRIM("long_bio")');
+    expect(sql).toContain('"problem_interest" = "startup_description"');
+    expect(sql).toContain('NULLIF(BTRIM("startup_one_liner"), \'\')');
+    expect(sql).toContain('NULLIF(BTRIM("startup_description"), \'\')');
+    expect(sql).toContain('NULLIF(BTRIM("headline"), \'\')');
+    expect(sql).toContain('"technical_experience_level" = \'not_sure\'');
+    expect(sql).not.toContain('WHEN "years_of_experience" <=');
+    expect(sql).toContain('"technical_experience" = "prior_projects"');
+    expect(sql).toContain('"profile_completion_percent" = CASE');
+    expect(sql).toContain('WHEN "onboarding_complete" THEN 100');
+    expect(sql).toContain('CARDINALITY("seeking_match_types") > 0');
+    expect(sql).toContain('"onboarding_complete" OR (');
+  });
 });

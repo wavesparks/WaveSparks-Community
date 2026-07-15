@@ -1,10 +1,10 @@
 export const matchFeedbackReasonLabels = {
-  wrong_intent: "Wrong intent",
-  missing_skill: "Missing skill",
+  wrong_intent: "Not what I’m looking for",
+  missing_skill: "Their experience doesn’t match what I need",
   timing: "Timing or availability",
   location: "Location or timezone",
   already_connected: "Already connected",
-  other: "Other fit issue",
+  other: "Something else",
 } as const;
 
 export type MatchFeedbackReason = keyof typeof matchFeedbackReasonLabels;

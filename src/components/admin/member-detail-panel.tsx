@@ -9,6 +9,11 @@ import {
   updateMemberSpaceAccessAction,
   updateMembershipAction,
 } from "@/actions/admin";
+import {
+  adminInvitationIssue,
+  adminSpaceName,
+  adminSpaceOptionLabel,
+} from "@/components/admin/admin-community-copy";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +24,10 @@ import type {
   MembershipRole,
   SpaceAccessStatus,
 } from "@/lib/domain";
+import {
+  getMembershipRoleLabel,
+  getSpaceAccessStatusLabel,
+} from "@/lib/member-copy";
 
 export interface MemberDetailPanelProps {
   invitationsEnabled?: boolean;
@@ -58,10 +67,10 @@ function confirmationMessage(
     warnings.push("grant this member administrator access");
   }
   if (initialStatus !== nextStatus && nextStatus === "suspended") {
-    warnings.push("suspend this account across every Space");
+    warnings.push("block this account from Wavesparks Community and every Event");
   }
   if (initialStatus !== nextStatus && nextStatus === "deprovisioned") {
-    warnings.push("deprovision this account across every Space");
+    warnings.push("remove this account from Wavesparks Community and every Event");
   }
 
   if (!warnings.length) {
@@ -149,8 +158,8 @@ export function MemberDetailPanel({
               }}
               value={role}
             >
-              <option value="member">Member</option>
-              <option value="org_admin">Org admin</option>
+              <option value="member">{getMembershipRoleLabel("member")}</option>
+              <option value="org_admin">{getMembershipRoleLabel("org_admin")}</option>
             </Select>
           </div>
           <div>
@@ -161,13 +170,13 @@ export function MemberDetailPanel({
               onChange={(event) => setStatus(event.target.value as AccountStatus)}
               value={status}
             >
-              <option value="invited">Invited</option>
-              <option disabled={!connected} value="connected">Connected</option>
-              <option value="suspended">Suspended globally</option>
-              <option value="deprovisioned">Deprovisioned</option>
+              <option value="invited">Invitation pending</option>
+              <option disabled={!connected} value="connected">Active</option>
+              <option value="suspended">Paused</option>
+              <option value="deprovisioned">Account closed</option>
             </Select>
             <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
-              Suspension overrides access to every Space. It does not rewrite Space rosters.
+              Pausing the account blocks access to Wavesparks Community and every Event. Participant lists stay unchanged.
             </p>
           </div>
           <div className="md:col-span-2">
@@ -186,19 +195,19 @@ export function MemberDetailPanel({
 
         <div className="space-y-3 border-t border-[var(--line)] pt-4">
           <div>
-            <p className="text-sm font-semibold text-[var(--ink)]">Space access</p>
+            <p className="text-sm font-semibold text-[var(--ink)]">Community &amp; Event access</p>
             <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
-              Main and every Event are independent. Changing one never changes another.
+              Wavesparks Community and each Event are managed separately. Changing one does not affect the others.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {spaces.filter((space) => space.accessStatus).map((space) => (
               <Badge key={space.id} variant={space.accessStatus === "active" ? "accent" : "muted"}>
-                {space.name} · {space.accessStatus}
+                {adminSpaceName(space)} · {getSpaceAccessStatusLabel(space.accessStatus!)}
               </Badge>
             ))}
             {!spaces.some((space) => space.accessStatus) ? (
-              <span className="text-xs text-[var(--ink-soft)]">No Space access assigned</span>
+              <span className="text-xs text-[var(--ink-soft)]">Not added to Wavesparks Community or any Event</span>
             ) : null}
           </div>
           {spaces.length ? (
@@ -211,7 +220,7 @@ export function MemberDetailPanel({
                     selectedSpaceAccess === "suspended" ||
                     selectedSpaceAccess === "removed") &&
                   !window.confirm(
-                    `Set ${selectedSpace?.name ?? "this Space"} access to ${selectedSpaceAccess}?`,
+                    `Change ${selectedSpace ? adminSpaceName(selectedSpace) : "this community or Event"} access to ${getSpaceAccessStatusLabel(selectedSpaceAccess)}? This person may no longer be able to enter.`,
                   )
                 ) {
                   event.preventDefault();
@@ -219,7 +228,7 @@ export function MemberDetailPanel({
               }}
             >
               <div>
-                <Label htmlFor={`${membership.id}-space`}>Space</Label>
+                <Label htmlFor={`${membership.id}-space`}>Community or Event</Label>
                 <Select
                   id={`${membership.id}-space`}
                   name="space_id"
@@ -233,7 +242,7 @@ export function MemberDetailPanel({
                 >
                   {spaces.map((space) => (
                     <option key={space.id} value={space.id}>
-                      {space.name} · {space.kind === "main" ? "Main" : "Event"}
+                      {adminSpaceOptionLabel(space)}
                       {space.lifecycle === "archived" ? " (archived)" : ""}
                     </option>
                   ))}
@@ -250,9 +259,9 @@ export function MemberDetailPanel({
                   value={selectedSpaceAccess}
                 >
                   <option value="active">Active</option>
-                  <option value="waitlist">Waitlist</option>
-                  <option value="rejected">Rejected</option>
-                  <option value="suspended">Suspended in this Space</option>
+                  <option value="waitlist">Awaiting approval</option>
+                  <option value="rejected">Not approved</option>
+                  <option value="suspended">Paused for this community or Event</option>
                   <option value="removed">Removed</option>
                 </Select>
               </div>
@@ -265,7 +274,7 @@ export function MemberDetailPanel({
                 />
               </div>
               <div className="md:col-span-2">
-                <SubmitButton pendingLabel="Saving access">Save Space access</SubmitButton>
+                <SubmitButton pendingLabel="Saving access">Save access</SubmitButton>
               </div>
             </form>
           ) : null}
@@ -276,8 +285,7 @@ export function MemberDetailPanel({
             <div>
               <p className="text-sm font-semibold text-[var(--ink)]">Invitation</p>
               <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
-                {membership.clerkInvitationError ||
-                  "Invitation status is tracked separately from community access."}
+                {adminInvitationIssue(membership.clerkInvitationError)}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -316,7 +324,7 @@ export function MemberDetailPanel({
             <div>
               <p className="text-sm font-semibold text-[var(--ink)]">Sign-in notification failed</p>
               <p className="mt-1 text-xs leading-5 text-red-700">
-                {membership.clerkInvitationError}
+                {adminInvitationIssue(membership.clerkInvitationError)}
               </p>
             </div>
             <form action={resendMembershipInvitationAction.bind(null, slug, membership.id)}>

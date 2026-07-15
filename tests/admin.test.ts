@@ -353,6 +353,18 @@ describe("admin operations", () => {
     });
 
     expect(csv).toContain("Display Name");
+    expect(csv).toContain("Bio");
+    expect(csv).toContain("Problem Or Topic Of Interest");
+    expect(csv).toContain("Current Focus");
+    expect(csv).toContain("Technical Experience Level");
+    expect(csv).toContain("Technical Experience");
+    expect(profiles[0]).toMatchObject({
+      bio: orgProfiles[0]?.bio || orgProfiles[0]?.longBio || orgProfiles[0]?.shortBio,
+      problemInterest: orgProfiles[0]?.problemInterest,
+      currentFocus: orgProfiles[0]?.currentFocus,
+      technicalExperienceLevel: orgProfiles[0]?.technicalExperienceLevel,
+      technicalExperience: orgProfiles[0]?.technicalExperience,
+    });
     expect(orgProfiles.map((profile) => profile.id)).not.toContain("pro_other_org");
     expect(updatedOrg?.logoUrl).toBe("https://cdn.wavesparks.co/logo.png");
     expect(analytics.introRequestsSent).toBeGreaterThan(0);
@@ -405,5 +417,20 @@ describe("admin operations", () => {
     ).toBe(true);
     expect(recentRequestParticipants.every((record) => record.user)).toBe(true);
     await expect(getMembershipById("mem_avery")).resolves.toMatchObject({ role: "org_admin" });
+  });
+
+  it("neutralizes spreadsheet formulas in profile exports", async () => {
+    const membership = (await getMembershipById("mem_jules"))!;
+    const profile = (await getProfileRecordById("pro_jules"))!.profile;
+    const adminProfile = {
+      ...toFullAdminProfile(profile, membership),
+      bio: '=HYPERLINK("https://example.com", "Open")',
+      currentFocus: "  +1+1",
+    };
+
+    const csv = fullProfilesToCsv([adminProfile]);
+
+    expect(csv).toContain('"\'=HYPERLINK(""https://example.com"", ""Open"")"');
+    expect(csv).toContain('"\'  +1+1"');
   });
 });

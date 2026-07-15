@@ -7,6 +7,10 @@ import { auth } from "@clerk/nextjs/server";
 import { nanoid } from "nanoid";
 
 import { getViewerContextForAction } from "@/lib/auth";
+import {
+  getCommunityDisplayName,
+  WAVESPARKS_COMMUNITY_NAME,
+} from "@/lib/community-copy";
 import { getE2ELocalClerkOrganizationContext } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
 import type {
@@ -118,29 +122,34 @@ async function requireClerkAdminContextForAction(
   const clerkAuth = await auth();
 
   if (!clerkAuth.userId) {
-    throw new Error("A Clerk user session is required.");
+    throw new Error("Sign in again to continue.");
   }
 
-  return ensureClerkAdminOrganizationContext({
-    clerkUserId: clerkAuth.userId,
-    membership: admin.membership,
-    org: admin.org,
-    user: admin.user,
-  });
+  try {
+    return await ensureClerkAdminOrganizationContext({
+      clerkUserId: clerkAuth.userId,
+      membership: admin.membership,
+      org: admin.org,
+      user: admin.user,
+    });
+  } catch (error) {
+    console.error("[wavesparks] Invitation account setup failed", admin.membership.id, error);
+    throw new Error("Invitations are unavailable right now. Try again in a few minutes.");
+  }
 }
 
 function membershipRole(value: FormDataEntryValue | null): MembershipRole {
   if (value === "org_admin" || value === "member") {
     return value;
   }
-  throw new Error("Invalid membership role.");
+  throw new Error("Choose Member or Administrator.");
 }
 
 function importSpaceAccessStatus(
   value: FormDataEntryValue | null,
 ): Extract<SpaceAccessStatus, "active" | "waitlist"> {
   if (value === "active" || value === "waitlist") return value;
-  throw new Error("Invalid Space access selection.");
+  throw new Error("Choose active access or waitlist.");
 }
 
 function spaceAccessStatus(value: FormDataEntryValue | null): SpaceAccessStatus {
@@ -153,7 +162,7 @@ function spaceAccessStatus(value: FormDataEntryValue | null): SpaceAccessStatus 
   ) {
     return value;
   }
-  throw new Error("Invalid Space access status.");
+  throw new Error("Choose a valid access status.");
 }
 
 function accountStatus(value: FormDataEntryValue | null): AccountStatus {
@@ -165,7 +174,7 @@ function accountStatus(value: FormDataEntryValue | null): AccountStatus {
   ) {
     return value;
   }
-  throw new Error("Invalid account status.");
+  throw new Error("Choose a valid account status.");
 }
 
 async function sendExplicitMembershipInvitation(
@@ -180,17 +189,16 @@ async function sendExplicitMembershipInvitation(
   try {
     await sendNotificationEmail({
       to: input.user.email,
-      subject: "You’ve been invited to Wavesparks",
-      html: `<p>You have been added to the Wavesparks community.</p><p><a href="${signInUrl}">Sign in to continue</a>.</p>`,
+      subject: "Your Wavesparks invitation",
+      html: `<p>Your Wavesparks account is ready.</p><p><a href="${signInUrl}">Sign in</a> to open the community or event you were invited to.</p>`,
     });
   } catch (error) {
+    console.error("[wavesparks] Invitation notification email failed", input.membership.id, error);
     await updateMembershipClerkState(input.membership.id, {
-      clerkInvitationError: `Invitation email failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`.slice(0, 1000),
+      clerkInvitationError: "Invitation email failed. Try again.",
       clerkInvitationUpdatedAt: new Date().toISOString(),
     });
-    throw error;
+    throw new Error("The account is ready, but the notification email could not be sent. Try again.");
   }
   return result;
 }
@@ -216,15 +224,14 @@ async function sendExplicitMembershipInvitationsBulk(
     try {
       await sendNotificationEmail({
         to: input.user.email,
-        subject: "You’ve been invited to Wavesparks",
-        html: `<p>You have been added to the Wavesparks community.</p><p><a href="${signInUrl}">Sign in to continue</a>.</p>`,
+        subject: "Your Wavesparks invitation",
+        html: `<p>Your Wavesparks account is ready.</p><p><a href="${signInUrl}">Sign in</a> to open the community or event you were invited to.</p>`,
       });
     } catch (error) {
-      const message = `Invitation email failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`.slice(0, 1000);
+      console.error("[wavesparks] Invitation notification email failed", input.membership.id, error);
+      const message = "The account is ready, but the notification email could not be sent. Try again.";
       await updateMembershipClerkState(input.membership.id, {
-        clerkInvitationError: message,
+        clerkInvitationError: "Invitation email failed. Try again.",
         clerkInvitationUpdatedAt: new Date().toISOString(),
       });
       outcome.error = message;
@@ -418,6 +425,11 @@ export async function confirmMemberImportAction(
       };
     }
     if (importResult.classification === "conflict") {
+      const conflictMessage = importResult.conflictReason === "account_suspended"
+        ? "This account is paused. Restore it in member details before continuing."
+        : importResult.conflictReason === "deprovisioned"
+          ? "This account is closed. Restore it in member details before continuing."
+          : "Access is currently paused or removed. Review it in member details before continuing.";
       return {
         rowNumber: row.rowNumber,
         email: row.email,
@@ -425,7 +437,7 @@ export async function confirmMemberImportAction(
         normalizedEmail: row.normalizedEmail,
         status: "skipped",
         membershipId: importResult.membership.id,
-        message: `Member is ${importResult.conflictReason}; no changes were made.`,
+        message: conflictMessage,
         retryable: false,
       };
     }
@@ -434,7 +446,7 @@ export async function confirmMemberImportAction(
     const spaceChanged =
       importResult.spaceMembershipCreated || importResult.spaceMembershipUpdated;
     const spaceMessage = spaceChanged
-      ? ` Access to ${preview.destinationSpaceName} granted.`
+      ? ` Access to ${preview.destinationSpaceName} added.`
       : "";
     if (outcome?.error) {
       return {
@@ -480,7 +492,7 @@ export async function confirmMemberImportAction(
         normalizedEmail: row.normalizedEmail,
         status: "space_added",
         membershipId: importResult.membership.id,
-        message: `Existing account granted access to ${preview.destinationSpaceName}.`,
+        message: `Existing account added to ${preview.destinationSpaceName}.`,
         retryable: false,
       };
     }
@@ -563,8 +575,8 @@ export async function retryMemberInvitationsAction(
     try {
       await sendNotificationEmail({
         to: record.user!.email,
-        subject: "You’ve been invited to Wavesparks",
-        html: `<p>You have been added to the Wavesparks community.</p><p><a href="${absoluteAppUrl(`/org/${admin.org.slug}/signin`)}">Sign in to continue</a>.</p>`,
+        subject: "Your Wavesparks invitation",
+        html: `<p>Your Wavesparks account is ready.</p><p><a href="${absoluteAppUrl(`/org/${admin.org.slug}/signin`)}">Sign in</a> to open the community or event you were invited to.</p>`,
       });
       await updateMembershipClerkState(record.membership.id, {
         clerkInvitationError: null,
@@ -572,11 +584,10 @@ export async function retryMemberInvitationsAction(
       });
       notificationOutcomes.set(record.membership.id, { sent: true });
     } catch (error) {
-      const message = `Invitation email failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`.slice(0, 1000);
+      console.error("[wavesparks] Invitation notification email failed", record.membership.id, error);
+      const message = "The account is ready, but the notification email could not be sent. Try again.";
       await updateMembershipClerkState(record.membership.id, {
-        clerkInvitationError: message,
+        clerkInvitationError: "Invitation email failed. Try again.",
         clerkInvitationUpdatedAt: new Date().toISOString(),
       });
       notificationOutcomes.set(record.membership.id, {
@@ -663,7 +674,7 @@ function eventLifecycle(value: FormDataEntryValue | null) {
       "draft" | "upcoming" | "active" | "ended"
     >;
   }
-  throw new Error("Invalid Event lifecycle.");
+  throw new Error("Choose a valid Event status.");
 }
 
 function optionalFormValue(value: FormDataEntryValue | null) {
@@ -749,7 +760,7 @@ export async function addMembersToMainCommunityAction(
   }
   const spaces = await listSpacesForOrg(admin.org.id);
   const mainSpace = spaces.find((space) => space.kind === "main");
-  if (!mainSpace) throw new Error("Main Community is not configured.");
+  if (!mainSpace) throw new Error("Wavesparks Community is not configured.");
 
   const results = await addMembershipsToMainCommunity({
     orgId: admin.org.id,
@@ -776,8 +787,8 @@ export async function addMembersToMainCommunityAction(
         admin.org.id,
         result.membershipId,
         "membership_approved",
-        "You’ve been added to Main Community",
-        `Your ${sourceSpace.name} access is unchanged. Main Community is now available as a separate Space.`,
+        `You’ve been added to ${WAVESPARKS_COMMUNITY_NAME}`,
+        `You can now join ${WAVESPARKS_COMMUNITY_NAME}. Your access to ${sourceSpace.name} is unchanged.`,
         mainUrl,
         mainSpace.id,
       ),
@@ -785,8 +796,8 @@ export async function addMembersToMainCommunityAction(
     if (record.user?.email) {
       enqueueNotificationEmail({
         to: record.user.email,
-        subject: "You’ve been added to Main Community",
-        html: `<p>You now have access to Main Community.</p><p>Your ${sourceSpace.name} access is unchanged.</p><p><a href="${absoluteAppUrl(mainUrl)}">Open Main Community</a></p>`,
+        subject: `You’ve been added to ${WAVESPARKS_COMMUNITY_NAME}`,
+        html: `<p>You can now join ${WAVESPARKS_COMMUNITY_NAME}.</p><p>Your access to ${sourceSpace.name} is unchanged.</p><p><a href="${absoluteAppUrl(mainUrl)}">Open ${WAVESPARKS_COMMUNITY_NAME}</a></p>`,
         membershipId: result.membershipId,
         spaceId: mainSpace.id,
         allowInvited: true,
@@ -950,7 +961,7 @@ export async function promoteCohortMembersAction(
   void cohortId;
   void formData;
   throw new Error(
-    "Legacy Cohort promotion is disabled. Use Add to Main Community from the Event Space.",
+    "This old event action is no longer available. Add participants to Wavesparks Community from the event page.",
   );
 }
 
@@ -961,17 +972,17 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   const name = String(formData.get("name") ?? "");
   const role = membershipRole(formData.get("role") ?? "member");
   if (role === "org_admin" && formData.get("confirm_admin_access") !== "on") {
-    throw new Error("Administrator access must be explicitly confirmed.");
+    throw new Error("Confirm that you want to make this person an administrator.");
   }
   if (!formData.has("destination_space_id")) {
     throw new Error(
-      "Legacy member creation is disabled. Choose an explicit destination Space.",
+      "Choose where this person should be added.",
     );
   }
   const destinationSpaceId =
     String(formData.get("destination_space_id") ?? "").trim() || undefined;
   if (role === "member" && !destinationSpaceId) {
-    throw new Error("Choose a destination Space for this member.");
+    throw new Error("Choose Wavesparks Community or an event for this person.");
   }
   const accessStatus = destinationSpaceId
     ? importSpaceAccessStatus(formData.get("space_access_status") ?? "active")
@@ -980,10 +991,10 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
     ? await getSpaceById(destinationSpaceId)
     : undefined;
   if (destinationSpaceId && (!destinationSpace || destinationSpace.orgId !== org.id)) {
-    throw new Error("Destination Space not found.");
+    throw new Error("The selected community or event could not be found.");
   }
   if (destinationSpace?.lifecycle === "archived") {
-    throw new Error("Archived Spaces cannot accept new members.");
+    throw new Error("Restore this archived event before adding participants.");
   }
   const requestedReturnSpaceId = String(
     formData.get("return_to_space_id") ?? "",
@@ -1050,7 +1061,7 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
       invitedByMembershipId: admin.membership.id,
     });
     if (grant.outcome === "conflict") {
-      throw new Error("Destination Space access requires an explicit conflict resolution.");
+      throw new Error("Review this person’s existing access in member details before continuing.");
     }
   }
 
@@ -1087,7 +1098,7 @@ export async function updateMembershipAction(slug: string, membershipId: string,
   }
   if (!formData.has("account_status")) {
     throw new Error(
-      "Legacy community status updates are disabled. Manage account safety and Space access separately.",
+      "This old member action is no longer available. Manage account status and community or event access separately.",
     );
   }
   const nextRole = membershipRole(formData.get("role") ?? targetMembership.role);
@@ -1310,7 +1321,7 @@ export async function createManualIntroAction(slug: string, formData: FormData) 
   const { org, membership: adminMembership } = await requireAdminForAction(slug);
   const spaceId = String(formData.get("space_id") ?? "").trim();
   if (!spaceId) {
-    throw new Error("Choose a Space for this introduction.");
+    throw new Error("Choose Wavesparks Community or an event for this introduction.");
   }
   const { space } = await requireSpaceAccessForAction({
     slug,
@@ -1345,6 +1356,14 @@ export async function createManualIntroAction(slug: string, formData: FormData) 
     );
   }
 
+  const note = String(formData.get("note") ?? "").trim();
+  const suggestedFirstMessage = String(
+    formData.get("suggested_first_message") ?? "",
+  ).trim();
+  if (!note || !suggestedFirstMessage) {
+    throw new Error("Add a reason for the introduction and a short first message.");
+  }
+
   const intro = await createIntroRequestInSpace({
     orgId: org.id,
     spaceId: space.id,
@@ -1353,21 +1372,19 @@ export async function createManualIntroAction(slug: string, formData: FormData) 
     sourceType: "admin_manual",
     sourceId: `manual_${nanoid(8)}`,
     introPurpose: String(formData.get("intro_purpose") ?? "general connection"),
-    note:
-      String(formData.get("note") ?? "") ||
-      "Admin-curated intro based on a strong fit in the community.",
+    note,
     status: "pending",
-    suggestedFirstMessage:
-      "Happy to connect. I’d love to learn how your work is evolving and where we might be able to help one another.",
+    suggestedFirstMessage,
   }, { recordAnalytics: false });
+  const communityName = getCommunityDisplayName(space);
   enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
       org.id,
       receiverMembership.id,
       "manual_intro",
-      `An admin created an introduction in ${space.name}`,
-      `A Wavesparks admin surfaced a connection inside ${space.name}.`,
+      `A Wavesparks introduction in ${communityName}`,
+      `The Wavesparks team suggested a connection for you in ${communityName}.`,
       `/org/${slug}/s/${space.slug}/requests`,
       space.id,
     ),
@@ -1391,8 +1408,8 @@ export async function createManualIntroAction(slug: string, formData: FormData) 
   enqueueMembershipEmail({
     membershipId: receiverMembership.id,
     spaceId: space.id,
-    subject: `A Wavesparks admin created an intro in ${space.name}`,
-    html: `<p>An admin made a curated intro for you inside ${space.name}.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
+    subject: `A Wavesparks introduction in ${communityName}`,
+    html: `<p>The Wavesparks team suggested a connection for you in ${communityName}.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
   });
 
   revalidatePath(`/org/${slug}/admin/requests`);

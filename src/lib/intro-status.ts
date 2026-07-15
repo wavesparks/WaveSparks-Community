@@ -2,15 +2,15 @@ import type { IntroStatus } from "@/lib/domain";
 
 const activeIntroStatusCopy = {
   accepted: {
-    title: "Intro accepted",
-    body: "Contact details are available in your requests inbox.",
+    title: "Introduction accepted",
+    body: "Contact details are available in Introductions.",
   },
   declined: {
-    title: "Intro declined",
+    title: "Introduction declined",
     body: "The request is closed for now.",
   },
   pending: {
-    title: "Intro pending",
+    title: "Introduction pending",
     body: "Your request is waiting for a response.",
   },
 } as const;

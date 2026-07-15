@@ -70,17 +70,17 @@ h4 {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-image:
-    url("/wavesparks-assets/wave-05.png"),
-    url("/wavesparks-assets/gradient-03.png");
-  background-repeat: no-repeat;
-  background-position:
-    center top 120px,
-    right -460px top -520px;
-  background-size:
-    min(1180px, 112vw) auto,
-    760px auto;
-  opacity: 0.055;
+  background:
+    radial-gradient(
+      ellipse 38rem 28rem at calc(100% + 9rem) -8rem,
+      color-mix(in srgb, var(--accent) 11%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      ellipse 42rem 22rem at 52% 15rem,
+      color-mix(in srgb, var(--cyan) 7%, transparent),
+      transparent 74%
+    );
 }
 
 .ws-page-shell > * {

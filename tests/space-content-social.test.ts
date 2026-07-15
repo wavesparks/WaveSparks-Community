@@ -185,7 +185,7 @@ describe("Space-scoped content and social data", () => {
         "mem_jules",
         postA.id,
       ),
-    ).rejects.toThrow("Post not found in this Space");
+    ).rejects.toThrow("Post not found in this community or event.");
   });
 
   it("allows one pending Intro per unordered pair across the organization", async () => {
@@ -223,10 +223,14 @@ describe("Space-scoped content and social data", () => {
         receiverMembershipId: "mem_jules",
         sourceId: julesProfile.id,
       }),
-    ).rejects.toThrow("pending intro already exists");
+    ).rejects.toThrow(
+      "These two people already have a pending introduction request here.",
+    );
     await expect(
       createIntroRequestInSpace({ ...introInput, spaceId: eventB.id }),
-    ).rejects.toThrow("pending intro already exists");
+    ).rejects.toThrow(
+      "These two people already have a pending introduction request here.",
+    );
 
     await respondToIntroRequestInSpace(eventA.id, introA.id, "accepted", {
       recordAnalytics: false,
@@ -436,10 +440,10 @@ describe("Space-scoped content and social data", () => {
 
     await expect(
       listSavedPostIdsForMembershipInSpace(event.id, "mem_jules"),
-    ).rejects.toThrow("active access");
+    ).rejects.toThrow(/active access to this community or event/i);
     await expect(
       listNotificationsForMembershipInSpace(event.id, "mem_jules"),
-    ).rejects.toThrow("active access");
+    ).rejects.toThrow(/active access to this community or event/i);
     await expect(
       listNotificationsForMembershipWithSpaceAccess("mem_jules", [event.id]),
     ).resolves.not.toEqual(
@@ -463,10 +467,10 @@ describe("Space-scoped content and social data", () => {
 
     await expect(
       listSavedPostIdsForMembershipInSpace(event.id, "mem_jules"),
-    ).rejects.toThrow("not available to members");
+    ).rejects.toThrow("This community or event is not available right now.");
     await expect(
       listNotificationsForMembershipInSpace(event.id, "mem_jules"),
-    ).rejects.toThrow("not available to members");
+    ).rejects.toThrow("This community or event is not available right now.");
     await expect(
       savePostForMembershipInSpace(
         seedOrganization.id,
@@ -474,7 +478,7 @@ describe("Space-scoped content and social data", () => {
         "mem_jules",
         post.id,
       ),
-    ).rejects.toThrow("not available to members");
+    ).rejects.toThrow("This community or event is not available right now.");
   });
 
   it("persists invited access notifications but only exposes them after connection", async () => {
@@ -491,8 +495,8 @@ describe("Space-scoped content and social data", () => {
           seedOrganization.id,
           "mem_jules",
           "membership_approved",
-          "Main access granted",
-          "Connect your account to open Main Community.",
+          "Wavesparks Community access granted",
+          "Connect your account to open Wavesparks Community.",
           `/org/wavesparks/s/${mainSpace.slug}`,
           mainSpace.id,
         ),

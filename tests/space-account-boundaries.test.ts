@@ -320,7 +320,9 @@ describe("Space intent interaction gate", () => {
         "mem_jules",
         formData,
       ),
-    ).rejects.toThrow("Complete your core profile before interacting.");
+    ).rejects.toThrow(
+      "Complete your profile before posting or connecting with members.",
+    );
     await expect(getSpaceIntent(mainSpace.id, "mem_jules")).resolves.toEqual(
       existing,
     );

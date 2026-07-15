@@ -53,52 +53,52 @@ function spaceStatusCopy(status: string | undefined, spaceName: string | undefin
     case "post_created":
       return {
         title: `Post published in ${spaceName}`,
-        body: `Only active members of ${spaceName} can see it. It was not shared with another Space.`,
+        body: `Only people with access to ${spaceName} can see it.`,
       };
     case "intro_requested":
       return {
-        title: "Space intro request sent",
-        body: `The request stays inside ${spaceName} and can be tracked from this Space’s requests page.`,
+        title: "Introduction request sent",
+        body: "You can follow the response from Introductions.",
       };
     case "intro_existing":
       return {
-        title: "Space intro already exists",
-        body: `You already have an introduction request with this member inside ${spaceName}.`,
+        title: "Introduction request already exists",
+        body: `You already have an introduction request with this person in ${spaceName}.`,
       };
     case "comment_added":
       return {
         title: "Comment added",
-        body: `Your reply is visible only to members who can access ${spaceName}.`,
+        body: `Your reply is visible only to people with access to ${spaceName}.`,
       };
     case "post_saved":
       return {
         title: "Post saved",
-        body: `This thread is now in your saved Knowledge view for ${spaceName}.`,
+        body: `This post is now in your saved items for ${spaceName}.`,
       };
     case "post_unsaved":
       return {
         title: "Post removed from saved",
-        body: `This thread is no longer in your saved Knowledge view for ${spaceName}.`,
+        body: `This post is no longer in your saved items for ${spaceName}.`,
       };
     case "member_followed":
       return {
         title: `Following in ${spaceName}`,
-        body: "Their activity can now be highlighted to you within this Space only.",
+        body: `Their posts in ${spaceName} may now be highlighted for you.`,
       };
     case "member_unfollowed":
       return {
         title: `Unfollowed in ${spaceName}`,
-        body: "Their activity will no longer be prioritized for you within this Space.",
+        body: `Their posts in ${spaceName} will no longer be highlighted for you.`,
       };
     case "match_feedback_saved":
       return {
         title: "Feedback saved",
-        body: `Your private signal will improve matching quality inside ${spaceName}.`,
+        body: `Your private feedback will help improve future matches in ${spaceName}.`,
       };
     case "notifications_read":
       return {
-        title: "Space notifications marked read",
-        body: `Notifications from ${spaceName} are now cleared. Other Spaces are unchanged.`,
+        title: "Notifications marked as read",
+        body: `Notifications from ${spaceName} are marked as read. Notifications from elsewhere are unchanged.`,
       };
     default:
       return null;

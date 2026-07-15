@@ -37,7 +37,7 @@ export default async function AcceptInvitationPage({
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-3xl flex-col justify-center gap-5">
         <LinkButton className="w-fit" href={`/org/${slug}`} variant="ghost">
           <ArrowLeft className="size-4" />
-          Back to My Spaces
+          Back to home
         </LinkButton>
         <Card className="space-y-6">
           <BrandLogo className="h-8 w-fit" />
@@ -47,7 +47,7 @@ export default async function AcceptInvitationPage({
             title={hasValidTicketShape ? "Accept your Wavesparks invitation" : "Invitation link required"}
             description={
               hasValidTicketShape
-                ? "Use Clerk to create your account or sign in with the invited email address."
+                ? "Create your account or sign in with the email address that received this invitation."
                 : "This page only opens from a valid, unexpired invitation email. Ask a Wavesparks admin to send or resend your invitation."
             }
           />

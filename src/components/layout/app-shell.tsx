@@ -12,15 +12,18 @@ import { Badge } from "@/components/ui/badge";
 import { BrandLogo } from "@/components/ui/brand-logo";
 import { NavLink } from "@/components/layout/nav-link";
 import { SignOutButton } from "@/components/layout/sign-out-button";
+import { WAVESPARKS_COMMUNITY_NAME } from "@/lib/community-copy";
 import type { ViewerContext } from "@/lib/domain";
 import { isClerkConfigured } from "@/lib/env";
+import { getMemberDisplayName } from "@/lib/member-display-name";
+import { getAccountStatusLabel, getAffiliationLabel } from "@/lib/member-copy";
 import { wavesparksBrand } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
 const adminLinks = [
   { href: "admin", label: "Overview" },
   { href: "admin/members", label: "Members" },
-  { href: "admin/spaces", label: "Spaces" },
+  { href: "admin/spaces", label: "Community & events" },
   { href: "admin/profiles", label: "Profiles" },
   { href: "admin/posts", label: "Posts" },
   { href: "admin/requests", label: "Requests" },
@@ -39,14 +42,19 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const accountLinks = [
-    { href: "", label: "My Spaces", icon: LayoutGrid },
-    { href: "requests", label: "Inbox", icon: Bell },
+    { href: "", label: "Home", icon: LayoutGrid },
+    { href: "requests", label: "Introductions", icon: Bell },
     viewer.profile?.onboardingComplete
       ? { href: "profile", label: "My Profile", icon: UserCircle2 }
       : { href: "onboarding", label: "Complete profile", icon: UserCircle2 },
   ];
   const theme = wavesparksBrand.theme;
   const clerkConfigured = isClerkConfigured();
+  const memberName = getMemberDisplayName({
+    email: viewer.user.email,
+    name: viewer.user.name,
+    preferredName: viewer.profile?.preferredName,
+  });
 
   return (
     <div
@@ -73,14 +81,16 @@ export function AppShell({
               <div className="space-y-3">
                 <BrandLogo className="h-7 max-w-[190px]" tone="light" />
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-[var(--surface)]">{viewer.org.name} Community</p>
+                  <p className="text-sm font-semibold text-[var(--surface)]">
+                    {WAVESPARKS_COMMUNITY_NAME}
+                  </p>
                   <p className="mt-1 line-clamp-2 text-xs font-medium leading-5 text-[var(--surface)]/70">
-                    {viewer.org.tagline}
+                    People building and learning together.
                   </p>
                 </div>
               </div>
               <Badge className="mt-3 bg-[var(--gold)] text-[var(--night)] ring-[var(--surface)] lg:mt-4">
-                {viewer.membership.affiliationType}
+                {getAffiliationLabel(viewer.membership.affiliationType)}
               </Badge>
             </div>
             <nav
@@ -148,15 +158,15 @@ export function AppShell({
               <div className="flex min-w-0 items-center gap-3">
                 <Avatar
                   className="size-10 ring-[var(--gold)]"
-                  name={viewer.profile?.preferredName ?? viewer.user.name}
+                  name={memberName}
                   src={viewer.profile?.profilePhoto ?? viewer.user.imageUrl}
                 />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">
-                    {viewer.profile?.preferredName ?? viewer.user.name}
+                    {memberName}
                   </p>
-                  <p className="text-xs capitalize text-[var(--cyan-soft)]">
-                    {viewer.membership.accountStatus}
+                  <p className="text-xs text-[var(--cyan-soft)]">
+                    {getAccountStatusLabel(viewer.membership.accountStatus)}
                   </p>
                 </div>
               </div>

@@ -4,6 +4,7 @@ import { ShieldCheck } from "lucide-react";
 import { useState } from "react";
 
 import { createManagedAccountAction } from "@/actions/admin";
+import { adminSpaceOptionLabel } from "@/components/admin/admin-community-copy";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -85,11 +86,11 @@ export function InviteOnePersonForm({
           value={role}
         >
           <option value="member">Member</option>
-          <option value="org_admin">Org admin</option>
+          <option value="org_admin">Administrator</option>
         </Select>
       </div>
       <div>
-        <Label htmlFor="invite-person-status">Space access</Label>
+        <Label htmlFor="invite-person-status">When can they join?</Label>
         <Select
           id="invite-person-status"
           onChange={(event) =>
@@ -97,13 +98,13 @@ export function InviteOnePersonForm({
           }
           value={accessStatus}
         >
-          <option value="waitlist">Waitlist</option>
-          <option value="active">Active access</option>
+          <option value="waitlist">After approval</option>
+          <option value="active">Immediately</option>
         </Select>
         <input name="space_access_status" type="hidden" value={accessStatus} />
       </div>
       <div className="sm:col-span-2">
-        <Label htmlFor="invite-person-space">Destination Space</Label>
+        <Label htmlFor="invite-person-space">Add to</Label>
         <Select
           id="invite-person-space"
           name="destination_space_id"
@@ -112,18 +113,20 @@ export function InviteOnePersonForm({
           value={destinationSpaceId}
         >
           <option value="">
-            {isAdmin ? "No Space access" : "Choose a Space"}
+            {isAdmin
+              ? "Do not add to a community or Event"
+              : "Choose Wavesparks Community or an Event"}
           </option>
           {spaces.map((space) => (
             <option key={space.id} value={space.id}>
-              {space.name} · {space.kind === "main" ? "Main Community" : "Event"}
+              {adminSpaceOptionLabel(space)}
             </option>
           ))}
         </Select>
         <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
           {isAdmin
-            ? "Global admin access does not add this person to Main or any Event. Choose a Space only if they should participate socially."
-            : "Account connection and access to this Space are created independently."}
+            ? "Admin permissions do not make this person a community or Event participant. Choose where to add them only if they should join conversations and matching."
+            : "The invitation connects their account and gives them access to the community or Event you choose."}
         </p>
       </div>
 
@@ -134,8 +137,8 @@ export function InviteOnePersonForm({
             <div>
               <p className="text-sm font-semibold text-[var(--ink)]">Administrator access</p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                This person can manage accounts and every Space. They will not appear in a
-                participant roster or matching pool unless a destination Space is selected.
+                This person can manage all members, Wavesparks Community, and every Event.
+                They will only appear as a participant or in matching if you also add them above.
               </p>
               <label className="mt-3 flex items-start gap-2 text-sm font-medium text-[var(--ink)]">
                 <input
@@ -153,13 +156,13 @@ export function InviteOnePersonForm({
 
       <div className="flex items-center justify-between gap-3 border-t border-[var(--line)] pt-4 sm:col-span-2">
         <p className="text-xs leading-5 text-[var(--ink-soft)]">
-          Creating an invitation does not guarantee email delivery.
+          We’ll create the invitation now. You can check its status from the member list.
         </p>
         <SubmitButton
           disabled={!invitationsEnabled}
-          pendingLabel="Creating invitation"
+          pendingLabel="Inviting"
         >
-          Create invitation
+          Invite person
         </SubmitButton>
       </div>
     </form>
