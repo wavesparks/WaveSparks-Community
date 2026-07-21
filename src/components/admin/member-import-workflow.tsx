@@ -88,7 +88,7 @@ const classificationLabels: Record<MemberImportClassification, string> = {
 };
 
 const resultLabels: Record<MemberImportResultStatus, string> = {
-  invited: "Invitation created",
+  invited: "Invitation sent",
   connected: "Account connected",
   space_added: "Added",
   cohort_added: "Added to Event",

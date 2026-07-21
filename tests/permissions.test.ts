@@ -120,6 +120,25 @@ describe("permission guards", () => {
     expect(canViewAdminRoute(user, promoted)).toBe(true);
   });
 
+  it("does not bootstrap admin access from a changed email or Clerk organization role", async () => {
+    const membership = (await getMembershipById("mem_jules"))!;
+    const user = (await getUserById(membership.userId))!;
+    user.email = "letsbuild@wavesparks.co";
+
+    const resolved = await ensureMembership(user.id, seedOrganization.id, {
+      clerkRole: "org:admin",
+      existingMembership: membership,
+      existingUser: user,
+    });
+
+    expect(user.platformRole).toBe("standard");
+    expect(resolved).toMatchObject({
+      role: "member",
+      status: "approved",
+    });
+    expect(canViewAdminRoute(user, resolved)).toBe(false);
+  });
+
   it("creates managed memberships for Clerk-owned account access", async () => {
     const { user, membership } = await createManagedAccount({
       orgId: seedOrganization.id,

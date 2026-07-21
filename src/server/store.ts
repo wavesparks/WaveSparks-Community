@@ -22,7 +22,6 @@ import {
   seedUsers,
 } from "@/data/seed-data";
 import { env, isBootstrapAdminEmail } from "@/lib/env";
-import { localRoleFromClerkRole } from "@/lib/clerk-roles";
 import {
   getCommunityDisplayName,
   WAVESPARKS_COMMUNITY_NAME,
@@ -72,6 +71,9 @@ import type {
   ClerkOrgRole,
   ClerkInvitationStatus,
   Membership,
+  MembershipInvitation,
+  MembershipInvitationSummary,
+  MembershipInvitationStatus,
   MembershipRole,
   MembershipStatus,
   Notification,
@@ -116,6 +118,7 @@ export interface StoreState {
   cohorts: Cohort[];
   cohortMembers: CohortMember[];
   memberships: Membership[];
+  membershipInvitations: MembershipInvitation[];
   spaces: Space[];
   spaceMemberships: SpaceMembership[];
   spaceIntents: SpaceIntent[];
@@ -233,11 +236,13 @@ export interface AdminSpaceParticipantRecord {
 }
 
 export type MemberWorkspaceInvitationStatus =
-  | ClerkInvitationStatus
+  | MembershipInvitationStatus
+  | "failed"
   | "connected"
   | "not_invited";
 
 export interface MemberWorkspaceRecord extends MembershipRecord {
+  invitation?: MembershipInvitationSummary;
   spaces: SpaceMembershipRecord[];
   /** @deprecated Read Space access from `spaces`. */
   cohorts: Cohort[];
@@ -274,6 +279,7 @@ export interface MemberImportCandidateRecord {
   email: string;
   user?: User;
   membership?: Membership;
+  invitation?: MembershipInvitationSummary;
   space?: Space;
   spaceMembership?: SpaceMembership;
   inSpace?: boolean;
@@ -574,6 +580,7 @@ function initializeStore(): StoreState {
     cohorts: [],
     cohortMembers: [],
     memberships,
+    membershipInvitations: [],
     spaces: [mainSpace],
     spaceMemberships,
     spaceIntents,
@@ -642,6 +649,7 @@ function ensureStoreShape(store: StoreState) {
   store.clerkWebhookEvents ??= [];
   store.cohorts ??= [];
   store.cohortMembers ??= [];
+  store.membershipInvitations ??= [];
   if (!store.spaces || !store.spaceMemberships || !store.spaceIntents) {
     const organization = store.organizations[0] ?? seedOrganization;
     const fallback = defaultSpaceState(
@@ -775,6 +783,53 @@ function membershipFromRow(row: typeof dbSchema.memberships.$inferSelect): Membe
     approvedAt: maybeIso(row.approvedAt),
     createdAt: requiredIso(row.createdAt),
     updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function membershipInvitationFromRow(
+  row: typeof dbSchema.membershipInvitations.$inferSelect,
+): MembershipInvitation {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    membershipId: row.membershipId,
+    email: row.email,
+    tokenHash: row.tokenHash,
+    status: row.status,
+    expiresAt: requiredIso(row.expiresAt),
+    createdByMembershipId: row.createdByMembershipId,
+    clerkIdentityInvitationId: row.clerkIdentityInvitationId ?? undefined,
+    acceptedByClerkUserId: row.acceptedByClerkUserId ?? undefined,
+    sentAt: maybeIso(row.sentAt),
+    acceptedAt: maybeIso(row.acceptedAt),
+    revokedAt: maybeIso(row.revokedAt),
+    deliveryError: row.deliveryError ?? undefined,
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function membershipInvitationSummary(
+  invitation: MembershipInvitation | MembershipInvitationSummary,
+): MembershipInvitationSummary {
+  const status =
+    invitation.status === "pending" && new Date(invitation.expiresAt) <= new Date()
+      ? "expired"
+      : invitation.status;
+  return {
+    id: invitation.id,
+    orgId: invitation.orgId,
+    membershipId: invitation.membershipId,
+    email: invitation.email,
+    status,
+    expiresAt: invitation.expiresAt,
+    createdByMembershipId: invitation.createdByMembershipId,
+    sentAt: invitation.sentAt,
+    acceptedAt: invitation.acceptedAt,
+    revokedAt: invitation.revokedAt,
+    deliveryError: invitation.deliveryError,
+    createdAt: invitation.createdAt,
+    updatedAt: invitation.updatedAt,
   };
 }
 
@@ -1156,6 +1211,20 @@ function membershipInsert(membership: Membership): typeof dbSchema.memberships.$
     createdAt: new Date(membership.createdAt),
     updatedAt: new Date(membership.updatedAt),
     approvedAt: maybeDate(membership.approvedAt),
+  };
+}
+
+function membershipInvitationInsert(
+  invitation: MembershipInvitation,
+): typeof dbSchema.membershipInvitations.$inferInsert {
+  return {
+    ...invitation,
+    expiresAt: new Date(invitation.expiresAt),
+    sentAt: maybeDate(invitation.sentAt),
+    acceptedAt: maybeDate(invitation.acceptedAt),
+    revokedAt: maybeDate(invitation.revokedAt),
+    createdAt: new Date(invitation.createdAt),
+    updatedAt: new Date(invitation.updatedAt),
   };
 }
 
@@ -1831,17 +1900,26 @@ export async function upsertSessionUser(
   const email = normalizeEmailAddress(input.email);
   const knownUser =
     options.existingUser &&
-    (options.existingUser.email.toLowerCase() === email ||
-      (input.clerkUserId && options.existingUser.clerkUserId === input.clerkUserId))
+    (input.clerkUserId
+      ? options.existingUser.clerkUserId === input.clerkUserId
+      : options.existingUser.email.toLowerCase() === email)
       ? options.existingUser
       : undefined;
   const existing =
     knownUser ??
-    (input.clerkUserId ? await getUserByClerkUserId(input.clerkUserId) : undefined) ??
-    (await getUserByEmail(email));
-  const platformRole = isBootstrapAdminEmail(email)
-    ? "platform_owner"
-    : existing?.platformRole ?? "standard";
+    (input.clerkUserId
+      ? await getUserByClerkUserId(input.clerkUserId)
+      : await getUserByEmail(email));
+
+  if (input.clerkUserId && !existing && (await getUserByEmail(email))) {
+    throw new Error(
+      "This email belongs to an unlinked local account; use invitation acceptance to bind it.",
+    );
+  }
+
+  const platformRole =
+    existing?.platformRole ??
+    (isBootstrapAdminEmail(email) ? "platform_owner" : "standard");
 
   if (existing) {
     const nextClerkUserId = input.clerkUserId ?? existing.clerkUserId;
@@ -1943,11 +2021,7 @@ export async function ensureMembership(
       : getMembershipByUserAndOrg(userId, orgId),
   ]);
   const clerkRole = options.clerkRole;
-  const roleFromClerk = clerkRole ? localRoleFromClerkRole(clerkRole) : undefined;
-  const adminBootstrap =
-    roleFromClerk === "org_admin" ||
-    isBootstrapAdminEmail(user?.email) ||
-    user?.platformRole === "platform_owner";
+  const adminBootstrap = user?.platformRole === "platform_owner";
   if (existing) {
     if (
       adminBootstrap &&
@@ -1995,16 +2069,13 @@ export async function ensureMembership(
     if (
       (options.clerkMembershipId && existing.clerkMembershipId !== options.clerkMembershipId) ||
       (options.clerkMembershipId && existing.accountStatus !== "connected") ||
-      (clerkRole && existing.clerkRole !== clerkRole) ||
-      (roleFromClerk && existing.role !== roleFromClerk)
+      (clerkRole && existing.clerkRole !== clerkRole)
     ) {
-      const nextRole = roleFromClerk ?? existing.role;
       const now = new Date().toISOString();
 
       if (!usesDatabase) {
         existing.clerkMembershipId = options.clerkMembershipId ?? existing.clerkMembershipId;
         existing.clerkRole = (clerkRole as ClerkOrgRole | undefined) ?? existing.clerkRole;
-        existing.role = nextRole;
         if (options.clerkMembershipId) existing.accountStatus = "connected";
         existing.updatedAt = now;
         return existing;
@@ -2015,7 +2086,6 @@ export async function ensureMembership(
         .set({
           clerkMembershipId: options.clerkMembershipId ?? existing.clerkMembershipId,
           clerkRole: clerkRole ?? existing.clerkRole,
-          role: nextRole,
           ...(options.clerkMembershipId ? { accountStatus: "connected" as const } : {}),
           updatedAt: new Date(now),
         })
@@ -2033,7 +2103,7 @@ export async function ensureMembership(
     clerkRole: clerkRole as ClerkOrgRole | undefined,
     orgId,
     userId,
-    role: roleFromClerk ?? (adminBootstrap ? "org_admin" : "member"),
+    role: adminBootstrap ? "org_admin" : "member",
     accountStatus: options.clerkMembershipId || adminBootstrap ? "connected" : "invited",
     affiliationType: adminBootstrap ? "current participant" : "invited outsider",
     status: adminBootstrap ? "approved" : "pending",
@@ -2225,6 +2295,514 @@ export async function getMembershipByClerkInvitationId(clerkInvitationId: string
   return row ? membershipFromRow(row) : undefined;
 }
 
+export interface CreateMembershipInvitationInput {
+  id?: string;
+  orgId: string;
+  membershipId: string;
+  email: string;
+  tokenHash: string;
+  expiresAt: string;
+  createdByMembershipId: string;
+  createdAt?: string;
+}
+
+export type AcceptMembershipInvitationFailureReason =
+  | "not_found"
+  | "not_pending"
+  | "expired"
+  | "email_mismatch"
+  | "identity_conflict"
+  | "membership_unavailable";
+
+export type AcceptMembershipInvitationResult =
+  | {
+      ok: true;
+      invitation: MembershipInvitation;
+      membership: Membership;
+      user: User;
+    }
+  | { ok: false; reason: AcceptMembershipInvitationFailureReason };
+
+function invitationInputValues(input: CreateMembershipInvitationInput) {
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const email = normalizeEmailAddress(input.email);
+  const expiresAt = new Date(input.expiresAt);
+
+  if (!email.includes("@")) {
+    throw new Error("A valid invitation email is required.");
+  }
+  if (!/^[a-f\d]{64}$/i.test(input.tokenHash)) {
+    throw new Error("Invitation tokenHash must be a SHA-256 hex digest.");
+  }
+  if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date(createdAt)) {
+    throw new Error("Invitation expiry must be later than its creation time.");
+  }
+
+  const invitation: MembershipInvitation = {
+    id: input.id ?? `minv_${nanoid(16)}`,
+    orgId: input.orgId,
+    membershipId: input.membershipId,
+    email,
+    tokenHash: input.tokenHash.toLowerCase(),
+    status: "pending",
+    expiresAt: expiresAt.toISOString(),
+    createdByMembershipId: input.createdByMembershipId,
+    createdAt: new Date(createdAt).toISOString(),
+    updatedAt: new Date(createdAt).toISOString(),
+  };
+  return invitation;
+}
+
+async function assertMembershipInvitationScope(invitation: MembershipInvitation) {
+  const [membership, creator] = await Promise.all([
+    getMembershipById(invitation.membershipId),
+    getMembershipById(invitation.createdByMembershipId),
+  ]);
+  if (!membership || membership.orgId !== invitation.orgId) {
+    throw new Error("Invitation membership does not belong to the organization.");
+  }
+  if (!creator || creator.orgId !== invitation.orgId) {
+    throw new Error("Invitation creator does not belong to the organization.");
+  }
+  if (creator.role !== "org_admin" || creator.accountStatus !== "connected") {
+    throw new Error("Only a connected organization admin can create invitations.");
+  }
+  if (
+    membership.accountStatus === "suspended" ||
+    membership.accountStatus === "deprovisioned"
+  ) {
+    throw new Error("Inactive memberships cannot be invited.");
+  }
+  const user = await getUserById(membership.userId);
+  if (!user || normalizeEmailAddress(user.email) !== invitation.email) {
+    throw new Error("Invitation email does not match the membership user.");
+  }
+}
+
+export async function createMembershipInvitation(
+  input: CreateMembershipInvitationInput,
+): Promise<MembershipInvitation> {
+  const invitation = invitationInputValues(input);
+  await assertMembershipInvitationScope(invitation);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    if (store.membershipInvitations.some((candidate) => candidate.id === invitation.id)) {
+      throw new Error("Invitation id already exists.");
+    }
+    if (
+      store.membershipInvitations.some(
+        (candidate) => candidate.tokenHash === invitation.tokenHash,
+      )
+    ) {
+      throw new Error("Invitation token hash already exists.");
+    }
+    if (
+      store.membershipInvitations.some(
+        (candidate) =>
+          candidate.membershipId === invitation.membershipId &&
+          candidate.status === "pending",
+      )
+    ) {
+      throw new Error("Membership already has a pending invitation.");
+    }
+    store.membershipInvitations.unshift(invitation);
+    return invitation;
+  }
+
+  const [row] = await getDb()
+    .insert(dbSchema.membershipInvitations)
+    .values(membershipInvitationInsert(invitation))
+    .returning();
+  return membershipInvitationFromRow(row);
+}
+
+export async function rotateMembershipInvitation(
+  input: CreateMembershipInvitationInput,
+): Promise<MembershipInvitation> {
+  const invitation = invitationInputValues(input);
+  await assertMembershipInvitationScope(invitation);
+  const revokedAt = invitation.createdAt;
+
+  if (!usesDatabase) {
+    const store = getStore();
+    if (
+      store.membershipInvitations.some(
+        (candidate) => candidate.tokenHash === invitation.tokenHash,
+      )
+    ) {
+      throw new Error("Invitation token hash already exists.");
+    }
+    for (const candidate of store.membershipInvitations) {
+      if (
+        candidate.orgId === invitation.orgId &&
+        candidate.membershipId === invitation.membershipId &&
+        candidate.status === "pending"
+      ) {
+        candidate.status = "revoked";
+        candidate.revokedAt = revokedAt;
+        candidate.updatedAt = revokedAt;
+      }
+    }
+    store.membershipInvitations.unshift(invitation);
+    return invitation;
+  }
+
+  const db = getDb();
+  const [, insertedRows] = await db.batch([
+    db
+      .update(dbSchema.membershipInvitations)
+      .set({ status: "revoked", revokedAt: new Date(revokedAt), updatedAt: new Date(revokedAt) })
+      .where(
+        and(
+          eq(dbSchema.membershipInvitations.orgId, invitation.orgId),
+          eq(dbSchema.membershipInvitations.membershipId, invitation.membershipId),
+          eq(dbSchema.membershipInvitations.status, "pending"),
+        ),
+      )
+      .returning(),
+    db
+      .insert(dbSchema.membershipInvitations)
+      .values(membershipInvitationInsert(invitation))
+      .returning(),
+  ]);
+  const row = insertedRows[0];
+  if (!row) throw new Error("Failed to rotate membership invitation.");
+  return membershipInvitationFromRow(row);
+}
+
+export async function getMembershipInvitationById(id: string) {
+  if (!usesDatabase) {
+    return getStore().membershipInvitations.find((invitation) => invitation.id === id);
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.membershipInvitations)
+    .where(eq(dbSchema.membershipInvitations.id, id))
+    .limit(1);
+  return row ? membershipInvitationFromRow(row) : undefined;
+}
+
+export async function getMembershipInvitationByTokenHash(tokenHash: string) {
+  const normalizedHash = tokenHash.toLowerCase();
+  if (!usesDatabase) {
+    return getStore().membershipInvitations.find(
+      (invitation) => invitation.tokenHash === normalizedHash,
+    );
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.membershipInvitations)
+    .where(eq(dbSchema.membershipInvitations.tokenHash, normalizedHash))
+    .limit(1);
+  return row ? membershipInvitationFromRow(row) : undefined;
+}
+
+export async function listMembershipInvitationsForMembership(
+  membershipId: string,
+  options: { orgId?: string } = {},
+) {
+  if (!usesDatabase) {
+    return getStore()
+      .membershipInvitations.filter(
+        (invitation) =>
+          invitation.membershipId === membershipId &&
+          (!options.orgId || invitation.orgId === options.orgId),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+  const conditions = [eq(dbSchema.membershipInvitations.membershipId, membershipId)];
+  if (options.orgId) {
+    conditions.push(eq(dbSchema.membershipInvitations.orgId, options.orgId));
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.membershipInvitations)
+    .where(and(...conditions))
+    .orderBy(desc(dbSchema.membershipInvitations.createdAt));
+  return rows.map(membershipInvitationFromRow);
+}
+
+export async function updateMembershipInvitationDelivery(
+  id: string,
+  input: {
+    sentAt?: string | null;
+    deliveryError?: string | null;
+    clerkIdentityInvitationId?: string | null;
+  },
+) {
+  const now = new Date().toISOString();
+  if (!usesDatabase) {
+    const invitation = getStore().membershipInvitations.find(
+      (candidate) => candidate.id === id && candidate.status === "pending",
+    );
+    if (!invitation) return null;
+    if ("sentAt" in input) invitation.sentAt = input.sentAt ?? undefined;
+    if ("deliveryError" in input) {
+      invitation.deliveryError = input.deliveryError?.trim() || undefined;
+    }
+    if ("clerkIdentityInvitationId" in input) {
+      invitation.clerkIdentityInvitationId =
+        input.clerkIdentityInvitationId?.trim() || undefined;
+    }
+    invitation.updatedAt = now;
+    return invitation;
+  }
+  const values: Partial<typeof dbSchema.membershipInvitations.$inferInsert> = {
+    updatedAt: new Date(now),
+  };
+  if ("sentAt" in input) values.sentAt = input.sentAt ? new Date(input.sentAt) : null;
+  if ("deliveryError" in input) values.deliveryError = input.deliveryError?.trim() || null;
+  if ("clerkIdentityInvitationId" in input) {
+    values.clerkIdentityInvitationId =
+      input.clerkIdentityInvitationId?.trim() || null;
+  }
+  const [row] = await getDb()
+    .update(dbSchema.membershipInvitations)
+    .set(values)
+    .where(
+      and(
+        eq(dbSchema.membershipInvitations.id, id),
+        eq(dbSchema.membershipInvitations.status, "pending"),
+      ),
+    )
+    .returning();
+  return row ? membershipInvitationFromRow(row) : null;
+}
+
+export async function revokeMembershipInvitation(
+  id: string,
+  options: { orgId?: string; revokedAt?: string } = {},
+) {
+  const revokedAt = options.revokedAt ?? new Date().toISOString();
+  if (!usesDatabase) {
+    const invitation = getStore().membershipInvitations.find(
+      (candidate) => candidate.id === id && (!options.orgId || candidate.orgId === options.orgId),
+    );
+    if (!invitation) return null;
+    if (invitation.status === "pending") {
+      invitation.status = "revoked";
+      invitation.revokedAt = revokedAt;
+      invitation.updatedAt = revokedAt;
+    }
+    return invitation;
+  }
+  const conditions = [
+    eq(dbSchema.membershipInvitations.id, id),
+    eq(dbSchema.membershipInvitations.status, "pending"),
+  ];
+  if (options.orgId) conditions.push(eq(dbSchema.membershipInvitations.orgId, options.orgId));
+  const [row] = await getDb()
+    .update(dbSchema.membershipInvitations)
+    .set({ status: "revoked", revokedAt: new Date(revokedAt), updatedAt: new Date(revokedAt) })
+    .where(and(...conditions))
+    .returning();
+  if (row) return membershipInvitationFromRow(row);
+  const existing = await getMembershipInvitationById(id);
+  return existing && (!options.orgId || existing.orgId === options.orgId)
+    ? existing
+    : null;
+}
+
+export async function expireMembershipInvitation(
+  id: string,
+  options: { orgId?: string; expiredAt?: string } = {},
+) {
+  const expiredAt = options.expiredAt ?? new Date().toISOString();
+  if (!usesDatabase) {
+    const invitation = getStore().membershipInvitations.find(
+      (candidate) => candidate.id === id && (!options.orgId || candidate.orgId === options.orgId),
+    );
+    if (!invitation) return null;
+    if (invitation.status === "pending" && invitation.expiresAt <= expiredAt) {
+      invitation.status = "expired";
+      invitation.updatedAt = expiredAt;
+    }
+    return invitation;
+  }
+  const conditions = [
+    eq(dbSchema.membershipInvitations.id, id),
+    eq(dbSchema.membershipInvitations.status, "pending"),
+    sql`${dbSchema.membershipInvitations.expiresAt} <= ${new Date(expiredAt)}`,
+  ];
+  if (options.orgId) conditions.push(eq(dbSchema.membershipInvitations.orgId, options.orgId));
+  const [row] = await getDb()
+    .update(dbSchema.membershipInvitations)
+    .set({ status: "expired", updatedAt: new Date(expiredAt) })
+    .where(and(...conditions))
+    .returning();
+  if (row) return membershipInvitationFromRow(row);
+  const existing = await getMembershipInvitationById(id);
+  return existing && (!options.orgId || existing.orgId === options.orgId)
+    ? existing
+    : null;
+}
+
+function databaseErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+export async function acceptMembershipInvitation(input: {
+  tokenHash: string;
+  clerkUserId: string;
+  verifiedEmail: string;
+  orgId?: string;
+  now?: string;
+}): Promise<AcceptMembershipInvitationResult> {
+  const now = new Date(input.now ?? Date.now()).toISOString();
+  const tokenHash = input.tokenHash.toLowerCase();
+  const verifiedEmail = normalizeEmailAddress(input.verifiedEmail);
+  const invitation = await getMembershipInvitationByTokenHash(tokenHash);
+  if (!invitation || (input.orgId && invitation.orgId !== input.orgId)) {
+    return { ok: false, reason: "not_found" };
+  }
+  if (invitation.status !== "pending") {
+    return { ok: false, reason: "not_pending" };
+  }
+  if (invitation.expiresAt <= now) {
+    await expireMembershipInvitation(invitation.id, { orgId: invitation.orgId, expiredAt: now });
+    return { ok: false, reason: "expired" };
+  }
+  if (invitation.email !== verifiedEmail) {
+    return { ok: false, reason: "email_mismatch" };
+  }
+
+  const membership = await getMembershipById(invitation.membershipId);
+  const user = membership ? await getUserById(membership.userId) : undefined;
+  if (
+    !membership ||
+    membership.orgId !== invitation.orgId ||
+    membership.accountStatus === "suspended" ||
+    membership.accountStatus === "deprovisioned" ||
+    !user
+  ) {
+    return { ok: false, reason: "membership_unavailable" };
+  }
+  if (normalizeEmailAddress(user.email) !== verifiedEmail) {
+    return { ok: false, reason: "email_mismatch" };
+  }
+  const clerkUser = await getUserByClerkUserId(input.clerkUserId);
+  if (
+    (user.clerkUserId && user.clerkUserId !== input.clerkUserId) ||
+    (clerkUser && clerkUser.id !== user.id)
+  ) {
+    return { ok: false, reason: "identity_conflict" };
+  }
+
+  if (!usesDatabase) {
+    if (invitation.status !== "pending" || invitation.expiresAt <= now) {
+      return { ok: false, reason: invitation.expiresAt <= now ? "expired" : "not_pending" };
+    }
+    user.clerkUserId = input.clerkUserId;
+    user.updatedAt = now;
+    membership.accountStatus = "connected";
+    membership.updatedAt = now;
+    invitation.status = "accepted";
+    invitation.acceptedByClerkUserId = input.clerkUserId;
+    invitation.acceptedAt = now;
+    invitation.updatedAt = now;
+    return { ok: true, invitation, membership, user };
+  }
+
+  const orgScope = input.orgId
+    ? sql`AND invitation.org_id = ${input.orgId}`
+    : sql``;
+  try {
+    const result = await getDb().execute<{
+      invitationId: string;
+      membershipId: string;
+      userId: string;
+    }>(sql`
+      WITH candidate AS (
+        SELECT
+          invitation.id AS invitation_id,
+          invitation.membership_id,
+          membership.user_id
+        FROM membership_invitations invitation
+        INNER JOIN memberships membership
+          ON membership.id = invitation.membership_id
+          AND membership.org_id = invitation.org_id
+        INNER JOIN users app_user ON app_user.id = membership.user_id
+        WHERE invitation.token_hash = ${tokenHash}
+          AND invitation.status = 'pending'
+          AND invitation.expires_at > ${new Date(now)}
+          AND invitation.email = ${verifiedEmail}
+          AND lower(app_user.email) = ${verifiedEmail}
+          AND membership.account_status NOT IN ('suspended', 'deprovisioned')
+          AND (app_user.clerk_user_id IS NULL OR app_user.clerk_user_id = ${input.clerkUserId})
+          AND NOT EXISTS (
+            SELECT 1 FROM users conflicting_user
+            WHERE conflicting_user.clerk_user_id = ${input.clerkUserId}
+              AND conflicting_user.id <> app_user.id
+          )
+          ${orgScope}
+        FOR UPDATE OF invitation, membership, app_user
+      ), accepted_invitation AS (
+        UPDATE membership_invitations invitation
+        SET
+          status = 'accepted',
+          accepted_by_clerk_user_id = ${input.clerkUserId},
+          accepted_at = ${new Date(now)},
+          updated_at = ${new Date(now)}
+        FROM candidate
+        WHERE invitation.id = candidate.invitation_id
+          AND invitation.status = 'pending'
+        RETURNING invitation.id, invitation.membership_id
+      ), linked_user AS (
+        UPDATE users app_user
+        SET clerk_user_id = ${input.clerkUserId}, updated_at = ${new Date(now)}
+        FROM candidate
+        INNER JOIN accepted_invitation
+          ON accepted_invitation.id = candidate.invitation_id
+        WHERE app_user.id = candidate.user_id
+          AND (app_user.clerk_user_id IS NULL OR app_user.clerk_user_id = ${input.clerkUserId})
+        RETURNING app_user.id
+      ), connected_membership AS (
+        UPDATE memberships membership
+        SET account_status = 'connected', updated_at = ${new Date(now)}
+        FROM candidate
+        INNER JOIN accepted_invitation
+          ON accepted_invitation.id = candidate.invitation_id
+        INNER JOIN linked_user ON linked_user.id = candidate.user_id
+        WHERE membership.id = candidate.membership_id
+          AND membership.org_id = ${invitation.orgId}
+          AND membership.account_status NOT IN ('suspended', 'deprovisioned')
+        RETURNING membership.id
+      )
+      SELECT
+        accepted_invitation.id AS "invitationId",
+        connected_membership.id AS "membershipId",
+        linked_user.id AS "userId"
+      FROM accepted_invitation
+      INNER JOIN connected_membership
+        ON connected_membership.id = accepted_invitation.membership_id
+      CROSS JOIN linked_user
+    `);
+    const accepted = result.rows[0];
+    if (!accepted) return { ok: false, reason: "not_pending" };
+    const [acceptedInvitation, acceptedMembership, acceptedUser] = await Promise.all([
+      getMembershipInvitationById(accepted.invitationId),
+      getMembershipById(accepted.membershipId),
+      getUserById(accepted.userId),
+    ]);
+    if (!acceptedInvitation || !acceptedMembership || !acceptedUser) {
+      return { ok: false, reason: "membership_unavailable" };
+    }
+    return {
+      ok: true,
+      invitation: acceptedInvitation,
+      membership: acceptedMembership,
+      user: acceptedUser,
+    };
+  } catch (error) {
+    if (databaseErrorCode(error) === "23505") {
+      return { ok: false, reason: "identity_conflict" };
+    }
+    throw error;
+  }
+}
+
 function anonymizedProfile(profile: Profile): Profile {
   const now = new Date().toISOString();
   return {
@@ -2373,6 +2951,9 @@ export async function anonymizeUserByClerkUserId(clerkUserId: string) {
       } satisfies Partial<Membership>);
     }
     const membershipIdSet = new Set(membershipIds);
+    store.membershipInvitations = store.membershipInvitations.filter(
+      (invitation) => !membershipIdSet.has(invitation.membershipId),
+    );
     const profileIdSet = new Set(profileIds);
     store.passwordCredentials = store.passwordCredentials.filter(
       (credential) => credential.userId !== user.id,
@@ -2434,6 +3015,9 @@ export async function anonymizeUserByClerkUserId(clerkUserId: string) {
       db
         .delete(dbSchema.notifications)
         .where(inArray(dbSchema.notifications.membershipId, membershipIds)),
+      db
+        .delete(dbSchema.membershipInvitations)
+        .where(inArray(dbSchema.membershipInvitations.membershipId, membershipIds)),
       db
         .update(dbSchema.introRequests)
         .set({ status: "expired", contactRevealedAt: null, updatedAt: new Date(now) })
@@ -3938,8 +4522,60 @@ export async function listMembershipsForOrg(orgId: string) {
   return rows.map(membershipFromRow);
 }
 
+function latestRelevantMembershipInvitation(
+  invitations: MembershipInvitationSummary[],
+) {
+  return invitations.map(membershipInvitationSummary).sort((left, right) => {
+    const pendingOrder = Number(right.status === "pending") - Number(left.status === "pending");
+    return pendingOrder || right.createdAt.localeCompare(left.createdAt);
+  })[0];
+}
+
+export async function listLatestMembershipInvitationsByMembershipIds(
+  membershipIds: string[],
+  options: { orgId?: string } = {},
+) {
+  const uniqueIds = [...new Set(membershipIds.filter(Boolean))];
+  const invitationsByMembershipId = new Map<string, MembershipInvitationSummary>();
+  if (!uniqueIds.length) return invitationsByMembershipId;
+
+  const invitations = !usesDatabase
+    ? getStore().membershipInvitations.filter(
+        (invitation) =>
+          (!options.orgId || invitation.orgId === options.orgId) &&
+          uniqueIds.includes(invitation.membershipId),
+      )
+    : (await getDb()
+        .select()
+        .from(dbSchema.membershipInvitations)
+        .where(
+          and(
+            options.orgId
+              ? eq(dbSchema.membershipInvitations.orgId, options.orgId)
+              : undefined,
+            inArray(dbSchema.membershipInvitations.membershipId, uniqueIds),
+          ),
+        )).map(membershipInvitationFromRow);
+
+  for (const invitation of invitations) {
+    const summary = membershipInvitationSummary(invitation);
+    const current = invitationsByMembershipId.get(invitation.membershipId);
+    if (
+      !current ||
+      latestRelevantMembershipInvitation([current, summary])?.id === invitation.id
+    ) {
+      invitationsByMembershipId.set(
+        invitation.membershipId,
+        summary,
+      );
+    }
+  }
+  return invitationsByMembershipId;
+}
+
 function matchesInvitationFilter(
   membership: Membership,
+  invitation: MembershipInvitationSummary | undefined,
   invitationStatus: MemberWorkspaceInvitationStatus | undefined,
 ) {
   if (!invitationStatus) {
@@ -3947,14 +4583,18 @@ function matchesInvitationFilter(
   }
 
   if (invitationStatus === "connected") {
-    return Boolean(membership.clerkMembershipId);
+    return membership.accountStatus === "connected";
   }
 
   if (invitationStatus === "not_invited") {
-    return !membership.clerkMembershipId && !membership.clerkInvitationStatus;
+    return membership.accountStatus !== "connected" && !invitation;
   }
 
-  return membership.clerkInvitationStatus === invitationStatus;
+  if (invitationStatus === "failed") {
+    return invitation?.status === "pending" && Boolean(invitation.deliveryError);
+  }
+
+  return invitation?.status === invitationStatus;
 }
 
 async function listCohortsByMembershipIds(
@@ -4096,6 +4736,12 @@ export async function listMemberWorkspaceForOrg(
 
   if (!usesDatabase) {
     const store = getStore();
+    const invitationsByMembershipId = await listLatestMembershipInvitationsByMembershipIds(
+      store.memberships
+        .filter((membership) => membership.orgId === orgId)
+        .map((membership) => membership.id),
+      { orgId },
+    );
     const spaceMembershipIds = requestedSpaceId
       ? new Set(
           store.spaceMemberships
@@ -4113,7 +4759,11 @@ export async function listMemberWorkspaceForOrg(
           membership.orgId !== orgId ||
           (options.accountStatus && membership.accountStatus !== options.accountStatus) ||
           (options.status && membership.status !== options.status) ||
-          !matchesInvitationFilter(membership, options.invitationStatus) ||
+          !matchesInvitationFilter(
+            membership,
+            invitationsByMembershipId.get(membership.id),
+            options.invitationStatus,
+          ) ||
           (spaceMembershipIds && !spaceMembershipIds.has(membership.id))
         ) {
           return false;
@@ -4149,6 +4799,7 @@ export async function listMemberWorkspaceForOrg(
     return {
       records: pageMemberships.map((membership) => ({
         membership,
+        invitation: invitationsByMembershipId.get(membership.id),
         user: store.users.find((user) => user.id === membership.userId),
         profile: store.profiles.find((profile) => profile.membershipId === membership.id),
         spaces: spacesByMembershipId.get(membership.id) ?? [],
@@ -4172,13 +4823,30 @@ export async function listMemberWorkspaceForOrg(
           ),
         )
     : undefined;
+  const latestInvitationStatus = sql<string>`(
+    SELECT CASE
+      WHEN invitation.status = 'pending' AND invitation.expires_at <= now()
+        THEN 'expired'
+      WHEN invitation.status = 'pending' AND invitation.delivery_error IS NOT NULL
+        THEN 'failed'
+      ELSE invitation.status::text
+    END
+    FROM membership_invitations invitation
+    WHERE invitation.membership_id = ${dbSchema.memberships.id}
+      AND invitation.org_id = ${orgId}
+    ORDER BY (invitation.status = 'pending') DESC, invitation.created_at DESC
+    LIMIT 1
+  )`;
   const invitationCondition =
     options.invitationStatus === "connected"
-      ? sql`${dbSchema.memberships.clerkMembershipId} is not null`
+      ? eq(dbSchema.memberships.accountStatus, "connected")
       : options.invitationStatus === "not_invited"
-        ? sql`${dbSchema.memberships.clerkMembershipId} is null and ${dbSchema.memberships.clerkInvitationStatus} is null`
+        ? and(
+            sql`${dbSchema.memberships.accountStatus} <> 'connected'`,
+            sql`${latestInvitationStatus} IS NULL`,
+          )
         : options.invitationStatus
-          ? eq(dbSchema.memberships.clerkInvitationStatus, options.invitationStatus)
+          ? sql`${latestInvitationStatus} = ${options.invitationStatus}`
           : undefined;
   const filters = and(
     eq(dbSchema.memberships.orgId, orgId),
@@ -4218,7 +4886,7 @@ export async function listMemberWorkspaceForOrg(
     .orderBy(desc(dbSchema.memberships.createdAt))
     .limit(pageSize)
     .offset((page - 1) * pageSize);
-  const [cohortsByMembershipId, spacesByMembershipId] = await Promise.all([
+  const [cohortsByMembershipId, spacesByMembershipId, invitationsByMembershipId] = await Promise.all([
     listCohortsByMembershipIds(
       orgId,
       rows.map((row) => row.membership.id),
@@ -4227,11 +4895,16 @@ export async function listMemberWorkspaceForOrg(
       orgId,
       rows.map((row) => row.membership.id),
     ),
+    listLatestMembershipInvitationsByMembershipIds(
+      rows.map((row) => row.membership.id),
+      { orgId },
+    ),
   ]);
 
   return {
     records: rows.map((row) => ({
       membership: membershipFromRow(row.membership),
+      invitation: invitationsByMembershipId.get(row.membership.id),
       user: row.user ? userFromRow(row.user) : undefined,
       profile: row.profile ? profileFromRow(row.profile) : undefined,
       spaces: spacesByMembershipId.get(row.membership.id) ?? [],
@@ -4290,6 +4963,17 @@ export async function listMemberImportCandidatesForOrg(
             (candidate) => candidate.orgId === orgId && candidate.userId === user.id,
           )
         : undefined;
+      const latestInvitation = membership
+        ? latestRelevantMembershipInvitation(
+            store.membershipInvitations.filter(
+              (candidate) =>
+                candidate.orgId === orgId && candidate.membershipId === membership.id,
+            ),
+          )
+        : undefined;
+      const invitation = latestInvitation
+        ? membershipInvitationSummary(latestInvitation)
+        : undefined;
       const spaceMembership =
         destinationSpace && membership
           ? store.spaceMemberships.find(
@@ -4313,6 +4997,7 @@ export async function listMemberImportCandidatesForOrg(
         email,
         user,
         membership,
+        invitation,
         space: destinationSpace,
         spaceMembership,
         inSpace: Boolean(spaceMembership),
@@ -4356,6 +5041,16 @@ export async function listMemberImportCandidatesForOrg(
     });
     if (membership) {
       membershipIds.push(membership.id);
+    }
+  }
+
+  const invitationsByMembershipId = await listLatestMembershipInvitationsByMembershipIds(
+    membershipIds,
+    { orgId },
+  );
+  for (const record of recordsByEmail.values()) {
+    if (record.membership) {
+      record.invitation = invitationsByMembershipId.get(record.membership.id);
     }
   }
 
@@ -4417,6 +5112,7 @@ function cohortRecordFromMembers(
   cohort: Cohort,
   members: CohortMember[],
   membershipsById: Map<string, Membership>,
+  invitationsByMembershipId: Map<string, MembershipInvitationSummary>,
 ): CohortRecord {
   const cohortMembers = members.filter((member) => member.cohortId === cohort.id);
   const memberships = cohortMembers
@@ -4432,10 +5128,10 @@ function cohortRecordFromMembers(
     (membership) =>
       membership.status === "rejected" ||
       membership.status === "suspended" ||
-      membership.clerkInvitationStatus === "failed" ||
-      membership.clerkInvitationStatus === "expired" ||
-      membership.clerkInvitationStatus === "revoked" ||
-      Boolean(membership.clerkInvitationError),
+      membershipNeedsInvitation(
+        membership,
+        invitationsByMembershipId.get(membership.id),
+      ),
   ).length;
 
   return {
@@ -4520,10 +5216,16 @@ export async function getCohortRecordForOrg(
     listCohortMembersForOrg(orgId),
     listMembershipsForOrg(orgId),
   ]);
+  const invitationsByMembershipId =
+    await listLatestMembershipInvitationsByMembershipIds(
+      memberships.map((membership) => membership.id),
+      { orgId },
+    );
   return cohortRecordFromMembers(
     cohort,
     cohortMembers,
     new Map(memberships.map((membership) => [membership.id, membership])),
+    invitationsByMembershipId,
   );
 }
 
@@ -4539,8 +5241,18 @@ export async function listCohortRecordsForOrg(orgId: string): Promise<CohortReco
         .filter((membership) => membership.orgId === orgId)
         .map((membership) => [membership.id, membership]),
     );
+    const invitationsByMembershipId =
+      await listLatestMembershipInvitationsByMembershipIds(
+        [...membershipsById.keys()],
+        { orgId },
+      );
     return cohorts.map((cohort) =>
-      cohortRecordFromMembers(cohort, members, membershipsById),
+      cohortRecordFromMembers(
+        cohort,
+        members,
+        membershipsById,
+        invitationsByMembershipId,
+      ),
     );
   }
 
@@ -4566,8 +5278,18 @@ export async function listCohortRecordsForOrg(orgId: string): Promise<CohortReco
       return [membership.id, membership] as const;
     }),
   );
+  const invitationsByMembershipId =
+    await listLatestMembershipInvitationsByMembershipIds(
+      [...membershipsById.keys()],
+      { orgId },
+    );
   return cohortRows.map((row) =>
-    cohortRecordFromMembers(cohortFromRow(row), members, membershipsById),
+    cohortRecordFromMembers(
+      cohortFromRow(row),
+      members,
+      membershipsById,
+      invitationsByMembershipId,
+    ),
   );
 }
 
@@ -4835,16 +5557,19 @@ function importedMembershipForUser(input: {
   };
 }
 
-function membershipNeedsInvitation(membership: Membership) {
-  if (membership.clerkMembershipId) {
+function membershipNeedsInvitation(
+  membership: Membership,
+  invitation?: MembershipInvitationSummary,
+) {
+  if (membership.accountStatus !== "invited") {
     return false;
   }
 
-  return (
-    !membership.clerkInvitationStatus ||
-    membership.clerkInvitationStatus === "failed" ||
-    membership.clerkInvitationStatus === "expired" ||
-    membership.clerkInvitationStatus === "revoked"
+  return !(
+    invitation?.status === "pending" &&
+    invitation.expiresAt > new Date().toISOString() &&
+    Boolean(invitation.sentAt) &&
+    !invitation.deliveryError
   );
 }
 
@@ -5073,7 +5798,9 @@ export async function bulkImportMembersForOrg(input: {
           ? "created" as const
           : "existing" as const,
       conflictReason,
-      shouldInvite: conflict ? false : membershipNeedsInvitation(membership),
+      shouldInvite: conflict
+        ? false
+        : membershipNeedsInvitation(membership, candidate.invitation),
     };
   });
 }

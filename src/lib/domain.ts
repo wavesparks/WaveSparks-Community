@@ -14,6 +14,11 @@ export type ClerkInvitationStatus =
   | "revoked"
   | "expired"
   | "failed";
+export type MembershipInvitationStatus =
+  | "pending"
+  | "accepted"
+  | "revoked"
+  | "expired";
 export type AffiliationType =
   | "current participant"
   | "alumni"
@@ -133,6 +138,30 @@ export interface Membership {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface MembershipInvitation {
+  id: string;
+  orgId: string;
+  membershipId: string;
+  email: string;
+  tokenHash: string;
+  status: MembershipInvitationStatus;
+  expiresAt: string;
+  createdByMembershipId: string;
+  clerkIdentityInvitationId?: string;
+  acceptedByClerkUserId?: string;
+  sentAt?: string;
+  acceptedAt?: string;
+  revokedAt?: string;
+  deliveryError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type MembershipInvitationSummary = Omit<
+  MembershipInvitation,
+  "tokenHash" | "clerkIdentityInvitationId" | "acceptedByClerkUserId"
+>;
 
 export interface Space {
   id: string;

@@ -38,6 +38,12 @@ export const accountStatusEnum = pgEnum("account_status", [
   "suspended",
   "deprovisioned",
 ]);
+export const membershipInvitationStatusEnum = pgEnum("membership_invitation_status", [
+  "pending",
+  "accepted",
+  "revoked",
+  "expired",
+]);
 export const membershipStatusEnum = pgEnum("membership_status", [
   "pending",
   "approved",
@@ -201,6 +207,63 @@ export const memberships = pgTable("memberships", {
     table.clerkInvitationId,
   ),
 }));
+
+export const membershipInvitations = pgTable(
+  "membership_invitations",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    membershipId: text("membership_id").notNull(),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    status: membershipInvitationStatusEnum("status").notNull().default("pending"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdByMembershipId: text("created_by_membership_id").notNull(),
+    clerkIdentityInvitationId: text("clerk_identity_invitation_id"),
+    acceptedByClerkUserId: text("accepted_by_clerk_user_id"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    deliveryError: text("delivery_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tokenHashIdx: uniqueIndex("membership_invitations_token_hash_idx").on(table.tokenHash),
+    clerkIdentityInvitationIdx: uniqueIndex(
+      "membership_invitations_clerk_identity_invitation_id_idx",
+    ).on(table.clerkIdentityInvitationId),
+    pendingMembershipIdx: uniqueIndex("membership_invitations_pending_membership_idx")
+      .on(table.membershipId)
+      .where(sql`${table.status} = 'pending'`),
+    orgStatusIdx: index("membership_invitations_org_status_idx").on(
+      table.orgId,
+      table.status,
+    ),
+    membershipCreatedIdx: index("membership_invitations_membership_created_idx").on(
+      table.membershipId,
+      table.createdAt,
+    ),
+    membershipOrgFk: foreignKey({
+      columns: [table.membershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "membership_invitations_membership_org_fk",
+    }).onDelete("cascade"),
+    creatorOrgFk: foreignKey({
+      columns: [table.createdByMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "membership_invitations_creator_org_fk",
+    }).onDelete("restrict"),
+    normalizedEmailCheck: check(
+      "membership_invitations_normalized_email_check",
+      sql`${table.email} = lower(btrim(${table.email}))`,
+    ),
+    lifecycleCheck: check(
+      "membership_invitations_lifecycle_check",
+      sql`(${table.status} <> 'accepted' OR (${table.acceptedAt} IS NOT NULL AND ${table.acceptedByClerkUserId} IS NOT NULL)) AND (${table.status} <> 'revoked' OR ${table.revokedAt} IS NOT NULL)`,
+    ),
+  }),
+);
 
 export const spaces = pgTable(
   "spaces",

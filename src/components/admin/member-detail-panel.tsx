@@ -22,6 +22,7 @@ import { SubmitButton } from "@/components/ui/submit-button";
 import type {
   AccountStatus,
   MembershipRole,
+  MembershipInvitationStatus,
   SpaceAccessStatus,
 } from "@/lib/domain";
 import {
@@ -31,6 +32,11 @@ import {
 
 export interface MemberDetailPanelProps {
   invitationsEnabled?: boolean;
+  invitation?: {
+    deliveryError?: string;
+    sentAt?: string;
+    status: MembershipInvitationStatus;
+  };
   member: {
     email: string;
     headline?: string;
@@ -39,9 +45,6 @@ export interface MemberDetailPanelProps {
   membership: {
     accountStatus: AccountStatus;
     approvalNote?: string;
-    clerkInvitationError?: string;
-    clerkInvitationStatus?: string;
-    clerkMembershipId?: string;
     id: string;
     role: MembershipRole;
   };
@@ -82,6 +85,7 @@ function confirmationMessage(
 
 export function MemberDetailPanel({
   invitationsEnabled = true,
+  invitation,
   member,
   membership,
   spaces,
@@ -95,10 +99,9 @@ export function MemberDetailPanel({
   const [selectedSpaceAccess, setSelectedSpaceAccess] = useState<SpaceAccessStatus>(
     spaces[0]?.accessStatus ?? "active",
   );
-  const connected = Boolean(membership.clerkMembershipId);
-  const invitationPending = membership.clerkInvitationStatus === "pending";
-  const notificationFailed =
-    connected && membership.clerkInvitationError?.startsWith("Invitation email failed:");
+  const connected = membership.accountStatus === "connected";
+  const invitationPending = invitation?.status === "pending";
+  const canInvite = membership.accountStatus === "invited";
 
   function confirmUpdate(event: FormEvent<HTMLFormElement>) {
     const message = confirmationMessage(
@@ -280,12 +283,16 @@ export function MemberDetailPanel({
           ) : null}
         </div>
 
-        {!connected ? (
+        {canInvite ? (
           <div className="space-y-3 border-t border-[var(--line)] pt-4">
             <div>
               <p className="text-sm font-semibold text-[var(--ink)]">Invitation</p>
               <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
-                {adminInvitationIssue(membership.clerkInvitationError)}
+                {invitation?.deliveryError
+                  ? adminInvitationIssue(invitation.deliveryError)
+                  : invitation?.sentAt
+                    ? "A private, expiring invitation link has been sent."
+                    : "Create a private, expiring invitation link for this member."}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -319,26 +326,6 @@ export function MemberDetailPanel({
           </div>
         ) : null}
 
-        {notificationFailed ? (
-          <div className="space-y-3 border-t border-[var(--line)] pt-4">
-            <div>
-              <p className="text-sm font-semibold text-[var(--ink)]">Sign-in notification failed</p>
-              <p className="mt-1 text-xs leading-5 text-red-700">
-                {adminInvitationIssue(membership.clerkInvitationError)}
-              </p>
-            </div>
-            <form action={resendMembershipInvitationAction.bind(null, slug, membership.id)}>
-              <SubmitButton
-                disabled={!invitationsEnabled}
-                pendingLabel="Retrying notification"
-                size="sm"
-                variant="secondary"
-              >
-                Retry notification
-              </SubmitButton>
-            </form>
-          </div>
-        ) : null}
       </div>
     </details>
   );

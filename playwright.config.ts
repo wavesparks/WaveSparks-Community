@@ -30,10 +30,18 @@ const webServerEnv = runClerkBrowserTests
       ...baseEnv,
       CLERK_SECRET_KEY: "",
       DATABASE_URL: "",
+      E2E_EMAIL_TRANSPORT: "memory",
       E2E_LOCAL_AUTH_ENABLED: "1",
       E2E_LOCAL_AUTH_SECRET: localE2EAuthSecret,
+      NEXT_PUBLIC_APP_URL: "http://localhost:3000",
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "",
+      RESEND_API_KEY: "re_e2e_memory_transport",
+      RESEND_FROM_EMAIL: "Wavesparks E2E <noreply@example.invalid>",
       SPACE_SCOPED_READS_ENABLED: "true",
+      VERCEL: "",
+      VERCEL_ENV: "",
+      VERCEL_PROJECT_PRODUCTION_URL: "",
+      VERCEL_URL: "",
     };
 
 if (runClerkBrowserTests) {
@@ -54,12 +62,12 @@ if (runClerkBrowserTests) {
 const localProjects = [
   {
     name: "local-chromium",
-    testIgnore: [/clerk\.setup\.ts/, /clerk-auth\.spec\.ts/],
+    testIgnore: [/clerk\.setup\.ts/, /clerk-auth\.spec\.ts/, /preview-admin\.spec\.ts/],
     use: { ...devices["Desktop Chrome"] },
   },
   {
     name: "local-mobile",
-    testIgnore: [/clerk\.setup\.ts/, /clerk-auth\.spec\.ts/],
+    testIgnore: [/clerk\.setup\.ts/, /clerk-auth\.spec\.ts/, /preview-admin\.spec\.ts/],
     use: { ...devices["iPhone 14"] },
   },
 ];
@@ -72,13 +80,13 @@ const clerkProjects = [
   {
     name: "clerk-chromium",
     dependencies: ["clerk-setup"],
-    testIgnore: [/clerk\.setup\.ts/, /authenticated\.spec\.ts/],
+    testIgnore: [/clerk\.setup\.ts/, /authenticated\.spec\.ts/, /preview-admin\.spec\.ts/],
     use: { ...devices["Desktop Chrome"] },
   },
   {
     name: "clerk-mobile",
     dependencies: ["clerk-setup"],
-    testIgnore: [/clerk\.setup\.ts/, /authenticated\.spec\.ts/],
+    testIgnore: [/clerk\.setup\.ts/, /authenticated\.spec\.ts/, /preview-admin\.spec\.ts/],
     use: { ...devices["iPhone 14"] },
   },
 ];

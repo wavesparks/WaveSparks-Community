@@ -17,7 +17,7 @@ export function getMemberImportOutcome(
   const added = result.summary.spaceAdded ?? result.summary.cohortAdded;
   const completed = invited + connected + added;
   const completedParts = [
-    invited ? `${countLabel(invited, "invitation")} created` : null,
+    invited ? `${countLabel(invited, "invitation")} sent` : null,
     connected ? `${countLabel(connected, "account")} connected` : null,
     added ? `${countLabel(added, "person", "people")} given access` : null,
   ].filter((part): part is string => Boolean(part));
@@ -65,8 +65,8 @@ export function getMemberImportOutcome(
         ? "Invitations and access updated"
         : invited
           ? invited === 1
-            ? "Invitation created"
-            : "Invitations created"
+            ? "Invitation sent"
+            : "Invitations sent"
           : "Access updated",
     tone: "success",
   };

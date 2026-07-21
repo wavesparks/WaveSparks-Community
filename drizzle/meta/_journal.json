@@ -92,6 +92,20 @@
       "when": 1784096677394,
       "tag": "0012_lively_nuke",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784640997484,
+      "tag": "0013_membership_invitations",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784645585676,
+      "tag": "0014_flippant_sleeper",
+      "breakpoints": true
     }
   ]
 }

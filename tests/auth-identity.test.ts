@@ -12,6 +12,24 @@ const clerkClientMock = vi.hoisted(() =>
   })),
 );
 
+function backendClerkUser(email = "clerk@example.com") {
+  const primaryEmailAddress = {
+    id: "email_primary",
+    emailAddress: email,
+    verification: { status: "verified" },
+  };
+  return {
+    firstName: "Clerk",
+    lastName: "Member",
+    fullName: null,
+    username: null,
+    imageUrl: "https://example.com/clerk.png",
+    primaryEmailAddressId: primaryEmailAddress.id,
+    primaryEmailAddress,
+    emailAddresses: [primaryEmailAddress],
+  };
+}
+
 async function loadAuthIdentity() {
   vi.resetModules();
   vi.doMock("next/headers", () => ({
@@ -71,10 +89,6 @@ describe("current auth identity", () => {
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
     await expect(getCurrentAuthIdentity()).resolves.toEqual({
-      canManageOrgMemberships: true,
-      clerkOrgId: "org_e2e_wavespark",
-      clerkOrgRole: "org:admin",
-      clerkOrgSlug: "wavesparks",
       clerkUserId: "e2e:avery@wavesparks.co",
       email: "avery@wavesparks.co",
       imageUrl: undefined,
@@ -123,7 +137,7 @@ describe("current auth identity", () => {
     process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
     getAllCookiesMock.mockReturnValue([{ name: "theme", value: "light" }]);
     verifyTokenMock.mockResolvedValue({
-      email: "clerk@example.com",
+      email: "untrusted-claim@example.com",
       name: "Clerk Member",
       o: {
         id: "org_clerk",
@@ -134,6 +148,7 @@ describe("current auth identity", () => {
       sub: "clerk_user",
       v: 2,
     });
+    getUserMock.mockResolvedValue(backendClerkUser());
 
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
@@ -143,10 +158,6 @@ describe("current auth identity", () => {
         clerkSessionToken: "session_token",
       }),
     ).resolves.toEqual({
-      canManageOrgMemberships: true,
-      clerkOrgId: "org_clerk",
-      clerkOrgRole: "org:admin",
-      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
@@ -157,7 +168,7 @@ describe("current auth identity", () => {
       secretKey: "sk_live_wavesparks",
     });
     expect(clerkAuthMock).not.toHaveBeenCalled();
-    expect(getUserMock).not.toHaveBeenCalled();
+    expect(getUserMock).toHaveBeenCalledWith("clerk_user");
   });
 
   it("prefers a Clerk JWT key when verifying bearer tokens", async () => {
@@ -173,6 +184,7 @@ describe("current auth identity", () => {
       org_slug: "wavesparks",
       sub: "clerk_user",
     });
+    getUserMock.mockResolvedValue(backendClerkUser());
 
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
@@ -201,17 +213,7 @@ describe("current auth identity", () => {
       org_slug: "wavesparks",
       sub: "clerk_user",
     });
-    getUserMock.mockResolvedValue({
-      firstName: "Clerk",
-      lastName: "Member",
-      fullName: null,
-      username: null,
-      imageUrl: "https://example.com/clerk.png",
-      primaryEmailAddress: {
-        emailAddress: "clerk@example.com",
-      },
-      emailAddresses: [],
-    });
+    getUserMock.mockResolvedValue(backendClerkUser());
 
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
@@ -221,10 +223,6 @@ describe("current auth identity", () => {
         clerkSessionToken: "session_token",
       }),
     ).resolves.toEqual({
-      canManageOrgMemberships: false,
-      clerkOrgId: "org_clerk",
-      clerkOrgRole: "org:member",
-      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
@@ -247,7 +245,7 @@ describe("current auth identity", () => {
     await expect(getCurrentAuthIdentity()).resolves.toBeNull();
   });
 
-  it("uses Clerk claims when a Clerk user is signed in", async () => {
+  it("ignores session email claims and loads a verified Backend User email", async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
     process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
     clerkAuthMock.mockResolvedValue({
@@ -257,26 +255,22 @@ describe("current auth identity", () => {
       orgSlug: "wavesparks",
       userId: "clerk_user",
       sessionClaims: {
-        email: "clerk@example.com",
-        name: "Clerk Member",
-        picture: "https://example.com/clerk.png",
+        email: "untrusted-claim@example.com",
+        name: "Untrusted Claim",
       },
     });
+    getUserMock.mockResolvedValue(backendClerkUser());
 
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
     await expect(getCurrentAuthIdentity()).resolves.toEqual({
-      canManageOrgMemberships: false,
-      clerkOrgId: "org_clerk",
-      clerkOrgRole: "org:member",
-      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
       imageUrl: "https://example.com/clerk.png",
       provider: "clerk",
     });
-    expect(getUserMock).not.toHaveBeenCalled();
+    expect(getUserMock).toHaveBeenCalledWith("clerk_user");
   });
 
   it("loads the Clerk user when claims do not include an email", async () => {
@@ -290,25 +284,11 @@ describe("current auth identity", () => {
       userId: "clerk_user",
       sessionClaims: {},
     });
-    getUserMock.mockResolvedValue({
-      firstName: "Clerk",
-      lastName: "Member",
-      fullName: null,
-      username: null,
-      imageUrl: "https://example.com/clerk.png",
-      primaryEmailAddress: {
-        emailAddress: "clerk@example.com",
-      },
-      emailAddresses: [],
-    });
+    getUserMock.mockResolvedValue(backendClerkUser());
 
     const { getCurrentAuthIdentity } = await loadAuthIdentity();
 
     await expect(getCurrentAuthIdentity()).resolves.toEqual({
-      canManageOrgMemberships: true,
-      clerkOrgId: "org_clerk",
-      clerkOrgRole: "org:admin",
-      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "clerk@example.com",
       name: "Clerk Member",
@@ -339,10 +319,6 @@ describe("current auth identity", () => {
     await expect(
       getCurrentAuthIdentity({ resolveKnownClerkIdentity }),
     ).resolves.toEqual({
-      canManageOrgMemberships: true,
-      clerkOrgId: "org_clerk",
-      clerkOrgRole: "org:admin",
-      clerkOrgSlug: "wavesparks",
       clerkUserId: "clerk_user",
       email: "local@example.com",
       imageUrl: "https://example.com/local.png",
@@ -354,5 +330,75 @@ describe("current auth identity", () => {
     );
     expect(clerkClientMock).not.toHaveBeenCalled();
     expect(getUserMock).not.toHaveBeenCalled();
+  });
+
+  it("uses a known linked identity before Backend lookup for bearer tokens", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
+    process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
+    verifyTokenMock.mockResolvedValue({
+      email: "untrusted-claim@example.com",
+      sub: "clerk_user",
+    });
+    const resolveKnownClerkIdentity = vi.fn(async () => ({
+      email: "local@example.com",
+      imageUrl: undefined,
+      name: "Local Member",
+    }));
+    const { getCurrentAuthIdentity } = await loadAuthIdentity();
+
+    await expect(
+      getCurrentAuthIdentity({
+        clerkSessionToken: "session_token",
+        resolveKnownClerkIdentity,
+      }),
+    ).resolves.toMatchObject({
+      clerkUserId: "clerk_user",
+      email: "local@example.com",
+      provider: "clerk",
+    });
+    expect(getUserMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unverified Backend User emails and falls back only to a verified address", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_live_wavesparks";
+    process.env.CLERK_SECRET_KEY = "sk_live_wavesparks";
+    clerkAuthMock.mockResolvedValue({ userId: "clerk_user", sessionClaims: {} });
+    getUserMock.mockResolvedValue({
+      ...backendClerkUser(),
+      primaryEmailAddressId: "email_unverified",
+      primaryEmailAddress: {
+        id: "email_unverified",
+        emailAddress: "unverified@example.com",
+        verification: { status: "unverified" },
+      },
+      emailAddresses: [
+        {
+          id: "email_unverified",
+          emailAddress: "unverified@example.com",
+          verification: { status: "unverified" },
+        },
+        {
+          id: "email_verified",
+          emailAddress: "verified@example.com",
+          verification: { status: "verified" },
+        },
+      ],
+    });
+    const { getCurrentAuthIdentity } = await loadAuthIdentity();
+
+    await expect(getCurrentAuthIdentity()).resolves.toMatchObject({
+      email: "verified@example.com",
+    });
+
+    getUserMock.mockResolvedValue({
+      ...backendClerkUser(),
+      primaryEmailAddress: {
+        id: "email_unverified",
+        emailAddress: "unverified@example.com",
+        verification: { status: "unverified" },
+      },
+      emailAddresses: [],
+    });
+    await expect(getCurrentAuthIdentity()).resolves.toBeNull();
   });
 });

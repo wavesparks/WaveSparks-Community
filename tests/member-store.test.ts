@@ -3,15 +3,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { seedOrganization } from "@/data/seed-data";
 import {
   addMembershipToCohort,
+  acceptMembershipInvitation,
   archiveCohort,
   bulkImportMembersForOrg,
   createCohort,
   createManagedAccount,
+  createMembershipInvitation,
   getStore,
   listCohortRecordsForOrg,
   listMemberImportCandidatesForOrg,
   listMemberWorkspaceForOrg,
   resetStore,
+  updateMembershipInvitationDelivery,
   updateCohort,
   updateMembershipClerkState,
   updateMembershipStatus,
@@ -74,6 +77,57 @@ describe("admin member workspace store", () => {
       getStore().memberships.filter(
         (membership) =>
           membership.orgId === seedOrganization.id && membership.userId === first.user.id,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps a delivered local invitation when an existing member is added to another event", async () => {
+    const firstCohort = await createCohort({
+      orgId: seedOrganization.id,
+      name: "First Invitation Event",
+      createdByMembershipId: "mem_avery",
+    });
+    const secondCohort = await createCohort({
+      orgId: seedOrganization.id,
+      name: "Second Invitation Event",
+      createdByMembershipId: "mem_avery",
+    });
+    const [first] = await bulkImportMembersForOrg({
+      orgId: seedOrganization.id,
+      cohortId: firstCohort.id,
+      members: [{ email: "delivered.invite@example.com", name: "Delivered Invite" }],
+      status: "pending",
+      invitedByUserId: "usr_avery",
+    });
+    const invitation = await createMembershipInvitation({
+      orgId: seedOrganization.id,
+      membershipId: first.membership.id,
+      email: first.user.email,
+      tokenHash: "c".repeat(64),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      createdByMembershipId: "mem_avery",
+    });
+    await updateMembershipInvitationDelivery(invitation.id, {
+      sentAt: new Date().toISOString(),
+      deliveryError: null,
+    });
+
+    const [second] = await bulkImportMembersForOrg({
+      orgId: seedOrganization.id,
+      cohortId: secondCohort.id,
+      members: [{ email: first.user.email, name: first.user.name }],
+      status: "pending",
+      invitedByUserId: "usr_avery",
+    });
+
+    expect(second).toMatchObject({
+      classification: "existing",
+      cohortMemberCreated: true,
+      shouldInvite: false,
+    });
+    expect(
+      getStore().membershipInvitations.filter(
+        (candidate) => candidate.membershipId === first.membership.id,
       ),
     ).toHaveLength(1);
   });
@@ -178,13 +232,29 @@ describe("admin member workspace store", () => {
       status: "pending",
       invitedByUserId: "usr_avery",
     });
-    await updateMembershipClerkState(imported[0].membership.id, {
-      clerkInvitationId: "inv_workspace_pending",
-      clerkInvitationStatus: "pending",
+    await createMembershipInvitation({
+      orgId: seedOrganization.id,
+      membershipId: imported[0].membership.id,
+      email: imported[0].user.email,
+      tokenHash: "a".repeat(64),
+      expiresAt: "2026-08-01T00:00:00.000Z",
+      createdByMembershipId: "mem_avery",
+      createdAt: "2026-07-21T00:00:00.000Z",
     });
-    await updateMembershipClerkState(imported[1].membership.id, {
-      clerkMembershipId: "clm_workspace_connected",
-      clerkInvitationStatus: "accepted",
+    await createMembershipInvitation({
+      orgId: seedOrganization.id,
+      membershipId: imported[1].membership.id,
+      email: imported[1].user.email,
+      tokenHash: "b".repeat(64),
+      expiresAt: "2026-08-01T00:00:00.000Z",
+      createdByMembershipId: "mem_avery",
+      createdAt: "2026-07-21T00:00:00.000Z",
+    });
+    await acceptMembershipInvitation({
+      tokenHash: "b".repeat(64),
+      clerkUserId: "user_workspace_connected",
+      verifiedEmail: imported[1].user.email,
+      now: "2026-07-21T01:00:00.000Z",
     });
 
     const preview = await listMemberImportCandidatesForOrg(
@@ -243,10 +313,21 @@ describe("admin member workspace store", () => {
       status: "waitlist",
       invitedByUserId: "usr_avery",
     });
-    imported.cohortMember!.status = "promoted";
+    const invitation = await createMembershipInvitation({
+      orgId: seedOrganization.id,
+      membershipId: imported.membership.id,
+      email: imported.user.email,
+      tokenHash: "d".repeat(64),
+      expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      createdByMembershipId: "mem_avery",
+    });
+    await updateMembershipInvitationDelivery(invitation.id, {
+      sentAt: new Date().toISOString(),
+      deliveryError: null,
+    });
     await updateMembershipClerkState(imported.membership.id, {
-      clerkInvitationStatus: "failed",
-      clerkInvitationError: "rate_limited",
+      clerkInvitationStatus: "revoked",
+      clerkInvitationError: "legacy state must be ignored",
     });
 
     let [summary] = await listCohortRecordsForOrg(seedOrganization.id);
@@ -254,10 +335,17 @@ describe("admin member workspace store", () => {
       totalMembers: 1,
       needsDecisionMembers: 1,
       activeMembers: 0,
-      needsAttentionMembers: 1,
+      needsAttentionMembers: 0,
       invitedMembers: 1,
       promotedMembers: 0,
     });
+
+    await updateMembershipInvitationDelivery(invitation.id, {
+      sentAt: null,
+      deliveryError: "Email delivery failed",
+    });
+    summary = (await listCohortRecordsForOrg(seedOrganization.id))[0];
+    expect(summary.needsAttentionMembers).toBe(1);
 
     await updateMembershipStatus(imported.membership.id, "approved", "Approved in test.");
     summary = (await listCohortRecordsForOrg(seedOrganization.id))[0];

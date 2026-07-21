@@ -34,8 +34,8 @@ describe("member import result copy", () => {
       }),
     );
 
-    expect(outcome).toMatchObject({ tone: "success", title: "Invitation created" });
-    expect(outcome.body).toContain("1 invitation created");
+    expect(outcome).toMatchObject({ tone: "success", title: "Invitation sent" });
+    expect(outcome.body).toContain("1 invitation sent");
     expect(outcome.body).not.toMatch(/email delivered/i);
   });
 

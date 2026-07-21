@@ -5,8 +5,6 @@ const clerk = vi.hoisted(() => ({
   getToken: vi.fn(),
   isLoaded: true,
   isSignedIn: true,
-  orgId: "org_clerk_wavespark",
-  setActive: vi.fn(),
   signOut: vi.fn(),
 }));
 const router = vi.hoisted(() => ({
@@ -18,10 +16,8 @@ vi.mock("@clerk/nextjs", () => ({
     getToken: clerk.getToken,
     isLoaded: clerk.isLoaded,
     isSignedIn: clerk.isSignedIn,
-    orgId: clerk.orgId,
   }),
   useClerk: () => ({
-    setActive: clerk.setActive,
     signOut: clerk.signOut,
   }),
 }));
@@ -37,7 +33,6 @@ describe("AuthCompleteClient", () => {
     vi.clearAllMocks();
     clerk.isLoaded = true;
     clerk.isSignedIn = true;
-    clerk.orgId = "org_clerk_wavespark";
   });
 
   afterEach(() => {
@@ -45,16 +40,16 @@ describe("AuthCompleteClient", () => {
     vi.unstubAllGlobals();
   });
 
-  it("refreshes the token once after a 401 and skips redundant organization activation", async () => {
+  it("refreshes the token once after an invitation acceptance 401", async () => {
     clerk.getToken
       .mockResolvedValueOnce("stale-session-token")
       .mockResolvedValueOnce("fresh-session-token");
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(
         Response.json({
-          clerkOrgId: "org_clerk_wavespark",
           state: "ready",
           target: "/org/wavesparks/feed",
         }),
@@ -68,8 +63,12 @@ describe("AuthCompleteClient", () => {
     });
     expect(clerk.getToken).toHaveBeenNthCalledWith(1, { skipCache: false });
     expect(clerk.getToken).toHaveBeenNthCalledWith(2, { skipCache: true });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(clerk.setActive).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/internal/membership-invitations/accept?orgSlug=wavesparks",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("fails after two missing-token attempts without a fixed retry delay", async () => {
@@ -84,5 +83,24 @@ describe("AuthCompleteClient", () => {
     ).toBeInTheDocument();
     expect(clerk.getToken).toHaveBeenCalledTimes(2);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("stops when the signed-in account does not own the invitation", async () => {
+    clerk.getToken.mockResolvedValue("session-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json({ error: "Email mismatch." }, { status: 403 }),
+      ),
+    );
+
+    render(<AuthCompleteClient slug="wavesparks" />);
+
+    expect(
+      await screen.findByText(
+        "This invitation belongs to a different email address. Sign out and use the address that received the invitation.",
+      ),
+    ).toBeInTheDocument();
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });

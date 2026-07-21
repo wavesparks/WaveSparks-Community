@@ -15,7 +15,7 @@ import {
 } from "@/server/store";
 
 const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const retryableInvitationStatuses = new Set(["failed", "revoked", "expired"]);
+const retryableInvitationStatuses = new Set(["revoked", "expired"]);
 
 function emptySummary(): Record<MemberImportClassification, number> {
   return {
@@ -144,6 +144,7 @@ export async function buildMemberImportPreview(
 
     const candidate = candidatesByEmail.get(entry.row.normalizedEmail);
     const membership = candidate?.membership;
+    const invitation = candidate?.invitation;
     const existingSpaceAccess = candidate?.spaceMembership?.accessStatus;
     const spaceAction: MemberImportSpaceAction = !existingSpaceAccess
       ? "grant"
@@ -201,7 +202,7 @@ export async function buildMemberImportPreview(
         }. Review it in member details before continuing.`,
       };
     }
-    if (membership.clerkMembershipId) {
+    if (membership.accountStatus === "connected") {
       return {
         ...base,
         classification: "already_connected",
@@ -214,7 +215,7 @@ export async function buildMemberImportPreview(
             : `Already has access to ${destinationName}.`,
       };
     }
-    if (membership.clerkInvitationStatus === "pending") {
+    if (invitation?.status === "pending" && !invitation.deliveryError) {
       return {
         ...base,
         classification: "already_invited",
@@ -228,8 +229,9 @@ export async function buildMemberImportPreview(
       };
     }
     if (
-      !membership.clerkInvitationStatus ||
-      retryableInvitationStatuses.has(membership.clerkInvitationStatus)
+      !invitation ||
+      Boolean(invitation.deliveryError) ||
+      retryableInvitationStatuses.has(invitation.status)
     ) {
       return {
         ...base,

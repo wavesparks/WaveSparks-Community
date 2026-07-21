@@ -3,9 +3,10 @@ import { notFound, redirect } from "next/navigation";
 import {
   getCurrentAuthIdentity,
   type AuthIdentity,
-  type ClerkOrgIdentity,
+  type ClerkUserIdentity,
   type KnownClerkIdentity,
 } from "@/lib/auth-identity";
+import type { Membership, Organization, Profile, User, ViewerContext } from "@/lib/domain";
 import { canAdminOrganization } from "@/server/permissions";
 import {
   getOrganizationBySlug,
@@ -13,8 +14,6 @@ import {
   getViewerRecordByEmailAndOrgId,
   upsertSessionUser,
 } from "@/server/store";
-import type { Membership, Organization, Profile, User, ViewerContext } from "@/lib/domain";
-import { syncViewerClerkOrganization } from "@/server/clerk-sync";
 
 interface ViewerOptions {
   requireAuth?: boolean;
@@ -40,7 +39,7 @@ async function resolveIdentityForOrg(
 ) {
   let knownViewerRecord: ViewerRecord | undefined;
   const resolveKnownClerkIdentity = async (
-    clerkIdentity: ClerkOrgIdentity,
+    clerkIdentity: ClerkUserIdentity,
   ): Promise<KnownClerkIdentity | null> => {
     const viewerRecord = await getViewerRecordByClerkUserIdAndOrgId(
       org.id,
@@ -78,7 +77,10 @@ async function buildViewerContextForOrg(
   const profile = viewerRecord.profile;
   const user = await upsertSessionUser(
     {
-      clerkUserId: identity.clerkUserId,
+      clerkUserId:
+        identity.provider === "clerk"
+          ? identity.clerkUserId
+          : viewerRecord.user.clerkUserId,
       email: identity.email,
       name: identity.name,
       imageUrl: identity.imageUrl,
@@ -98,6 +100,24 @@ async function buildViewerContextForOrg(
     canAdmin,
     scopes: canAdmin ? ["org:admin", "org:member"] : ["org:member"],
   } satisfies ViewerContext;
+}
+
+async function viewerRecordForIdentity(
+  org: Organization,
+  identity: AuthIdentity,
+  knownViewerRecord?: ViewerRecord,
+) {
+  // The signed E2E cookie deliberately targets seed accounts that do not have a
+  // Clerk user ID. Production Clerk sessions must never connect accounts by email;
+  // account linking is only allowed by the invitation acceptance transaction.
+  if (identity.provider === "e2e") {
+    return getViewerRecordByEmailAndOrgId(org.id, identity.email);
+  }
+
+  return (
+    knownViewerRecord ??
+    getViewerRecordByClerkUserIdAndOrgId(org.id, identity.clerkUserId)
+  );
 }
 
 async function resolveViewerContext(
@@ -120,20 +140,16 @@ async function resolveViewerContext(
     return { org, viewer: null, authenticated: false };
   }
 
-  const clerkRecord =
-    knownViewerRecord ??
-    (await getViewerRecordByClerkUserIdAndOrgId(org.id, identity.clerkUserId));
-  const viewerRecord = clerkRecord.membership
-    ? clerkRecord
-    : await getViewerRecordByEmailAndOrgId(org.id, identity.email);
+  const viewerRecord = await viewerRecordForIdentity(
+    org,
+    identity,
+    knownViewerRecord,
+  );
   const viewer = await buildViewerContextForOrg(org, identity, viewerRecord);
 
   return {
     org,
     authenticated: true,
-    activeClerkOrgMismatch: Boolean(
-      identity.clerkOrgId && org.clerkOrgId && identity.clerkOrgId !== org.clerkOrgId,
-    ),
     viewer,
   };
 }
@@ -152,12 +168,11 @@ async function resolveOrganizationViewerContext(slug: string) {
     return { org, viewer: null, authenticated: false };
   }
 
-  const clerkRecord =
-    knownViewerRecord ??
-    (await getViewerRecordByClerkUserIdAndOrgId(org.id, identity.clerkUserId));
-  const viewerRecord = clerkRecord.membership
-    ? clerkRecord
-    : await getViewerRecordByEmailAndOrgId(org.id, identity.email);
+  const viewerRecord = await viewerRecordForIdentity(
+    org,
+    identity,
+    knownViewerRecord,
+  );
 
   return {
     org,
@@ -170,7 +185,7 @@ export async function getViewerContext(
   slug: string,
   options: ViewerOptions = {},
 ): Promise<ViewerContext | null> {
-  const { org, viewer, authenticated, activeClerkOrgMismatch } = await resolveViewerContext(slug, {
+  const { org, viewer, authenticated } = await resolveViewerContext(slug, {
     allowClerkLookupWithoutCookie: options.requireAuth,
   });
 
@@ -183,10 +198,6 @@ export async function getViewerContext(
       redirect(`/org/${slug}/signin`);
     }
     return null;
-  }
-
-  if (options.requireAuth && activeClerkOrgMismatch) {
-    redirect(`/org/${slug}/auth/complete`);
   }
 
   if (options.requireAdmin && !viewer.canAdmin) {
@@ -252,26 +263,12 @@ export async function getAuthCompletionViewerContext(
     };
   }
 
-  const syncResult = await syncViewerClerkOrganization({
-    clerkUserId: viewer.user.clerkUserId,
-    membership: viewer.membership,
-    org: viewer.org,
-    user: viewer.user,
-  });
-
   return {
-    clerkOrgId: syncResult?.clerkOrgId ?? viewer.org.clerkOrgId,
     state: viewer.membership.accountStatus === "connected"
       ? ("ready" as const)
       : ("pending" as const),
     status: "authenticated" as const,
-    viewer: syncResult
-      ? {
-          ...viewer,
-          membership: syncResult.localMembership,
-          user: syncResult.user,
-        }
-      : viewer,
+    viewer,
   };
 }
 

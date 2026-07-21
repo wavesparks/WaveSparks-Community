@@ -17,7 +17,7 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { Select } from "@/components/ui/select";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
-import type { AccountStatus } from "@/lib/domain";
+import type { AccountStatus, MembershipInvitation } from "@/lib/domain";
 import { isE2ELocalAuthEnabled } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
 import { singleQueryValue } from "@/lib/feed-filters";
@@ -87,13 +87,14 @@ function accessLabel(status: AccountStatus) {
   return getAccountStatusLabel(status);
 }
 
-function invitationLabel(membership: {
-  clerkInvitationStatus?: string;
-  clerkMembershipId?: string;
-}) {
-  if (membership.clerkMembershipId) return "Connected";
-  if (!membership.clerkInvitationStatus) return "Not invited";
-  return `Invitation ${membership.clerkInvitationStatus}`;
+function invitationLabel(
+  accountStatus: AccountStatus,
+  invitation?: Pick<MembershipInvitation, "deliveryError" | "status">,
+) {
+  if (accountStatus === "connected") return "Connected";
+  if (!invitation) return "Not invited";
+  if (invitation.deliveryError) return "Invitation failed";
+  return `Invitation ${invitation.status}`;
 }
 
 export default async function AdminMembersPage({
@@ -241,9 +242,9 @@ export default async function AdminMembersPage({
           </div>
 
           <div className="space-y-3">
-            {memberPage.records.map(({ spaces: memberSpaces, membership, profile, user }) => {
-              const connected = Boolean(membership.clerkMembershipId);
-              const invitation = invitationLabel(membership);
+            {memberPage.records.map(({ invitation, spaces: memberSpaces, membership, profile, user }) => {
+              const connected = membership.accountStatus === "connected";
+              const invitationText = invitationLabel(membership.accountStatus, invitation);
               return (
                 <Card className="space-y-4" key={membership.id}>
                   <div className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_0.8fr_0.9fr] md:items-start">
@@ -271,12 +272,12 @@ export default async function AdminMembersPage({
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Invitation</p>
-                      <Badge className="mt-2" variant={connected ? "accent" : membership.clerkInvitationStatus === "failed" ? "muted" : "default"}>
-                        {invitation}
+                      <Badge className="mt-2" variant={connected ? "accent" : invitation?.deliveryError ? "muted" : "default"}>
+                        {invitationText}
                       </Badge>
-                      {membership.clerkInvitationError ? (
+                      {invitation?.deliveryError ? (
                         <p className="mt-2 break-words text-xs leading-5 text-red-700">
-                          {adminInvitationIssue(membership.clerkInvitationError)}
+                          {adminInvitationIssue(invitation.deliveryError)}
                         </p>
                       ) : null}
                     </div>
@@ -305,10 +306,12 @@ export default async function AdminMembersPage({
                       id: membership.id,
                       role: membership.role,
                       approvalNote: membership.approvalNote,
-                      clerkMembershipId: membership.clerkMembershipId,
-                      clerkInvitationStatus: membership.clerkInvitationStatus,
-                      clerkInvitationError: membership.clerkInvitationError,
                     }}
+                    invitation={invitation ? {
+                      deliveryError: invitation.deliveryError,
+                      sentAt: invitation.sentAt,
+                      status: invitation.status,
+                    } : undefined}
                     spaces={spaces.map((space) => ({
                       id: space.id,
                       kind: space.kind,

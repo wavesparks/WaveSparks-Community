@@ -3,15 +3,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthIdentity } from "@/lib/auth-identity";
 import type { Membership, Organization, Profile, User } from "@/lib/domain";
 
+type ViewerRecord = {
+  user?: User;
+  membership?: Membership;
+  profile?: Profile;
+};
+
 const calls = vi.hoisted(() => [] as string[]);
 const mockState = vi.hoisted(() => ({
+  clerkViewerRecord: Promise.resolve({}) as Promise<ViewerRecord>,
+  emailViewerRecord: Promise.resolve({}) as Promise<ViewerRecord>,
   identity: Promise.resolve(null) as Promise<AuthIdentity | null>,
   org: Promise.resolve(undefined) as Promise<Organization | undefined>,
-  viewerRecord: Promise.resolve({}) as Promise<{
-    user?: User;
-    membership?: Membership;
-    profile?: Profile;
-  }>,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -35,16 +38,25 @@ vi.mock("@/server/store", () => ({
     calls.push("org");
     return mockState.org;
   }),
-  getViewerRecordByClerkUserIdAndOrgId: vi.fn(() => Promise.resolve({})),
+  getViewerRecordByClerkUserIdAndOrgId: vi.fn(
+    (orgId: string, clerkUserId: string) => {
+      calls.push(`viewer-clerk:${orgId}:${clerkUserId}`);
+      return mockState.clerkViewerRecord;
+    },
+  ),
   getViewerRecordByEmailAndOrgId: vi.fn((orgId: string, email: string) => {
-    calls.push(`viewer:${orgId}:${email}`);
-    return mockState.viewerRecord;
+    calls.push(`viewer-email:${orgId}:${email}`);
+    return mockState.emailViewerRecord;
   }),
   upsertSessionUser: vi.fn(() => user),
 }));
 
-import { getAuthCompletionViewerContext, getOrganizationViewerContext } from "@/lib/auth";
 import {
+  getAuthCompletionViewerContext,
+  getOrganizationViewerContext,
+} from "@/lib/auth";
+import {
+  getViewerRecordByClerkUserIdAndOrgId,
   getViewerRecordByEmailAndOrgId,
 } from "@/server/store";
 
@@ -79,6 +91,7 @@ const org: Organization = {
 
 const user: User = {
   id: "usr_test",
+  clerkUserId: "user_clerk_test",
   email: "member@example.com",
   name: "Member Example",
   imageUrl: "",
@@ -91,9 +104,9 @@ const membership: Membership = {
   id: "mem_test",
   orgId: org.id,
   userId: user.id,
-      role: "member",
-      accountStatus: "connected",
-      affiliationType: "current participant",
+  role: "member",
+  accountStatus: "connected",
+  affiliationType: "current participant",
   status: "approved",
   archetypes: [],
   programName: "Test",
@@ -112,16 +125,13 @@ describe("organization viewer context", () => {
   beforeEach(() => {
     calls.length = 0;
     vi.clearAllMocks();
-    delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
-    delete process.env.CLERK_SECRET_KEY;
-    delete process.env.VERCEL_ENV;
-    delete org.clerkOrgId;
     mockState.identity = Promise.resolve(null);
     mockState.org = Promise.resolve(org);
-    mockState.viewerRecord = Promise.resolve({});
+    mockState.clerkViewerRecord = Promise.resolve({});
+    mockState.emailViewerRecord = Promise.resolve({});
   });
 
-  it("resolves the organization before the organization-scoped identity fallback", async () => {
+  it("resolves the organization before the organization-scoped identity lookup", async () => {
     const identity = deferred<AuthIdentity | null>();
     const organization = deferred<Organization | undefined>();
     mockState.identity = identity.promise;
@@ -138,114 +148,61 @@ describe("organization viewer context", () => {
     expect(calls).toEqual(["org", "identity"]);
 
     identity.resolve(null);
-
     await expect(pending).resolves.toEqual({ org, viewer: null });
   });
 
-  it("reuses the known organization id when resolving an authenticated viewer", async () => {
+  it("resolves production Clerk users only by Clerk user ID", async () => {
     mockState.identity = Promise.resolve({
-      canManageOrgMemberships: false,
-      clerkOrgId: "org_clerk_test",
-      clerkOrgRole: "org:member",
-      clerkOrgSlug: "test",
       clerkUserId: "user_clerk_test",
       email: user.email,
       name: user.name,
       provider: "clerk",
     });
-    mockState.viewerRecord = Promise.resolve({ user, membership, profile });
+    mockState.clerkViewerRecord = Promise.resolve({ user, membership, profile });
 
     const context = await getOrganizationViewerContext("test");
 
+    expect(getViewerRecordByClerkUserIdAndOrgId).toHaveBeenCalledWith(
+      org.id,
+      "user_clerk_test",
+    );
+    expect(getViewerRecordByEmailAndOrgId).not.toHaveBeenCalled();
+    expect(context.viewer?.membership.id).toBe(membership.id);
+  });
+
+  it("does not auto-connect an unbound Clerk account with a matching email", async () => {
+    mockState.identity = Promise.resolve({
+      clerkUserId: "user_unbound",
+      email: user.email,
+      name: user.name,
+      provider: "clerk",
+    });
+    mockState.emailViewerRecord = Promise.resolve({ user, membership, profile });
+
+    const context = await getAuthCompletionViewerContext("test");
+
+    expect(context).toEqual({ status: "forbidden", viewer: null });
+    expect(getViewerRecordByEmailAndOrgId).not.toHaveBeenCalled();
+  });
+
+  it("keeps the signed local E2E email lookup for seed accounts", async () => {
+    const seedUser = { ...user, clerkUserId: undefined };
+    mockState.identity = Promise.resolve({
+      clerkUserId: `e2e:${user.email}`,
+      email: user.email,
+      name: user.name,
+      provider: "e2e",
+    });
+    mockState.emailViewerRecord = Promise.resolve({
+      user: seedUser,
+      membership,
+      profile,
+    });
+
+    const context = await getAuthCompletionViewerContext("test");
+
     expect(getViewerRecordByEmailAndOrgId).toHaveBeenCalledWith(org.id, user.email);
-    expect(context.viewer?.membership.id).toBe(membership.id);
-    expect(context.viewer?.profile?.id).toBe(profile.id);
-  });
-
-  it("uses the local membership when the active Clerk org slug differs", async () => {
-    mockState.identity = Promise.resolve({
-      canManageOrgMemberships: false,
-      clerkOrgId: "org_clerk_test",
-      clerkOrgRole: "org:member",
-      clerkOrgSlug: "wavesparks",
-      clerkUserId: "user_clerk_test",
-      email: user.email,
-      name: user.name,
-      provider: "clerk",
-    });
-    mockState.viewerRecord = Promise.resolve({ user, membership, profile });
-
-    const context = await getAuthCompletionViewerContext("test");
-
     expect(context.status).toBe("authenticated");
-    expect(context.viewer?.membership.id).toBe(membership.id);
-    expect(context.viewer?.membership.role).toBe("member");
-  });
-
-  it("keeps the Wavesparks role when another Clerk organization is active", async () => {
-    mockState.org = Promise.resolve({
-      ...org,
-      clerkOrgId: "org_clerk_other",
-    });
-    mockState.identity = Promise.resolve({
-      canManageOrgMemberships: false,
-      clerkOrgId: "org_clerk_test",
-      clerkOrgRole: "org:member",
-      clerkOrgSlug: "test",
-      clerkUserId: "user_clerk_test",
-      email: user.email,
-      name: user.name,
-      provider: "clerk",
-    });
-    mockState.viewerRecord = Promise.resolve({ user, membership, profile });
-
-    const context = await getAuthCompletionViewerContext("test");
-
-    expect(context.status).toBe("authenticated");
-    expect(context.viewer?.membership.role).toBe("member");
-    expect(context.clerkOrgId).toBe("org_clerk_other");
-  });
-
-  it("does not rewrite a linked organization during preview auth completion", async () => {
-    process.env.VERCEL_ENV = "preview";
-    mockState.org = Promise.resolve({
-      ...org,
-      clerkOrgId: "org_clerk_live",
-    });
-    mockState.identity = Promise.resolve({
-      canManageOrgMemberships: false,
-      clerkOrgId: "org_clerk_preview",
-      clerkOrgRole: "org:member",
-      clerkOrgSlug: "test",
-      clerkUserId: "user_clerk_test",
-      email: user.email,
-      name: user.name,
-      provider: "clerk",
-    });
-    mockState.viewerRecord = Promise.resolve({ user, membership, profile });
-
-    const context = await getAuthCompletionViewerContext("test");
-
-    expect(context.status).toBe("authenticated");
-    expect(context.viewer?.membership.id).toBe(membership.id);
-    expect(context.clerkOrgId).toBe("org_clerk_live");
-  });
-
-  it("rejects authenticated Clerk users without a local invitation record", async () => {
-    mockState.identity = Promise.resolve({
-      canManageOrgMemberships: true,
-      clerkOrgId: "org_unrelated",
-      clerkOrgRole: "org:admin",
-      clerkOrgSlug: "unrelated",
-      clerkUserId: "user_without_invite",
-      email: "no-invite@example.com",
-      name: "No Invite",
-      provider: "clerk",
-    });
-
-    const context = await getAuthCompletionViewerContext("test");
-
-    expect(context.status).toBe("forbidden");
-    expect(context.viewer).toBeNull();
+    expect(context.state).toBe("ready");
   });
 });

@@ -1,11 +1,8 @@
-import { createClerkClient } from "@clerk/backend";
 import { clerk, clerkSetup, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { expect, test } from "@playwright/test";
 
 const adminEmail = process.env.E2E_CLERK_ADMIN_EMAIL;
 const memberEmail = process.env.E2E_CLERK_USER_EMAIL;
-const secretKey = process.env.CLERK_SECRET_KEY;
-let temporaryOrganizationId: string | undefined;
 
 async function completeAuthHandoff(
   page: Parameters<typeof clerk.signIn>[0]["page"],
@@ -37,83 +34,50 @@ test.beforeEach(async ({ page }) => {
   await setupClerkTestingToken({ page });
 });
 
-test.afterEach(async () => {
-  if (!temporaryOrganizationId || !secretKey) {
-    return;
-  }
-  const client = createClerkClient({ secretKey });
-  await client.organizations.deleteOrganization(temporaryOrganizationId).catch(() => undefined);
-  temporaryOrganizationId = undefined;
-});
-
-test("switches a signed-in admin from another Clerk organization into Wavesparks", async ({
+test("authorizes a signed-in admin from the local Neon membership", async ({
   page,
 }, testInfo) => {
-  test.skip(!adminEmail || !secretKey, "Clerk admin test account is not configured.");
-  const client = createClerkClient({ secretKey });
-  const [admin] = (await client.users.getUserList({ emailAddress: [adminEmail!] })).data;
-  const wavespark = await client.organizations.getOrganization({ slug: "wavesparks" });
-  if (!admin) {
-    throw new Error(`Clerk test admin ${adminEmail} was not found.`);
-  }
+  test.skip(!adminEmail, "Clerk admin test account is not configured.");
+  await page.goto("/org/wavesparks/feed");
+  await clerk.signIn({ emailAddress: adminEmail!, page });
 
-  const suffix = `${Date.now()}-${testInfo.project.name}`.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  const otherOrg = await client.organizations.createOrganization({
-    name: `Wavesparks E2E Other ${suffix}`,
-    slug: `wavespark-e2e-other-${suffix}`.slice(0, 48),
-  });
-  temporaryOrganizationId = otherOrg.id;
+  const organizationBeforeHandoff = await page.evaluate(
+    () => window.Clerk.organization?.id ?? null,
+  );
+  await completeAuthHandoff(page, /\/org\/wavesparks(?:\/onboarding)?$/);
+  await expect
+    .poll(() => page.evaluate(() => window.Clerk.organization?.id ?? null))
+    .toBe(organizationBeforeHandoff);
 
-  try {
-    await client.organizations.createOrganizationMembership({
-      organizationId: otherOrg.id,
-      role: "org:member",
-      userId: admin.id,
-    });
-    await page.goto("/org/wavesparks/feed");
-    await clerk.signIn({ emailAddress: adminEmail!, page });
-    await page.evaluate(async (organizationId) => {
-      await window.Clerk.setActive({ organization: organizationId });
-    }, otherOrg.id);
-
-    await completeAuthHandoff(page, /\/org\/wavesparks\/onboarding$/);
-    await expect
-      .poll(() => page.evaluate(() => window.Clerk.organization?.id))
-      .toBe(wavespark.id);
+  if (testInfo.project.name === "clerk-chromium") {
+    await page.waitForLoadState("networkidle");
+    await page.goto("/org/wavesparks/admin/members");
     await expect(
-      page.getByRole("heading", { name: "Build a profile strong enough for serious intros" }),
+      page.getByRole("heading", { name: "Members", exact: true }),
     ).toBeVisible();
-
-    if (testInfo.project.name === "clerk-chromium") {
-      await page.waitForLoadState("networkidle");
-      await page.goto("/org/wavesparks/admin/members");
-      await expect(
-        page.getByRole("heading", { name: "Members", exact: true }),
-      ).toBeVisible();
-      await expect(page.getByRole("button", { name: "Invite people" })).toBeVisible();
-    }
-  } finally {
-    await client.organizations.deleteOrganization(otherOrg.id);
-    temporaryOrganizationId = undefined;
+    await expect(page.getByRole("button", { name: "Invite people" })).toBeVisible();
   }
 });
 
-test("keeps a pending Clerk member on public reading while member tools stay locked", async ({
+test("applies local account and profile gates without a Clerk Organization", async ({
   page,
 }) => {
   test.skip(!memberEmail, "Clerk member test account is not configured.");
   await page.goto("/org/wavesparks/feed");
   await clerk.signIn({ emailAddress: memberEmail!, page });
-  await completeAuthHandoff(page, /\/org\/wavesparks\/(pending|onboarding)/);
+  await completeAuthHandoff(
+    page,
+    /\/org\/wavesparks(?:\/(?:pending|onboarding))?$/,
+  );
 
   await page.goto("/org/wavesparks/feed");
-  await expect(page.getByRole("heading", { name: "Wavesparks Forum" })).toBeVisible();
-  await page.goto("/org/wavesparks/posts/pst_1");
+  await expect(page).toHaveURL(/\/org\/wavesparks(?:\?locked=main)?$/);
   await expect(
-    page.getByRole("heading", {
-      name: "Looking for a technical co-founder who cares about climate adaptation",
-    }),
+    page.getByText("Wavesparks Community is invitation-only."),
   ).toBeVisible();
+  await page.goto("/org/wavesparks/posts/pst_1");
+  await expect(page).toHaveURL(/\/org\/wavesparks(?:\?locked=main)?$/);
+  await expect(page.getByText("climate adaptation")).toHaveCount(0);
   await page.goto("/org/wavesparks/people");
-  await expect(page).toHaveURL(/\/org\/wavesparks\/(pending|onboarding)$/);
+  await expect(page).toHaveURL(/\/org\/wavesparks(?:\?locked=main)?$/);
 });

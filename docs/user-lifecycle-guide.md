@@ -4,7 +4,7 @@ This guide explains how invitations, My Spaces, Main Community, Events, profiles
 
 ## The model in one sentence
 
-Your Clerk account connects you to Wavesparks, and a separate invitation controls access to each Main Community or Event Space.
+Clerk signs you in; Wavesparks verifies your personal invitation and controls access to each Main Community or Event Space.
 
 | Area | Scope |
 | --- | --- |
@@ -34,11 +34,11 @@ flowchart LR
 
 Wavesparks has no public registration or shared invitation code.
 
-An Admin assigns your email to Main Community, an Event, or both. If the email is new to Clerk, Clerk sends a private, expiring account invitation. If you already have a Clerk account, Wavesparks connects it directly and sends a sign-in notification.
+An Admin assigns your email to Main Community, an Event, or both. Clerk sends the identity-invitation email, and Wavesparks places a separate private, expiring, single-use authorization token in that link. The same link works whether you already have a Clerk account or need to create one; it never enrolls you in a Clerk Organization.
 
 Open the newest invitation with the exact invited email. A forwarded, revoked, expired, or already-used ticket may not work. If no email arrives, check spam and ask the Admin to inspect the row-level invitation status or resend it.
 
-You accept the Clerk organization invitation once. After the account is connected, every active Space entitlement already assigned to you becomes available independently.
+After you sign in, Wavesparks checks that Clerk has verified the exact invited email and consumes the invitation once. After the account is connected, every active Space entitlement already assigned to you becomes available independently.
 
 ## 2. Start at My Spaces
 
@@ -60,7 +60,7 @@ There is no anonymous community feed. Signing in without an active entitlement d
 
 Effective access requires all of the following:
 
-1. Your Clerk organization account is connected.
+1. Your verified Clerk user is connected to the invited Wavesparks account.
 2. Your account is not globally suspended or deprovisioned.
 3. Your entitlement for this exact Space is active.
 4. The Space lifecycle permits member access.
@@ -159,7 +159,7 @@ Opening a notification rechecks your current account status, Space entitlement, 
 
 ## 10. Main Community invitations after an Event
 
-An Admin may use **Add to Main Community** after an Event. This creates a separate active Main entitlement immediately; you do not accept a second Clerk organization invitation.
+An Admin may use **Add to Main Community** after an Event. This creates a separate active Main entitlement immediately; a connected account does not need another identity or account invitation.
 
 Your Event remains unchanged and available according to its own lifecycle. Main starts as a new community boundary with its own feed, people, follows, intent, and matches.
 

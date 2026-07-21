@@ -124,11 +124,11 @@ async function invitePastedListToCurrentEvent(
   await dialog.getByRole("button", { name: "Invite 1 person" }).click();
 
   await expect(
-    dialog.getByRole("status").getByText("Invitation created"),
+    dialog.getByRole("status").getByText("Invitation sent"),
   ).toBeVisible();
-  await expect(dialog.getByText("Invitation created", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Invitation sent", { exact: true })).toBeVisible();
   await expect(dialog.getByText(input.email, { exact: true })).toBeVisible();
-  await expect(dialog.getByText(/^Invitation created\. Access to .+ added\.$/)).toBeVisible();
+  await expect(dialog.getByText(/^Invitation sent\. Access to .+ added\.$/)).toBeVisible();
 }
 
 test.describe("authenticated member Space flows", () => {

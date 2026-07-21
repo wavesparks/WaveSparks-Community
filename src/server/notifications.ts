@@ -18,6 +18,25 @@ const spaceScopedNotificationTypes = new Set<NotificationType>([
   "manual_intro",
 ]);
 
+function usesMemoryE2EEmailTransport() {
+  if (process.env.E2E_EMAIL_TRANSPORT !== "memory") {
+    return false;
+  }
+
+  const safelyIsolated =
+    process.env.E2E_LOCAL_AUTH_ENABLED === "1" &&
+    !env.databaseUrl &&
+    !env.clerkPublishableKey &&
+    !env.clerkSecretKey &&
+    !process.env.VERCEL;
+  if (!safelyIsolated) {
+    throw new Error(
+      "The in-memory email transport is restricted to isolated local E2E runs.",
+    );
+  }
+  return true;
+}
+
 async function getResend() {
   if (!env.resendApiKey) {
     return undefined;
@@ -35,19 +54,27 @@ export async function sendNotificationEmail(input: {
   to: string;
   subject: string;
   html: string;
+  idempotencyKey?: string;
 }) {
+  if (usesMemoryE2EEmailTransport()) {
+    return { id: "e2e-memory-email" };
+  }
+
   const client = await getResend();
   if (!client) {
-    console.info("[wavesparks] email skipped", input.subject, input.to);
+    console.info("[wavesparks] email skipped: provider unconfigured");
     return;
   }
 
-  const result = await client.emails.send({
+  const message = {
     from: env.resendFromEmail,
     to: input.to,
     subject: input.subject,
     html: input.html,
-  });
+  };
+  const result = input.idempotencyKey
+    ? await client.emails.send(message, { idempotencyKey: input.idempotencyKey })
+    : await client.emails.send(message);
   if (result.error) {
     throw new Error(`Resend email failed: ${result.error.message}`);
   }
@@ -111,7 +138,7 @@ export function enqueueNotificationEmail(input: {
       }
       await sendNotificationEmail(input);
     } catch (error) {
-      console.error("[wavesparks] email failed", input.subject, input.to, error);
+      console.error("[wavesparks] email failed", error);
     }
   });
 }

@@ -226,8 +226,8 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       };
     case "member_invited":
       return {
-        title: "Invitation created",
-        body: "The invitation is ready. If this person already had an account, their access was added immediately.",
+        title: "Invitation sent",
+        body: "A private, expiring invitation link was sent by email.",
       };
     case "member_invite_failed":
       return {
@@ -329,21 +329,6 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
         title: "Check the roster format",
         body: "Each line needs an email address, optionally followed by a comma and name.",
       };
-    case "cohort_clerk_unconfigured":
-      return {
-        title: "Invitations are not configured",
-        body: "Complete the account service setup before sending invitations.",
-      };
-    case "cohort_clerk_session_required":
-      return {
-        title: "Choose your organization first",
-        body: "Switch to the Wavesparks organization before adding participants.",
-      };
-    case "cohort_clerk_admin_required":
-      return {
-        title: "Admin permission required",
-        body: "Use an organization admin account to send invitations.",
-      };
     case "cohort_members_promoted":
       return {
         title: "Added to Wavesparks Community",
@@ -364,10 +349,10 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
         title: "Member updated",
         body: "The account status, access, and admin note are saved.",
       };
-    case "membership_clerk_failed":
+    case "membership_invitation_failed":
       return {
-        title: "Saved, but account update failed",
-        body: "Your decision is saved. Review the account error in member details, then try again.",
+        title: "Saved, but invitation update failed",
+        body: "Your decision is saved. Review the invitation error in member details, then try again.",
       };
     case "org_settings_saved":
       return {
