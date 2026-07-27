@@ -138,7 +138,13 @@ export default async function AdminMatchesPage({
           </div>
           {matchCards.map(({ match, sourceProfile, targetProfile }) => {
             return (
-              <Card className="space-y-4" key={match.id}>
+              <Card
+                className="space-y-4"
+                data-match-type={match.matchType}
+                data-space-id={match.spaceId ?? ""}
+                data-testid="admin-match-card"
+                key={match.id}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">

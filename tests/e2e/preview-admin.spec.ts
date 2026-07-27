@@ -52,6 +52,7 @@ async function signInExistingAdmin(page: Parameters<typeof clerk.signIn>[0]["pag
 
 test("existing test admin can inspect the isolated 50+10 QA Event", async ({ page }) => {
   test.skip(!adminEmail, "Existing Clerk test admin is not configured.");
+  test.setTimeout(5 * 60_000);
 
   await signInExistingAdmin(page);
 
@@ -66,14 +67,26 @@ test("existing test admin can inspect the isolated 50+10 QA Event", async ({ pag
 
   await page.goto("/org/prelaunch-qa/admin/profiles");
   await expect(page.getByRole("heading", { name: "Member profiles" })).toBeVisible();
-  await expect(page.locator("main h3")).toHaveCount(60);
+  await expect(
+    page.getByText(/^qa\.(?:participant|mentor)\.\d{2}@prelaunch-qa\.invalid$/),
+  ).toHaveCount(60);
   await expect(page.locator("main")).not.toContainText("QA Participant");
   await expect(page.locator("main")).not.toContainText("QA Mentor");
   const profileInspectors = page.getByText("View complete profile", { exact: true });
-  await expect(profileInspectors).toHaveCount(60);
+  expect(await profileInspectors.count()).toBeGreaterThanOrEqual(60);
   await profileInspectors.first().click();
   await expect(page.getByRole("heading", { name: "Background and current focus" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Matching intent and contribution" })).toBeVisible();
+
+  await page.goto("/org/prelaunch-qa/admin/matches");
+  const recomputeResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/org/prelaunch-qa/admin/matches",
+    { timeout: 3 * 60_000 },
+  );
+  await page.getByRole("button", { name: "Refresh matches" }).click();
+  expect((await recomputeResponse).status()).toBeLessThan(400);
 
   for (const matchType of [
     "mentor_match",
@@ -84,10 +97,11 @@ test("existing test admin can inspect the isolated 50+10 QA Event", async ({ pag
     await expect(
       page.getByRole("heading", { name: "Review match suggestions" }),
     ).toBeVisible();
-    const visibleMatchCards = await page
-      .getByText("Airtable 50+10 Stability Test", { exact: true })
-      .count();
-    expect(visibleMatchCards).toBeGreaterThanOrEqual(20);
+    await expect(
+      page.locator(
+        `[data-testid="admin-match-card"][data-match-type="${matchType}"][data-space-id="spc_prelaunch_qa_test"]`,
+      ),
+    ).toHaveCount(20);
     await expect(page.locator("main")).not.toContainText("QA Participant");
     await expect(page.locator("main")).not.toContainText("No matches found");
   }

@@ -393,6 +393,14 @@ describe("prelaunch QA deterministic rows", () => {
     expect(rows.users.every((user) => user.email.endsWith("@prelaunch-qa.invalid"))).toBe(true);
     expect(rows.users.every((user) => !user.clerkUserId && user.imageUrl === "")).toBe(true);
     expect(rows.profiles.every((profile) => profile.profilePhoto === "")).toBe(true);
+    expect(
+      rows.memberships.filter(
+        (membership) =>
+          membership.affiliationType === "mentor" &&
+          membership.mentorStatus === "approved" &&
+          membership.mentorReviewedAt instanceof Date,
+      ),
+    ).toHaveLength(10);
 
     const participantProfile = rows.profiles.find(
       (profile) => profile.fullName === "QA Participant 01",

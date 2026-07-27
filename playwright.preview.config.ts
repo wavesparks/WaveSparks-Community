@@ -131,9 +131,15 @@ if (bypassUrl) {
     parsedBypass.origin !== previewUrl.origin ||
     parsedBypass.username ||
     parsedBypass.password ||
-    !parsedBypass.searchParams.has("_vercel_share")
+    !(
+      parsedBypass.searchParams.has("_vercel_share") ||
+      (parsedBypass.searchParams.has("x-vercel-protection-bypass") &&
+        parsedBypass.searchParams.get("x-vercel-set-bypass-cookie") === "true")
+    )
   ) {
-    throw new Error("PREVIEW_BYPASS_URL must be a same-origin Vercel share URL.");
+    throw new Error(
+      "PREVIEW_BYPASS_URL must be a same-origin Vercel share or automation-bypass URL.",
+    );
   }
 }
 
