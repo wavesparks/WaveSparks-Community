@@ -35,6 +35,9 @@ export type PostType =
 export type OpportunitySource = "member" | "mentor" | "official";
 export type PostStatus = "active" | "closed" | "archived";
 export type CommentStatus = "visible" | "removed";
+export type PostImageUploadStatus = "staged" | "processing" | "ready" | "failed";
+export type PostLinkPreviewFetchStatus = "staged" | "fetching" | "ready" | "failed";
+export type PostAttachmentModerationStatus = "visible" | "removed";
 export type MatchType = string;
 export type MatchDirection = "mutual" | "seeker_provider";
 export type MatchConfidence = "high" | "medium" | "low";
@@ -55,7 +58,9 @@ export type NotificationType =
   | "intro_accepted"
   | "intro_declined"
   | "manual_intro"
-  | "admin_note";
+  | "admin_note"
+  | "post_mentioned"
+  | "comment_mentioned";
 export type ProfileLinkType = "linkedin" | "github" | "website" | "x";
 export type CohortStatus = "active" | "archived";
 export type CohortMemberStatus = "invited" | "promoted";
@@ -363,6 +368,105 @@ export interface Post {
   updatedAt: string;
 }
 
+export interface PostImage {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  uploaderMembershipId: string;
+  postId?: string;
+  blobPathname: string;
+  contentType: string;
+  sizeBytes: number;
+  width?: number;
+  height?: number;
+  alt?: string;
+  position: number;
+  uploadStatus: PostImageUploadStatus;
+  uploadError?: string;
+  moderationStatus: PostAttachmentModerationStatus;
+  moderatedByMembershipId?: string;
+  moderatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PostLinkPreview {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  uploaderMembershipId: string;
+  postId?: string;
+  originalUrl: string;
+  title?: string;
+  description?: string;
+  siteName?: string;
+  thumbnailBlobPathname?: string;
+  thumbnailContentType?: string;
+  thumbnailSizeBytes?: number;
+  thumbnailWidth?: number;
+  thumbnailHeight?: number;
+  fetchStatus: PostLinkPreviewFetchStatus;
+  fetchError?: string;
+  moderationStatus: PostAttachmentModerationStatus;
+  moderatedByMembershipId?: string;
+  moderatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PostMention {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  postId: string;
+  mentionedMembershipId: string;
+  label: string;
+  start: number;
+  end: number;
+  createdAt: string;
+}
+
+export interface CommentMention {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  postId: string;
+  commentId: string;
+  mentionedMembershipId: string;
+  label: string;
+  start: number;
+  end: number;
+  createdAt: string;
+}
+
+export interface RichTextMention {
+  membershipId: string;
+  label: string;
+  start: number;
+  end: number;
+  href?: string;
+}
+
+export interface PostImageView {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  alt: string;
+  position: number;
+}
+
+export interface PostLinkPreviewView {
+  id: string;
+  url: string;
+  title?: string;
+  description?: string;
+  siteName?: string;
+  thumbnailUrl?: string;
+  thumbnailWidth?: number;
+  thumbnailHeight?: number;
+}
+
 export interface Follow {
   id: string;
   orgId: string;
@@ -385,6 +489,7 @@ export interface Comment {
   postId: string;
   authorMembershipId: string;
   body: string;
+  mentions?: RichTextMention[];
   status: CommentStatus;
   createdAt: string;
   updatedAt: string;
@@ -477,6 +582,8 @@ export interface Notification {
   title: string;
   body: string;
   link: string;
+  sourcePostId?: string;
+  sourceCommentId?: string;
   readAt?: string;
   createdAt: string;
 }
@@ -575,6 +682,9 @@ export interface FeedPostView {
   opportunitySource?: OpportunitySource;
   title: string;
   body: string;
+  images: PostImageView[];
+  linkPreview?: PostLinkPreviewView;
+  mentions: RichTextMention[];
   tags: string[];
   relatedRolesNeeded: string[];
   status: PostStatus;

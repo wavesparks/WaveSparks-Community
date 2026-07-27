@@ -8,6 +8,7 @@ import * as schema from "@/db/schema";
 
 let _client: postgres.Sql | undefined;
 let _db: ReturnType<typeof drizzleNeonHttp<typeof schema>> | undefined;
+let _transactionDb: ReturnType<typeof drizzle<typeof schema>> | undefined;
 
 function createClient() {
   if (!env.databaseUrl) {
@@ -45,6 +46,14 @@ export function getDb() {
   return _db;
 }
 
+export function getTransactionDb() {
+  if (!_transactionDb) {
+    _transactionDb = drizzle(getSqlClient(), { schema });
+  }
+
+  return _transactionDb;
+}
+
 export function getMigrationDb() {
-  return drizzle(getSqlClient(), { schema });
+  return getTransactionDb();
 }

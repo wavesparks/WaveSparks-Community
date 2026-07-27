@@ -364,6 +364,11 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
         title: "Post settings saved",
         body: "The post settings are saved and the feed is up to date.",
       };
+    case "post_media_moderation_updated":
+      return {
+        title: "Post media updated",
+        body: "The image or link preview moderation setting is saved.",
+      };
     case "comment_moderation_updated":
       return {
         title: "Comment settings saved",

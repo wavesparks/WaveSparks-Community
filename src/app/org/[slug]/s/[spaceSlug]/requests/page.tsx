@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import {
   markNotificationsReadInSpaceAction,
   respondIntroInSpaceAction,
@@ -12,6 +14,7 @@ import { SubmitButton } from "@/components/ui/submit-button";
 import { getCommunityDisplayName } from "@/lib/community-copy";
 import type { IntroStatus } from "@/lib/domain";
 import { singleQueryValue } from "@/lib/feed-filters";
+import { safeNotificationHref } from "@/lib/notification-links";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 import {
   getIntroRequestViewsForSpace,
@@ -207,11 +210,9 @@ export default async function SpaceRequestsPage({
             ) : null}
           </div>
           <div className="space-y-3">
-            {notifications.map((notification) => (
-              <div
-                className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4"
-                key={notification.id}
-              >
+            {notifications.map((notification) => {
+              const href = safeNotificationHref(slug, notification.link, space.slug);
+              const content = (
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-[var(--ink)]">{notification.title}</p>
@@ -221,8 +222,24 @@ export default async function SpaceRequestsPage({
                   </div>
                   {!notification.readAt ? <Badge variant="accent">new</Badge> : null}
                 </div>
-              </div>
-            ))}
+              );
+              return href ? (
+                <Link
+                  className="block rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 transition hover:border-[var(--accent)]/40"
+                  href={href}
+                  key={notification.id}
+                >
+                  {content}
+                </Link>
+              ) : (
+                <div
+                  className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4"
+                  key={notification.id}
+                >
+                  {content}
+                </div>
+              );
+            })}
             {!notifications.length ? (
               <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                 <p className="text-sm text-[var(--ink-soft)]">

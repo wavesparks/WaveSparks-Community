@@ -12,6 +12,7 @@ import { SubmitButton } from "@/components/ui/submit-button";
 import { getViewerContext } from "@/lib/auth";
 import type { IntroStatus } from "@/lib/domain";
 import { singleQueryValue } from "@/lib/feed-filters";
+import { safeNotificationHref } from "@/lib/notification-links";
 import {
   hasUnreadNotificationsForMembershipWithSpaceAccess,
   listVisibleSpacesForMembership,
@@ -54,11 +55,6 @@ function requestQueueHref(slug: string, queue: (typeof requestQueues)[number]) {
   if (queue.status) params.set("request_status", queue.status);
   const query = params.toString();
   return `/org/${slug}/requests${query ? `?${query}` : ""}`;
-}
-
-function safeNotificationHref(slug: string, link: string) {
-  const orgRoot = `/org/${slug}`;
-  return link === orgRoot || link.startsWith(`${orgRoot}/`) ? link : undefined;
 }
 
 export default async function AccountInboxPage({

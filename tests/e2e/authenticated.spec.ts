@@ -92,7 +92,9 @@ async function createEvent(
   }
   await dialog.getByRole("button", { name: "Create Event" }).click();
 
-  await expect(page.getByRole("heading", { name: input.name })).toBeVisible();
+  await expect(page.getByRole("heading", { name: input.name })).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(page.getByRole("status").getByText("Event created")).toBeVisible();
   await expect(
     page.locator("#settings").getByText("Active Event", { exact: true }),

@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
-import { getDb } from "@/db/client";
+import { getDb, getTransactionDb } from "@/db/client";
 import * as dbSchema from "@/db/schema";
 import {
   seedAnalyticsEvents,
@@ -27,6 +27,10 @@ import {
   WAVESPARKS_COMMUNITY_NAME,
 } from "@/lib/community-copy";
 import { sanitizeMatchFeedbackReasons } from "@/lib/match-feedback";
+import {
+  mentionLabelForProfile,
+  validateMentionRanges,
+} from "@/lib/post-content";
 import {
   buildDailySeriesFromCounts,
   buildOrgAnalyticsSnapshot,
@@ -58,6 +62,7 @@ import type {
   CohortMember,
   CohortMemberStatus,
   Comment,
+  CommentMention,
   Follow,
   IntroRequest,
   IntroStatus,
@@ -81,10 +86,16 @@ import type {
   OrgAnalyticsSnapshot,
   Organization,
   Post,
+  PostImage,
+  PostImageView,
+  PostLinkPreview,
+  PostLinkPreviewView,
+  PostMention,
   PostSave,
   PostType,
   Profile,
   ProfileLink,
+  RichTextMention,
   Space,
   SpaceAccessStatus,
   SpaceIntent,
@@ -125,7 +136,11 @@ export interface StoreState {
   profiles: Profile[];
   profileLinks: ProfileLink[];
   posts: Post[];
+  postImages: PostImage[];
+  postLinkPreviews: PostLinkPreview[];
+  postMentions: PostMention[];
   comments: Comment[];
+  commentMentions: CommentMention[];
   follows: Follow[];
   postSaves: PostSave[];
   matchTypeConfigs: MatchTypeConfig[];
@@ -142,6 +157,8 @@ const spaceScopedNotificationTypes = new Set<Notification["type"]>([
   "intro_accepted",
   "intro_declined",
   "manual_intro",
+  "post_mentioned",
+  "comment_mentioned",
 ]);
 
 export interface AdminOverviewData {
@@ -352,6 +369,44 @@ export interface PostThreadRecord {
   post: Post;
   author?: MembershipRecord;
   comments: PostThreadCommentRecord[];
+  images: PostImageView[];
+  linkPreview?: PostLinkPreviewView;
+  mentions: RichTextMention[];
+}
+
+function toPostImageView(image: PostImage): PostImageView {
+  return {
+    id: image.id,
+    url: `/api/post-images/${image.id}`,
+    width: image.width ?? 1,
+    height: image.height ?? 1,
+    alt: image.alt?.trim() || "Post image",
+    position: image.position,
+  };
+}
+
+function toPostLinkPreviewView(preview: PostLinkPreview): PostLinkPreviewView {
+  return {
+    id: preview.id,
+    url: preview.originalUrl,
+    title: preview.title,
+    description: preview.description,
+    siteName: preview.siteName,
+    thumbnailUrl: preview.thumbnailBlobPathname
+      ? `/api/post-link-previews/${preview.id}/thumbnail`
+      : undefined,
+    thumbnailWidth: preview.thumbnailWidth,
+    thumbnailHeight: preview.thumbnailHeight,
+  };
+}
+
+function toRichTextMention(mention: PostMention | CommentMention): RichTextMention {
+  return {
+    membershipId: mention.mentionedMembershipId,
+    label: mention.label,
+    start: mention.start,
+    end: mention.end,
+  };
 }
 
 export interface PublicFeedPostRecord {
@@ -587,7 +642,11 @@ function initializeStore(): StoreState {
     profiles,
     profileLinks: structuredClone(seedProfileLinks),
     posts: structuredClone(seedPosts).map((post) => ({ ...post, spaceId: mainSpace.id })),
+    postImages: [],
+    postLinkPreviews: [],
+    postMentions: [],
     comments: structuredClone(seedComments),
+    commentMentions: [],
     follows: structuredClone(seedFollows).map((follow) => ({
       ...follow,
       spaceId: mainSpace.id,
@@ -643,6 +702,10 @@ function initializeStore(): StoreState {
 }
 
 function ensureStoreShape(store: StoreState) {
+  store.postImages ??= [];
+  store.postLinkPreviews ??= [];
+  store.postMentions ??= [];
+  store.commentMentions ??= [];
   store.follows ??= structuredClone(seedFollows);
   store.postSaves ??= structuredClone(seedPostSaves);
   store.passwordCredentials ??= [];
@@ -1051,6 +1114,89 @@ function postFromRow(row: typeof dbSchema.posts.$inferSelect): Post {
   };
 }
 
+function postImageFromRow(row: typeof dbSchema.postImages.$inferSelect): PostImage {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    uploaderMembershipId: row.uploaderMembershipId,
+    postId: row.postId ?? undefined,
+    blobPathname: row.blobPathname,
+    contentType: row.contentType,
+    sizeBytes: row.sizeBytes,
+    width: row.width ?? undefined,
+    height: row.height ?? undefined,
+    alt: row.alt ?? undefined,
+    position: row.position,
+    uploadStatus: row.uploadStatus,
+    uploadError: row.uploadError ?? undefined,
+    moderationStatus: row.moderationStatus,
+    moderatedByMembershipId: row.moderatedByMembershipId ?? undefined,
+    moderatedAt: maybeIso(row.moderatedAt),
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function postLinkPreviewFromRow(
+  row: typeof dbSchema.postLinkPreviews.$inferSelect,
+): PostLinkPreview {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    uploaderMembershipId: row.uploaderMembershipId,
+    postId: row.postId ?? undefined,
+    originalUrl: row.originalUrl,
+    title: row.title ?? undefined,
+    description: row.description ?? undefined,
+    siteName: row.siteName ?? undefined,
+    thumbnailBlobPathname: row.thumbnailBlobPathname ?? undefined,
+    thumbnailContentType: row.thumbnailContentType ?? undefined,
+    thumbnailSizeBytes: row.thumbnailSizeBytes ?? undefined,
+    thumbnailWidth: row.thumbnailWidth ?? undefined,
+    thumbnailHeight: row.thumbnailHeight ?? undefined,
+    fetchStatus: row.fetchStatus,
+    fetchError: row.fetchError ?? undefined,
+    moderationStatus: row.moderationStatus,
+    moderatedByMembershipId: row.moderatedByMembershipId ?? undefined,
+    moderatedAt: maybeIso(row.moderatedAt),
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function postMentionFromRow(row: typeof dbSchema.postMentions.$inferSelect): PostMention {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    postId: row.postId,
+    mentionedMembershipId: row.mentionedMembershipId,
+    label: row.label,
+    start: row.start,
+    end: row.end,
+    createdAt: requiredIso(row.createdAt),
+  };
+}
+
+function commentMentionFromRow(
+  row: typeof dbSchema.commentMentions.$inferSelect,
+): CommentMention {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    postId: row.postId,
+    commentId: row.commentId,
+    mentionedMembershipId: row.mentionedMembershipId,
+    label: row.label,
+    start: row.start,
+    end: row.end,
+    createdAt: requiredIso(row.createdAt),
+  };
+}
+
 function followFromRow(row: typeof dbSchema.follows.$inferSelect): Follow {
   return {
     id: row.id,
@@ -1190,6 +1336,8 @@ function notificationFromRow(row: typeof dbSchema.notifications.$inferSelect): N
     title: row.title,
     body: row.body,
     link: row.link,
+    sourcePostId: row.sourcePostId ?? undefined,
+    sourceCommentId: row.sourceCommentId ?? undefined,
     readAt: maybeIso(row.readAt),
     createdAt: requiredIso(row.createdAt),
   };
@@ -1322,6 +1470,55 @@ function postInsert(post: Post): typeof dbSchema.posts.$inferInsert {
   };
 }
 
+function postImageInsert(image: PostImage): typeof dbSchema.postImages.$inferInsert {
+  return {
+    ...image,
+    postId: image.postId,
+    width: image.width,
+    height: image.height,
+    alt: image.alt,
+    uploadError: image.uploadError,
+    moderatedByMembershipId: image.moderatedByMembershipId,
+    moderatedAt: maybeDate(image.moderatedAt),
+    createdAt: new Date(image.createdAt),
+    updatedAt: new Date(image.updatedAt),
+  };
+}
+
+function postLinkPreviewInsert(
+  preview: PostLinkPreview,
+): typeof dbSchema.postLinkPreviews.$inferInsert {
+  return {
+    ...preview,
+    postId: preview.postId,
+    title: preview.title,
+    description: preview.description,
+    siteName: preview.siteName,
+    thumbnailBlobPathname: preview.thumbnailBlobPathname,
+    thumbnailContentType: preview.thumbnailContentType,
+    thumbnailSizeBytes: preview.thumbnailSizeBytes,
+    thumbnailWidth: preview.thumbnailWidth,
+    thumbnailHeight: preview.thumbnailHeight,
+    fetchError: preview.fetchError,
+    moderatedByMembershipId: preview.moderatedByMembershipId,
+    moderatedAt: maybeDate(preview.moderatedAt),
+    createdAt: new Date(preview.createdAt),
+    updatedAt: new Date(preview.updatedAt),
+  };
+}
+
+function postMentionInsert(
+  mention: PostMention,
+): typeof dbSchema.postMentions.$inferInsert {
+  return { ...mention, createdAt: new Date(mention.createdAt) };
+}
+
+function commentMentionInsert(
+  mention: CommentMention,
+): typeof dbSchema.commentMentions.$inferInsert {
+  return { ...mention, createdAt: new Date(mention.createdAt) };
+}
+
 function postSaveInsert(save: PostSave): typeof dbSchema.postSaves.$inferInsert {
   return {
     ...save,
@@ -1331,7 +1528,11 @@ function postSaveInsert(save: PostSave): typeof dbSchema.postSaves.$inferInsert 
 
 function commentInsert(comment: Comment): typeof dbSchema.comments.$inferInsert {
   return {
-    ...comment,
+    id: comment.id,
+    postId: comment.postId,
+    authorMembershipId: comment.authorMembershipId,
+    body: comment.body,
+    status: comment.status,
     createdAt: new Date(comment.createdAt),
     updatedAt: new Date(comment.updatedAt),
   };
@@ -1396,6 +1597,8 @@ function introRequestInsert(intro: IntroRequest): typeof dbSchema.introRequests.
 function notificationInsert(notification: Notification): typeof dbSchema.notifications.$inferInsert {
   return {
     ...notification,
+    sourcePostId: notification.sourcePostId,
+    sourceCommentId: notification.sourceCommentId,
     createdAt: new Date(notification.createdAt),
     readAt: maybeDate(notification.readAt),
   };
@@ -6388,6 +6591,372 @@ export async function listPostsForSpace(
   return listPostsForOrg(space.orgId, { ...options, spaceId });
 }
 
+export async function getPostImageById(imageId: string) {
+  if (!usesDatabase) {
+    return getStore().postImages.find((image) => image.id === imageId);
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.postImages)
+    .where(eq(dbSchema.postImages.id, imageId))
+    .limit(1);
+  return row ? postImageFromRow(row) : undefined;
+}
+
+export async function createStagedPostImage(image: PostImage) {
+  if (image.postId || image.uploadStatus !== "staged") {
+    throw new Error("A new post image must be staged before it can be claimed.");
+  }
+  if (!usesDatabase) {
+    const store = getStore();
+    if (store.postImages.some((candidate) => candidate.id === image.id)) {
+      throw new Error("This upload has already been staged.");
+    }
+    store.postImages.push(image);
+    return image;
+  }
+  const [row] = await getDb()
+    .insert(dbSchema.postImages)
+    .values(postImageInsert(image))
+    .returning();
+  return postImageFromRow(row);
+}
+
+export async function updatePostImageUpload(
+  imageId: string,
+  input: Partial<
+    Pick<
+      PostImage,
+      | "blobPathname"
+      | "contentType"
+      | "sizeBytes"
+      | "width"
+      | "height"
+      | "uploadStatus"
+      | "uploadError"
+    >
+  >,
+  expected: {
+    blobPathname?: string;
+    uploadStatus?: PostImage["uploadStatus"];
+  } = {},
+) {
+  const updatedAt = new Date().toISOString();
+  if (!usesDatabase) {
+    const image = getStore().postImages.find((candidate) => candidate.id === imageId);
+    if (
+      !image ||
+      image.postId ||
+      (expected.blobPathname !== undefined &&
+        image.blobPathname !== expected.blobPathname) ||
+      (expected.uploadStatus !== undefined &&
+        image.uploadStatus !== expected.uploadStatus)
+    ) {
+      return null;
+    }
+    Object.assign(image, input, { updatedAt });
+    return image;
+  }
+  const [row] = await getDb()
+    .update(dbSchema.postImages)
+    .set({
+      ...input,
+      width: input.width,
+      height: input.height,
+      uploadError: input.uploadError,
+      updatedAt: new Date(updatedAt),
+    })
+    .where(
+      and(
+        eq(dbSchema.postImages.id, imageId),
+        sql`${dbSchema.postImages.postId} is null`,
+        expected.blobPathname === undefined
+          ? undefined
+          : eq(dbSchema.postImages.blobPathname, expected.blobPathname),
+        expected.uploadStatus === undefined
+          ? undefined
+          : eq(dbSchema.postImages.uploadStatus, expected.uploadStatus),
+      ),
+    )
+    .returning();
+  return row ? postImageFromRow(row) : null;
+}
+
+export async function deleteStagedPostImageRecord(imageId: string) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const index = store.postImages.findIndex(
+      (image) => image.id === imageId && !image.postId,
+    );
+    if (index < 0) return false;
+    store.postImages.splice(index, 1);
+    return true;
+  }
+  const rows = await getDb()
+    .delete(dbSchema.postImages)
+    .where(and(eq(dbSchema.postImages.id, imageId), sql`${dbSchema.postImages.postId} is null`))
+    .returning({ id: dbSchema.postImages.id });
+  return rows.length > 0;
+}
+
+export async function listPostImagesForPostIds(
+  postIds: string[],
+  options: { includeRemoved?: boolean; includeUnready?: boolean } = {},
+) {
+  const uniqueIds = [...new Set(postIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    return getStore().postImages
+      .filter((image) => image.postId && uniqueIds.includes(image.postId))
+      .filter((image) => options.includeRemoved || image.moderationStatus === "visible")
+      .filter((image) => options.includeUnready || image.uploadStatus === "ready")
+      .sort((left, right) => left.position - right.position);
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.postImages)
+    .where(
+      and(
+        inArray(dbSchema.postImages.postId, uniqueIds),
+        options.includeRemoved
+          ? undefined
+          : eq(dbSchema.postImages.moderationStatus, "visible"),
+        options.includeUnready ? undefined : eq(dbSchema.postImages.uploadStatus, "ready"),
+      ),
+    )
+    .orderBy(asc(dbSchema.postImages.position));
+  return rows.map(postImageFromRow);
+}
+
+export async function getPostLinkPreviewById(previewId: string) {
+  if (!usesDatabase) {
+    return getStore().postLinkPreviews.find((preview) => preview.id === previewId);
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.postLinkPreviews)
+    .where(eq(dbSchema.postLinkPreviews.id, previewId))
+    .limit(1);
+  return row ? postLinkPreviewFromRow(row) : undefined;
+}
+
+export async function createStagedPostLinkPreview(preview: PostLinkPreview) {
+  if (preview.postId) throw new Error("A new link preview must be staged first.");
+  if (!usesDatabase) {
+    const store = getStore();
+    if (store.postLinkPreviews.some((candidate) => candidate.id === preview.id)) {
+      throw new Error("This link preview already exists.");
+    }
+    store.postLinkPreviews.push(preview);
+    return preview;
+  }
+  const [row] = await getDb()
+    .insert(dbSchema.postLinkPreviews)
+    .values(postLinkPreviewInsert(preview))
+    .returning();
+  return postLinkPreviewFromRow(row);
+}
+
+export async function deleteStagedPostLinkPreviewRecord(previewId: string) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const index = store.postLinkPreviews.findIndex(
+      (preview) => preview.id === previewId && !preview.postId,
+    );
+    if (index < 0) return false;
+    store.postLinkPreviews.splice(index, 1);
+    return true;
+  }
+  const rows = await getDb()
+    .delete(dbSchema.postLinkPreviews)
+    .where(
+      and(
+        eq(dbSchema.postLinkPreviews.id, previewId),
+        sql`${dbSchema.postLinkPreviews.postId} is null`,
+      ),
+    )
+    .returning({ id: dbSchema.postLinkPreviews.id });
+  return rows.length > 0;
+}
+
+export async function listPostLinkPreviewsForPostIds(
+  postIds: string[],
+  options: { includeRemoved?: boolean; includeUnready?: boolean } = {},
+) {
+  const uniqueIds = [...new Set(postIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    return getStore().postLinkPreviews
+      .filter((preview) => preview.postId && uniqueIds.includes(preview.postId))
+      .filter((preview) => options.includeRemoved || preview.moderationStatus === "visible")
+      .filter((preview) => options.includeUnready || preview.fetchStatus === "ready");
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.postLinkPreviews)
+    .where(
+      and(
+        inArray(dbSchema.postLinkPreviews.postId, uniqueIds),
+        options.includeRemoved
+          ? undefined
+          : eq(dbSchema.postLinkPreviews.moderationStatus, "visible"),
+        options.includeUnready
+          ? undefined
+          : eq(dbSchema.postLinkPreviews.fetchStatus, "ready"),
+      ),
+    );
+  return rows.map(postLinkPreviewFromRow);
+}
+
+export async function listPostMentionsForPostIds(postIds: string[]) {
+  const uniqueIds = [...new Set(postIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    return getStore().postMentions
+      .filter((mention) => uniqueIds.includes(mention.postId))
+      .sort((left, right) => left.start - right.start);
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.postMentions)
+    .where(inArray(dbSchema.postMentions.postId, uniqueIds))
+    .orderBy(asc(dbSchema.postMentions.start));
+  return rows.map(postMentionFromRow);
+}
+
+export async function listCommentMentionsForCommentIds(commentIds: string[]) {
+  const uniqueIds = [...new Set(commentIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    return getStore().commentMentions
+      .filter((mention) => uniqueIds.includes(mention.commentId))
+      .sort((left, right) => left.start - right.start);
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.commentMentions)
+    .where(inArray(dbSchema.commentMentions.commentId, uniqueIds))
+    .orderBy(asc(dbSchema.commentMentions.start));
+  return rows.map(commentMentionFromRow);
+}
+
+export async function listMentionableMembershipIdsForSpace(
+  spaceId: string,
+  membershipIds: string[],
+) {
+  const uniqueIds = [...new Set(membershipIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    const store = getStore();
+    const profileMembershipIds = new Set(
+      store.profiles
+        .filter((profile) => profile.onboardingComplete)
+        .map((profile) => profile.membershipId),
+    );
+    const connectedIds = new Set(
+      store.memberships
+        .filter(
+          (membership) =>
+            uniqueIds.includes(membership.id) && membership.accountStatus === "connected",
+        )
+        .map((membership) => membership.id),
+    );
+    return store.spaceMemberships
+      .filter(
+        (membership) =>
+          membership.spaceId === spaceId &&
+          membership.accessStatus === "active" &&
+          connectedIds.has(membership.membershipId) &&
+          profileMembershipIds.has(membership.membershipId),
+      )
+      .map((membership) => membership.membershipId);
+  }
+  const rows = await getDb()
+    .select({ membershipId: dbSchema.spaceMemberships.membershipId })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(
+      dbSchema.memberships,
+      eq(dbSchema.memberships.id, dbSchema.spaceMemberships.membershipId),
+    )
+    .innerJoin(
+      dbSchema.profiles,
+      eq(dbSchema.profiles.membershipId, dbSchema.spaceMemberships.membershipId),
+    )
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, spaceId),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+        eq(dbSchema.memberships.accountStatus, "connected"),
+        eq(dbSchema.profiles.onboardingComplete, true),
+        inArray(dbSchema.spaceMemberships.membershipId, uniqueIds),
+      ),
+    );
+  return rows.map((row) => row.membershipId);
+}
+
+export async function listOrphanedPostMedia(before: string) {
+  const cutoff = new Date(before);
+  if (!usesDatabase) {
+    const store = getStore();
+    return {
+      images: store.postImages.filter(
+        (image) => !image.postId && new Date(image.createdAt) < cutoff,
+      ),
+      previews: store.postLinkPreviews.filter(
+        (preview) => !preview.postId && new Date(preview.createdAt) < cutoff,
+      ),
+    };
+  }
+  const [imageRows, previewRows] = await Promise.all([
+    getDb()
+      .select()
+      .from(dbSchema.postImages)
+      .where(
+        and(
+          sql`${dbSchema.postImages.postId} is null`,
+          sql`${dbSchema.postImages.createdAt} < ${cutoff}`,
+        ),
+      ),
+    getDb()
+      .select()
+      .from(dbSchema.postLinkPreviews)
+      .where(
+        and(
+          sql`${dbSchema.postLinkPreviews.postId} is null`,
+          sql`${dbSchema.postLinkPreviews.createdAt} < ${cutoff}`,
+        ),
+      ),
+  ]);
+  return {
+    images: imageRows.map(postImageFromRow),
+    previews: previewRows.map(postLinkPreviewFromRow),
+  };
+}
+
+export async function listTrackedPostMediaPathnames() {
+  if (!usesDatabase) {
+    const store = getStore();
+    return [
+      ...store.postImages.map((image) => image.blobPathname),
+      ...store.postLinkPreviews.flatMap((preview) =>
+        preview.thumbnailBlobPathname ? [preview.thumbnailBlobPathname] : [],
+      ),
+    ];
+  }
+  const [images, previews] = await Promise.all([
+    getDb().select({ pathname: dbSchema.postImages.blobPathname }).from(dbSchema.postImages),
+    getDb()
+      .select({ pathname: dbSchema.postLinkPreviews.thumbnailBlobPathname })
+      .from(dbSchema.postLinkPreviews),
+  ]);
+  return [
+    ...images.map((image) => image.pathname),
+    ...previews.flatMap((preview) =>
+      preview.pathname ? [preview.pathname] : [],
+    ),
+  ];
+}
+
 /**
  * Admin audit totals for one Space. Every branch starts from the explicit
  * Space id; callers never load organization-wide resources and filter them in
@@ -7707,8 +8276,12 @@ export async function getPostThreadRecord(
         const membership = store.memberships.find(
           (candidate) => candidate.id === comment.authorMembershipId,
         );
+        const mentions = store.commentMentions
+          .filter((mention) => mention.commentId === comment.id)
+          .sort((left, right) => left.start - right.start)
+          .map(toRichTextMention);
         return {
-          comment,
+          comment: { ...comment, mentions },
           membership,
           profile: membership
             ? store.profiles.find((profile) => profile.membershipId === membership.id)
@@ -7716,6 +8289,21 @@ export async function getPostThreadRecord(
         };
       });
 
+    const images = store.postImages
+      .filter(
+        (image) =>
+          image.postId === post.id &&
+          image.uploadStatus === "ready" &&
+          image.moderationStatus === "visible",
+      )
+      .sort((left, right) => left.position - right.position)
+      .map(toPostImageView);
+    const preview = store.postLinkPreviews.find(
+      (candidate) =>
+        candidate.postId === post.id &&
+        candidate.fetchStatus === "ready" &&
+        candidate.moderationStatus === "visible",
+    );
     return {
       post,
       author: authorMembership
@@ -7727,6 +8315,12 @@ export async function getPostThreadRecord(
           }
         : undefined,
       comments,
+      images,
+      linkPreview: preview ? toPostLinkPreviewView(preview) : undefined,
+      mentions: store.postMentions
+        .filter((mention) => mention.postId === post.id)
+        .sort((left, right) => left.start - right.start)
+        .map(toRichTextMention),
     };
   }
 
@@ -7770,6 +8364,19 @@ export async function getPostThreadRecord(
     return undefined;
   }
 
+  const [images, previews, mentions, commentMentions] = await Promise.all([
+    listPostImagesForPostIds([postId]),
+    listPostLinkPreviewsForPostIds([postId]),
+    listPostMentionsForPostIds([postId]),
+    listCommentMentionsForCommentIds(commentRows.map((row) => row.comment.id)),
+  ]);
+  const mentionsByCommentId = new Map<string, RichTextMention[]>();
+  for (const mention of commentMentions) {
+    const existing = mentionsByCommentId.get(mention.commentId) ?? [];
+    existing.push(toRichTextMention(mention));
+    mentionsByCommentId.set(mention.commentId, existing);
+  }
+
   return {
     post: postFromRow(postRow.post),
     author: postRow.membership
@@ -7779,10 +8386,16 @@ export async function getPostThreadRecord(
         }
       : undefined,
     comments: commentRows.map((row) => ({
-      comment: commentFromRow(row.comment),
+      comment: {
+        ...commentFromRow(row.comment),
+        mentions: mentionsByCommentId.get(row.comment.id) ?? [],
+      },
       membership: row.membership ? membershipFromRow(row.membership) : undefined,
       profile: row.profile ? profileFromRow(row.profile) : undefined,
     })),
+    images: images.map(toPostImageView),
+    linkPreview: previews[0] ? toPostLinkPreviewView(previews[0]) : undefined,
+    mentions: mentions.map(toRichTextMention),
   };
 }
 
@@ -9014,6 +9627,86 @@ export async function listActiveIntroRequestStatusesForRequesterInSpace(
   }, new Map<string, IntroStatus>());
 }
 
+async function filterVisibleContentNotifications(notifications: Notification[]) {
+  const postIds = [
+    ...new Set(
+      notifications.flatMap((notification) =>
+        notification.sourcePostId ? [notification.sourcePostId] : [],
+      ),
+    ),
+  ];
+  const commentIds = [
+    ...new Set(
+      notifications.flatMap((notification) =>
+        notification.sourceCommentId ? [notification.sourceCommentId] : [],
+      ),
+    ),
+  ];
+  if (!postIds.length && !commentIds.length) return notifications;
+
+  let visiblePostIds: Set<string>;
+  let visibleCommentIds: Set<string>;
+  if (!usesDatabase) {
+    const store = getStore();
+    visiblePostIds = new Set(
+      store.posts
+        .filter((post) => postIds.includes(post.id) && !post.hidden)
+        .map((post) => post.id),
+    );
+    visibleCommentIds = new Set(
+      store.comments
+        .filter(
+          (comment) =>
+            commentIds.includes(comment.id) &&
+            comment.status === "visible" &&
+            visiblePostIds.has(comment.postId),
+        )
+        .map((comment) => comment.id),
+    );
+  } else {
+    const [postRows, commentRows] = await Promise.all([
+      postIds.length
+        ? getDb()
+            .select({ id: dbSchema.posts.id })
+            .from(dbSchema.posts)
+            .where(and(inArray(dbSchema.posts.id, postIds), eq(dbSchema.posts.hidden, false)))
+        : Promise.resolve([]),
+      commentIds.length
+        ? getDb()
+            .select({ id: dbSchema.comments.id, postId: dbSchema.comments.postId })
+            .from(dbSchema.comments)
+            .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+            .where(
+              and(
+                inArray(dbSchema.comments.id, commentIds),
+                eq(dbSchema.comments.status, "visible"),
+                eq(dbSchema.posts.hidden, false),
+              ),
+            )
+        : Promise.resolve([]),
+    ]);
+    visiblePostIds = new Set(postRows.map((row) => row.id));
+    visibleCommentIds = new Set(commentRows.map((row) => row.id));
+  }
+
+  return notifications.filter((notification) => {
+    if (notification.type === "post_mentioned") {
+      return Boolean(
+        notification.sourcePostId && visiblePostIds.has(notification.sourcePostId),
+      );
+    }
+    if (notification.type === "comment_mentioned") {
+      return Boolean(
+        notification.sourcePostId &&
+          visiblePostIds.has(notification.sourcePostId) &&
+          notification.sourceCommentId &&
+          visibleCommentIds.has(notification.sourceCommentId),
+      );
+    }
+    return true;
+  });
+}
+
 export async function listNotificationsForMembership(
   membershipId: string,
   options: TimeOrderedListOptions = {},
@@ -9066,7 +9759,8 @@ export async function listNotificationsForMembershipInSpace(
           notification.spaceId === spaceId,
       )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return limit ? notifications.slice(0, limit) : notifications;
+    const visible = await filterVisibleContentNotifications(notifications);
+    return limit ? visible.slice(0, limit) : visible;
   }
 
   const query = getDb()
@@ -9079,8 +9773,9 @@ export async function listNotificationsForMembershipInSpace(
       ),
     )
     .orderBy(desc(dbSchema.notifications.createdAt));
-  const rows = await (limit ? query.limit(limit) : query);
-  return rows.map(notificationFromRow);
+  const rows = await query;
+  const visible = await filterVisibleContentNotifications(rows.map(notificationFromRow));
+  return limit ? visible.slice(0, limit) : visible;
 }
 
 /** Account Inbox query: account-level records plus records from Spaces the caller
@@ -9105,7 +9800,8 @@ export async function listNotificationsForMembershipWithSpaceAccess(
           (!notification.spaceId || idSet.has(notification.spaceId)),
       )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return limit ? notifications.slice(0, limit) : notifications;
+    const visible = await filterVisibleContentNotifications(notifications);
+    return limit ? visible.slice(0, limit) : visible;
   }
 
   const query = getDb()
@@ -9123,8 +9819,9 @@ export async function listNotificationsForMembershipWithSpaceAccess(
       ),
     )
     .orderBy(desc(dbSchema.notifications.createdAt));
-  const rows = await (limit ? query.limit(limit) : query);
-  return rows.map(notificationFromRow);
+  const rows = await query;
+  const visible = await filterVisibleContentNotifications(rows.map(notificationFromRow));
+  return limit ? visible.slice(0, limit) : visible;
 }
 
 export async function hasUnreadNotificationsForMembershipWithSpaceAccess(
@@ -9136,33 +9833,11 @@ export async function hasUnreadNotificationsForMembershipWithSpaceAccess(
     accessibleSpaceIds,
   );
   if (!ids) return false;
-  if (!usesDatabase) {
-    const idSet = new Set(ids);
-    return getStore().notifications.some(
-      (notification) =>
-        notification.membershipId === membershipId &&
-        !notification.readAt &&
-        (!notification.spaceId || idSet.has(notification.spaceId)),
-    );
-  }
-
-  const [row] = await getDb()
-    .select({ id: dbSchema.notifications.id })
-    .from(dbSchema.notifications)
-    .where(
-      and(
-        eq(dbSchema.notifications.membershipId, membershipId),
-        sql`${dbSchema.notifications.readAt} is null`,
-        ids.length
-          ? or(
-              sql`${dbSchema.notifications.spaceId} is null`,
-              inArray(dbSchema.notifications.spaceId, ids),
-            )
-          : sql`${dbSchema.notifications.spaceId} is null`,
-      ),
-    )
-    .limit(1);
-  return Boolean(row);
+  const notifications = await listNotificationsForMembershipWithSpaceAccess(
+    membershipId,
+    ids,
+  );
+  return notifications.some((notification) => !notification.readAt);
 }
 
 export async function markNotificationsReadForMembershipWithSpaceAccess(
@@ -9514,6 +10189,62 @@ export async function addNotification(notification: Notification) {
   ) {
     throw new Error("Content notifications must belong to a Space.");
   }
+  if (notification.type === "post_mentioned") {
+    if (!notification.sourcePostId || notification.sourceCommentId) {
+      throw new Error("Post mention notifications require a Post source.");
+    }
+    const post = await getPostById(notification.sourcePostId);
+    if (
+      !post ||
+      post.orgId !== notification.orgId ||
+      post.spaceId !== notification.spaceId ||
+      post.hidden ||
+      post.authorMembershipId === notification.membershipId
+    ) {
+      throw new Error("The mention notification source is unavailable.");
+    }
+    const mentions = await listPostMentionsForPostIds([notification.sourcePostId]);
+    if (
+      !mentions.some(
+        (mention) =>
+          mention.postId === notification.sourcePostId &&
+          mention.mentionedMembershipId === notification.membershipId,
+      )
+    ) {
+      throw new Error("The mention notification source is unavailable.");
+    }
+  } else if (notification.type === "comment_mentioned") {
+    if (!notification.sourcePostId || !notification.sourceCommentId) {
+      throw new Error("Comment mention notifications require Post and Comment sources.");
+    }
+    const record = await getCommentRecordById(notification.sourceCommentId);
+    if (
+      !record?.post ||
+      record.comment.postId !== notification.sourcePostId ||
+      record.post.orgId !== notification.orgId ||
+      record.post.spaceId !== notification.spaceId ||
+      record.post.hidden ||
+      record.comment.status !== "visible" ||
+      record.comment.authorMembershipId === notification.membershipId
+    ) {
+      throw new Error("The mention notification source is unavailable.");
+    }
+    const mentions = await listCommentMentionsForCommentIds([
+      notification.sourceCommentId,
+    ]);
+    if (
+      !mentions.some(
+        (mention) =>
+          mention.commentId === notification.sourceCommentId &&
+          mention.postId === notification.sourcePostId &&
+          mention.mentionedMembershipId === notification.membershipId,
+      )
+    ) {
+      throw new Error("The mention notification source is unavailable.");
+    }
+  } else if (notification.sourcePostId || notification.sourceCommentId) {
+    throw new Error("Only mention notifications can include content sources.");
+  }
   const membership = await getMembershipById(notification.membershipId);
   const isAccessNotification = notification.type === "membership_approved";
   if (
@@ -9555,11 +10286,24 @@ export async function addNotification(notification: Notification) {
     }
   }
   if (!usesDatabase) {
-    getStore().notifications.unshift(notification);
+    const store = getStore();
+    const duplicate = store.notifications.some(
+      (candidate) =>
+        candidate.membershipId === notification.membershipId &&
+        candidate.type === notification.type &&
+        ((notification.type === "post_mentioned" &&
+          candidate.sourcePostId === notification.sourcePostId) ||
+          (notification.type === "comment_mentioned" &&
+            candidate.sourceCommentId === notification.sourceCommentId)),
+    );
+    if (!duplicate) store.notifications.unshift(notification);
     return;
   }
 
-  await getDb().insert(dbSchema.notifications).values(notificationInsert(notification));
+  await getDb()
+    .insert(dbSchema.notifications)
+    .values(notificationInsert(notification))
+    .onConflictDoNothing();
 }
 
 export async function addAnalyticsEvent(event: AnalyticsEvent) {
@@ -9616,6 +10360,265 @@ export async function createPostInSpace(
   return createPost({ ...input, visibility: "space_only" }, options);
 }
 
+export interface RichPostImageClaim {
+  id: string;
+  alt?: string;
+  position: number;
+}
+
+export interface RichMentionInput {
+  membershipId: string;
+  label: string;
+  start: number;
+  end: number;
+}
+
+async function assertMentionLabelsMatchProfiles(
+  orgId: string,
+  mentions: RichMentionInput[],
+) {
+  const membershipIds = [
+    ...new Set(mentions.map((mention) => mention.membershipId)),
+  ];
+  if (!membershipIds.length) return;
+  const records = await listMembershipProfileRecordsByIds(membershipIds, {
+    orgId,
+  });
+  const profileByMembershipId = new Map(
+    records.flatMap((record) =>
+      record.profile
+        ? ([[record.membership.id, record.profile]] as const)
+        : [],
+    ),
+  );
+  if (
+    mentions.some((mention) => {
+      const profile = profileByMembershipId.get(mention.membershipId);
+      return !profile || mention.label !== mentionLabelForProfile(profile);
+    })
+  ) {
+    throw new Error("One or more mention labels do not match the selected member.");
+  }
+}
+
+export async function createRichPostInSpace(
+  input: Omit<Post, "id" | "createdAt" | "updatedAt" | "visibility"> & {
+    spaceId: string;
+    visibility?: "space_only";
+  },
+  richContent: {
+    images: RichPostImageClaim[];
+    linkPreviewId?: string;
+    mentions: RichMentionInput[];
+  },
+) {
+  if (richContent.images.length > 4) throw new Error("Attach no more than four images.");
+  if (
+    new Set(richContent.images.map((image) => image.id)).size !==
+      richContent.images.length ||
+    new Set(richContent.images.map((image) => image.position)).size !==
+      richContent.images.length
+  ) {
+    throw new Error("Attached images must be unique and have unique positions.");
+  }
+  if (
+    richContent.images.some(
+      (image) =>
+        image.position < 0 ||
+        image.position >= richContent.images.length ||
+        (image.alt?.length ?? 0) > 300,
+    )
+  ) {
+    throw new Error("Attached image metadata is invalid.");
+  }
+  const validatedMentions = validateMentionRanges(input.body, richContent.mentions);
+  if (!validatedMentions.success) {
+    throw new Error(validatedMentions.issues[0] ?? "Mentions are invalid.");
+  }
+  const mentionedMembershipIds = [
+    ...new Set(validatedMentions.mentions.map((mention) => mention.membershipId)),
+  ];
+  if (mentionedMembershipIds.includes(input.authorMembershipId)) {
+    throw new Error("You cannot mention yourself.");
+  }
+  const space = await requireActiveMembershipsInSpace(input.spaceId, [
+    input.authorMembershipId,
+    ...mentionedMembershipIds,
+  ]);
+  if (space.orgId !== input.orgId) throw new Error("Space not found.");
+  const mentionableMembershipIds = new Set(
+    await listMentionableMembershipIdsForSpace(
+      input.spaceId,
+      mentionedMembershipIds,
+    ),
+  );
+  if (
+    mentionedMembershipIds.some(
+      (membershipId) => !mentionableMembershipIds.has(membershipId),
+    )
+  ) {
+    throw new Error("One or more mentioned members are unavailable.");
+  }
+  await assertMentionLabelsMatchProfiles(
+    input.orgId,
+    validatedMentions.mentions,
+  );
+
+  const now = new Date().toISOString();
+  const post: Post = {
+    id: `pst_${nanoid(8)}`,
+    ...input,
+    visibility: "space_only",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const mentionRows: PostMention[] = validatedMentions.mentions.map((mention) => ({
+    id: `pmn_${nanoid(10)}`,
+    orgId: input.orgId,
+    spaceId: input.spaceId,
+    postId: post.id,
+    mentionedMembershipId: mention.membershipId,
+    label: mention.label,
+    start: mention.start,
+    end: mention.end,
+    createdAt: now,
+  }));
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const imageById = new Map(store.postImages.map((image) => [image.id, image]));
+    const claimedImages = richContent.images.map((claim) => imageById.get(claim.id));
+    if (
+      claimedImages.some(
+        (image) =>
+          !image ||
+          image.orgId !== input.orgId ||
+          image.spaceId !== input.spaceId ||
+          image.uploaderMembershipId !== input.authorMembershipId ||
+          image.postId ||
+          image.uploadStatus !== "ready" ||
+          image.moderationStatus !== "visible",
+      )
+    ) {
+      throw new Error("One or more attached images are unavailable.");
+    }
+    const preview = richContent.linkPreviewId
+      ? store.postLinkPreviews.find((candidate) => candidate.id === richContent.linkPreviewId)
+      : undefined;
+    if (
+      richContent.linkPreviewId &&
+      (!preview ||
+        preview.orgId !== input.orgId ||
+        preview.spaceId !== input.spaceId ||
+        preview.uploaderMembershipId !== input.authorMembershipId ||
+        preview.postId ||
+        preview.fetchStatus !== "ready" ||
+        preview.moderationStatus !== "visible")
+    ) {
+      throw new Error("The link preview is unavailable.");
+    }
+
+    store.posts.unshift(post);
+    richContent.images.forEach((claim) => {
+      const image = imageById.get(claim.id)!;
+      image.postId = post.id;
+      image.alt = claim.alt?.trim() || undefined;
+      image.position = claim.position;
+      image.updatedAt = now;
+    });
+    if (preview) {
+      preview.postId = post.id;
+      preview.updatedAt = now;
+    }
+    store.postMentions.push(...mentionRows);
+    return post;
+  }
+
+  await getTransactionDb().transaction(async (tx) => {
+    const imageIds = richContent.images.map((image) => image.id);
+    const imageRows = imageIds.length
+      ? await tx
+          .select()
+          .from(dbSchema.postImages)
+          .where(
+            and(
+              inArray(dbSchema.postImages.id, imageIds),
+              eq(dbSchema.postImages.orgId, input.orgId),
+              eq(dbSchema.postImages.spaceId, input.spaceId),
+              eq(dbSchema.postImages.uploaderMembershipId, input.authorMembershipId),
+              eq(dbSchema.postImages.uploadStatus, "ready"),
+              eq(dbSchema.postImages.moderationStatus, "visible"),
+              sql`${dbSchema.postImages.postId} is null`,
+            ),
+          )
+      : [];
+    if (imageRows.length !== imageIds.length) {
+      throw new Error("One or more attached images are unavailable.");
+    }
+
+    const previewRows = richContent.linkPreviewId
+      ? await tx
+          .select()
+          .from(dbSchema.postLinkPreviews)
+          .where(
+            and(
+              eq(dbSchema.postLinkPreviews.id, richContent.linkPreviewId),
+              eq(dbSchema.postLinkPreviews.orgId, input.orgId),
+              eq(dbSchema.postLinkPreviews.spaceId, input.spaceId),
+              eq(
+                dbSchema.postLinkPreviews.uploaderMembershipId,
+                input.authorMembershipId,
+              ),
+              eq(dbSchema.postLinkPreviews.fetchStatus, "ready"),
+              eq(dbSchema.postLinkPreviews.moderationStatus, "visible"),
+              sql`${dbSchema.postLinkPreviews.postId} is null`,
+            ),
+          )
+      : [];
+    if (richContent.linkPreviewId && previewRows.length !== 1) {
+      throw new Error("The link preview is unavailable.");
+    }
+
+    await tx.insert(dbSchema.posts).values(postInsert(post));
+    for (const claim of richContent.images) {
+      const rows = await tx
+        .update(dbSchema.postImages)
+        .set({
+          postId: post.id,
+          alt: claim.alt?.trim() || null,
+          position: claim.position,
+          updatedAt: new Date(now),
+        })
+        .where(
+          and(
+            eq(dbSchema.postImages.id, claim.id),
+            sql`${dbSchema.postImages.postId} is null`,
+          ),
+        )
+        .returning({ id: dbSchema.postImages.id });
+      if (rows.length !== 1) throw new Error("An attached image was claimed elsewhere.");
+    }
+    if (richContent.linkPreviewId) {
+      const rows = await tx
+        .update(dbSchema.postLinkPreviews)
+        .set({ postId: post.id, updatedAt: new Date(now) })
+        .where(
+          and(
+            eq(dbSchema.postLinkPreviews.id, richContent.linkPreviewId),
+            sql`${dbSchema.postLinkPreviews.postId} is null`,
+          ),
+        )
+        .returning({ id: dbSchema.postLinkPreviews.id });
+      if (rows.length !== 1) throw new Error("The link preview was claimed elsewhere.");
+    }
+    if (mentionRows.length) {
+      await tx.insert(dbSchema.postMentions).values(mentionRows.map(postMentionInsert));
+    }
+  });
+
+  return post;
+}
+
 export async function createComment(
   input: Omit<Comment, "id" | "createdAt" | "updatedAt" | "status">,
   options: { orgId?: string; recordAnalytics?: boolean } = {},
@@ -9665,6 +10668,84 @@ export async function createCommentInSpace(
     orgId: space.orgId,
     recordAnalytics: options.recordAnalytics,
   });
+}
+
+export async function createRichCommentInSpace(
+  spaceId: string,
+  input: Omit<Comment, "id" | "createdAt" | "updatedAt" | "status" | "mentions">,
+  mentions: RichMentionInput[],
+) {
+  const validatedMentions = validateMentionRanges(input.body, mentions);
+  if (!validatedMentions.success) {
+    throw new Error(validatedMentions.issues[0] ?? "Mentions are invalid.");
+  }
+  const mentionedMembershipIds = [
+    ...new Set(validatedMentions.mentions.map((mention) => mention.membershipId)),
+  ];
+  if (mentionedMembershipIds.includes(input.authorMembershipId)) {
+    throw new Error("You cannot mention yourself.");
+  }
+  const [space, post] = await Promise.all([
+    requireActiveMembershipsInSpace(spaceId, [
+      input.authorMembershipId,
+      ...mentionedMembershipIds,
+    ]),
+    getPostByIdInSpace(spaceId, input.postId),
+  ]);
+  if (!post || post.orgId !== space.orgId) {
+    throw new Error("Post not found in this community or event.");
+  }
+  const mentionableMembershipIds = new Set(
+    await listMentionableMembershipIdsForSpace(spaceId, mentionedMembershipIds),
+  );
+  if (
+    mentionedMembershipIds.some(
+      (membershipId) => !mentionableMembershipIds.has(membershipId),
+    )
+  ) {
+    throw new Error("One or more mentioned members are unavailable.");
+  }
+  await assertMentionLabelsMatchProfiles(
+    space.orgId,
+    validatedMentions.mentions,
+  );
+  const now = new Date().toISOString();
+  const comment: Comment = {
+    id: `cmt_${nanoid(8)}`,
+    status: "visible",
+    ...input,
+    mentions: validatedMentions.mentions,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const mentionRows: CommentMention[] = validatedMentions.mentions.map((mention) => ({
+    id: `cmn_${nanoid(10)}`,
+    orgId: space.orgId,
+    spaceId,
+    postId: post.id,
+    commentId: comment.id,
+    mentionedMembershipId: mention.membershipId,
+    label: mention.label,
+    start: mention.start,
+    end: mention.end,
+    createdAt: now,
+  }));
+
+  if (!usesDatabase) {
+    const store = getStore();
+    store.comments.unshift(comment);
+    store.commentMentions.push(...mentionRows);
+    return comment;
+  }
+  await getTransactionDb().transaction(async (tx) => {
+    await tx.insert(dbSchema.comments).values(commentInsert(comment));
+    if (mentionRows.length) {
+      await tx
+        .insert(dbSchema.commentMentions)
+        .values(mentionRows.map(commentMentionInsert));
+    }
+  });
+  return comment;
 }
 
 export async function upsertProfile(
@@ -10092,6 +11173,115 @@ export async function updatePostModeration(
   return row ? postFromRow(row) : null;
 }
 
+export async function updatePostImageModeration(
+  imageId: string,
+  status: PostImage["moderationStatus"],
+  moderatorMembershipId: string,
+) {
+  const moderatedAt = new Date().toISOString();
+  if (!usesDatabase) {
+    const store = getStore();
+    const image = store.postImages.find((candidate) => candidate.id === imageId);
+    if (!image?.postId) return null;
+    image.moderationStatus = status;
+    image.moderatedByMembershipId = moderatorMembershipId;
+    image.moderatedAt = moderatedAt;
+    image.updatedAt = moderatedAt;
+    let postHidden = false;
+    if (status === "removed") {
+      const post = store.posts.find((candidate) => candidate.id === image.postId);
+      const hasVisibleImage = store.postImages.some(
+        (candidate) =>
+          candidate.postId === image.postId &&
+          candidate.uploadStatus === "ready" &&
+          candidate.moderationStatus === "visible",
+      );
+      if (post && !post.body.trim() && !hasVisibleImage) {
+        post.hidden = true;
+        post.updatedAt = moderatedAt;
+        postHidden = true;
+      }
+    }
+    return { image, postHidden };
+  }
+
+  return getTransactionDb().transaction(async (tx) => {
+    const [row] = await tx
+      .update(dbSchema.postImages)
+      .set({
+        moderationStatus: status,
+        moderatedByMembershipId: moderatorMembershipId,
+        moderatedAt: new Date(moderatedAt),
+        updatedAt: new Date(moderatedAt),
+      })
+      .where(and(eq(dbSchema.postImages.id, imageId), sql`${dbSchema.postImages.postId} is not null`))
+      .returning();
+    if (!row) return null;
+    let postHidden = false;
+    if (status === "removed" && row.postId) {
+      const [postRow] = await tx
+        .select()
+        .from(dbSchema.posts)
+        .where(eq(dbSchema.posts.id, row.postId))
+        .limit(1)
+        .for("update");
+      const [visibleRow] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(dbSchema.postImages)
+        .where(
+          and(
+            eq(dbSchema.postImages.postId, row.postId),
+            eq(dbSchema.postImages.uploadStatus, "ready"),
+            eq(dbSchema.postImages.moderationStatus, "visible"),
+          ),
+        );
+      if (postRow && !postRow.body.trim() && (visibleRow?.count ?? 0) === 0) {
+        await tx
+          .update(dbSchema.posts)
+          .set({ hidden: true, updatedAt: new Date(moderatedAt) })
+          .where(eq(dbSchema.posts.id, row.postId));
+        postHidden = true;
+      }
+    }
+    return { image: postImageFromRow(row), postHidden };
+  });
+}
+
+export async function updatePostLinkPreviewModeration(
+  previewId: string,
+  status: PostLinkPreview["moderationStatus"],
+  moderatorMembershipId: string,
+) {
+  const moderatedAt = new Date().toISOString();
+  if (!usesDatabase) {
+    const preview = getStore().postLinkPreviews.find(
+      (candidate) => candidate.id === previewId && Boolean(candidate.postId),
+    );
+    if (!preview) return null;
+    preview.moderationStatus = status;
+    preview.moderatedByMembershipId = moderatorMembershipId;
+    preview.moderatedAt = moderatedAt;
+    preview.updatedAt = moderatedAt;
+    return preview;
+  }
+  const [row] = await getDb()
+    .update(dbSchema.postLinkPreviews)
+    .set({
+      moderationStatus: status,
+      moderatedByMembershipId: moderatorMembershipId,
+      moderatedAt: new Date(moderatedAt),
+      updatedAt: new Date(moderatedAt),
+    })
+    .where(
+      and(
+        eq(dbSchema.postLinkPreviews.id, previewId),
+        sql`${dbSchema.postLinkPreviews.postId} is not null`,
+      ),
+    )
+    .returning();
+  return row ? postLinkPreviewFromRow(row) : null;
+}
+
 export async function updateCommentStatus(
   commentId: string,
   status: Comment["status"],
@@ -10194,7 +11384,7 @@ export async function updateOrganizationSettings(
   return row ? organizationFromRow(row) : null;
 }
 
-async function getOrganizationById(orgId: string) {
+export async function getOrganizationById(orgId: string) {
   if (!usesDatabase) {
     return getStore().organizations.find((candidate) => candidate.id === orgId);
   }

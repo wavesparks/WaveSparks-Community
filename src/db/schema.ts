@@ -67,6 +67,22 @@ export const opportunitySourceEnum = pgEnum("opportunity_source", [
 ]);
 export const postStatusEnum = pgEnum("post_status", ["active", "closed", "archived"]);
 export const commentStatusEnum = pgEnum("comment_status", ["visible", "removed"]);
+export const postImageUploadStatusEnum = pgEnum("post_image_upload_status", [
+  "staged",
+  "processing",
+  "ready",
+  "failed",
+]);
+export const postLinkPreviewFetchStatusEnum = pgEnum("post_link_preview_fetch_status", [
+  "staged",
+  "fetching",
+  "ready",
+  "failed",
+]);
+export const postAttachmentModerationStatusEnum = pgEnum(
+  "post_attachment_moderation_status",
+  ["visible", "removed"],
+);
 export const introStatusEnum = pgEnum("intro_status", [
   "pending",
   "accepted",
@@ -86,6 +102,8 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "intro_declined",
   "manual_intro",
   "admin_note",
+  "post_mentioned",
+  "comment_mentioned",
 ]);
 export const platformRoleEnum = pgEnum("platform_role", ["platform_owner", "standard"]);
 export const spaceKindEnum = pgEnum("space_kind", ["main", "event"]);
@@ -631,6 +649,11 @@ export const posts = pgTable(
   },
   (table) => ({
     idOrgIdx: uniqueIndex("posts_id_org_idx").on(table.id, table.orgId),
+    idOrgSpaceIdx: uniqueIndex("posts_id_org_space_idx").on(
+      table.id,
+      table.orgId,
+      table.spaceId,
+    ),
     spaceCreatedIdx: index("posts_space_created_idx").on(table.spaceId, table.createdAt),
     spaceOrgFk: foreignKey({
       columns: [table.spaceId, table.orgId],
@@ -642,6 +665,225 @@ export const posts = pgTable(
       foreignColumns: [memberships.id, memberships.orgId],
       name: "posts_author_org_fk",
     }).onDelete("restrict"),
+  }),
+);
+
+export const postImages = pgTable(
+  "post_images",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id").notNull(),
+    uploaderMembershipId: text("uploader_membership_id").notNull(),
+    postId: text("post_id"),
+    blobPathname: text("blob_pathname").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    alt: text("alt"),
+    position: integer("position").notNull().default(0),
+    uploadStatus: postImageUploadStatusEnum("upload_status").notNull().default("staged"),
+    uploadError: text("upload_error"),
+    moderationStatus: postAttachmentModerationStatusEnum("moderation_status")
+      .notNull()
+      .default("visible"),
+    moderatedByMembershipId: text("moderated_by_membership_id"),
+    moderatedAt: timestamp("moderated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    blobPathnameIdx: uniqueIndex("post_images_blob_pathname_idx").on(
+      table.blobPathname,
+    ),
+    postPositionIdx: index("post_images_post_position_idx").on(
+      table.postId,
+      table.position,
+    ),
+    stagedCleanupIdx: index("post_images_staged_cleanup_idx").on(
+      table.postId,
+      table.uploadStatus,
+      table.createdAt,
+    ),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "post_images_space_org_fk",
+    }).onDelete("cascade"),
+    postOrgSpaceFk: foreignKey({
+      columns: [table.postId, table.orgId, table.spaceId],
+      foreignColumns: [posts.id, posts.orgId, posts.spaceId],
+      name: "post_images_post_org_space_fk",
+    }).onDelete("cascade"),
+    uploaderSpaceMembershipFk: foreignKey({
+      columns: [table.spaceId, table.uploaderMembershipId, table.orgId],
+      foreignColumns: [
+        spaceMemberships.spaceId,
+        spaceMemberships.membershipId,
+        spaceMemberships.orgId,
+      ],
+      name: "post_images_uploader_space_membership_fk",
+    }).onDelete("restrict"),
+    moderatorOrgFk: foreignKey({
+      columns: [table.moderatedByMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "post_images_moderator_org_fk",
+    }).onDelete("restrict"),
+    sizeCheck: check(
+      "post_images_size_check",
+      sql`${table.sizeBytes} > 0 AND ${table.sizeBytes} <= 5242880`,
+    ),
+    dimensionsCheck: check(
+      "post_images_dimensions_check",
+      sql`(${table.width} IS NULL AND ${table.height} IS NULL) OR (${table.width} > 0 AND ${table.height} > 0 AND (${table.width})::bigint * (${table.height})::bigint <= 40000000)`,
+    ),
+    readyDimensionsCheck: check(
+      "post_images_ready_dimensions_check",
+      sql`${table.uploadStatus} <> 'ready' OR (${table.width} IS NOT NULL AND ${table.height} IS NOT NULL)`,
+    ),
+    claimedReadyCheck: check(
+      "post_images_claimed_ready_check",
+      sql`${table.postId} IS NULL OR ${table.uploadStatus} = 'ready'`,
+    ),
+    positionCheck: check(
+      "post_images_position_check",
+      sql`${table.position} BETWEEN 0 AND 3`,
+    ),
+    altLengthCheck: check(
+      "post_images_alt_length_check",
+      sql`${table.alt} IS NULL OR char_length(${table.alt}) <= 300`,
+    ),
+  }),
+);
+
+export const postLinkPreviews = pgTable(
+  "post_link_previews",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id").notNull(),
+    uploaderMembershipId: text("uploader_membership_id").notNull(),
+    postId: text("post_id"),
+    originalUrl: text("original_url").notNull(),
+    title: text("title"),
+    description: text("description"),
+    siteName: text("site_name"),
+    thumbnailBlobPathname: text("thumbnail_blob_pathname"),
+    thumbnailContentType: text("thumbnail_content_type"),
+    thumbnailSizeBytes: integer("thumbnail_size_bytes"),
+    thumbnailWidth: integer("thumbnail_width"),
+    thumbnailHeight: integer("thumbnail_height"),
+    fetchStatus: postLinkPreviewFetchStatusEnum("fetch_status")
+      .notNull()
+      .default("staged"),
+    fetchError: text("fetch_error"),
+    moderationStatus: postAttachmentModerationStatusEnum("moderation_status")
+      .notNull()
+      .default("visible"),
+    moderatedByMembershipId: text("moderated_by_membership_id"),
+    moderatedAt: timestamp("moderated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    postIdx: uniqueIndex("post_link_previews_post_idx")
+      .on(table.postId)
+      .where(sql`${table.postId} IS NOT NULL`),
+    stagedCleanupIdx: index("post_link_previews_staged_cleanup_idx").on(
+      table.postId,
+      table.fetchStatus,
+      table.createdAt,
+    ),
+    thumbnailBlobPathnameIdx: uniqueIndex(
+      "post_link_previews_thumbnail_blob_pathname_idx",
+    )
+      .on(table.thumbnailBlobPathname)
+      .where(sql`${table.thumbnailBlobPathname} IS NOT NULL`),
+    spaceOrgFk: foreignKey({
+      columns: [table.spaceId, table.orgId],
+      foreignColumns: [spaces.id, spaces.orgId],
+      name: "post_link_previews_space_org_fk",
+    }).onDelete("cascade"),
+    postOrgSpaceFk: foreignKey({
+      columns: [table.postId, table.orgId, table.spaceId],
+      foreignColumns: [posts.id, posts.orgId, posts.spaceId],
+      name: "post_link_previews_post_org_space_fk",
+    }).onDelete("cascade"),
+    uploaderSpaceMembershipFk: foreignKey({
+      columns: [table.spaceId, table.uploaderMembershipId, table.orgId],
+      foreignColumns: [
+        spaceMemberships.spaceId,
+        spaceMemberships.membershipId,
+        spaceMemberships.orgId,
+      ],
+      name: "post_link_previews_uploader_space_membership_fk",
+    }).onDelete("restrict"),
+    moderatorOrgFk: foreignKey({
+      columns: [table.moderatedByMembershipId, table.orgId],
+      foreignColumns: [memberships.id, memberships.orgId],
+      name: "post_link_previews_moderator_org_fk",
+    }).onDelete("restrict"),
+    originalUrlCheck: check(
+      "post_link_previews_original_url_check",
+      sql`${table.originalUrl} ~* '^https?://' AND char_length(${table.originalUrl}) <= 2048`,
+    ),
+    textLengthCheck: check(
+      "post_link_previews_text_length_check",
+      sql`(${table.title} IS NULL OR char_length(${table.title}) <= 300) AND (${table.description} IS NULL OR char_length(${table.description}) <= 1000) AND (${table.siteName} IS NULL OR char_length(${table.siteName}) <= 200)`,
+    ),
+    thumbnailMetadataCheck: check(
+      "post_link_previews_thumbnail_metadata_check",
+      sql`(${table.thumbnailBlobPathname} IS NULL AND ${table.thumbnailContentType} IS NULL AND ${table.thumbnailSizeBytes} IS NULL AND ${table.thumbnailWidth} IS NULL AND ${table.thumbnailHeight} IS NULL) OR (${table.thumbnailBlobPathname} IS NOT NULL AND ${table.thumbnailContentType} IS NOT NULL AND ${table.thumbnailSizeBytes} > 0 AND ${table.thumbnailSizeBytes} <= 2097152 AND ${table.thumbnailWidth} > 0 AND ${table.thumbnailHeight} > 0)`,
+    ),
+  }),
+);
+
+export const postMentions = pgTable(
+  "post_mentions",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id").notNull(),
+    postId: text("post_id").notNull(),
+    mentionedMembershipId: text("mentioned_membership_id").notNull(),
+    label: text("label").notNull(),
+    start: integer("start").notNull(),
+    end: integer("end").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    postStartIdx: uniqueIndex("post_mentions_post_start_end_idx").on(
+      table.postId,
+      table.start,
+      table.end,
+    ),
+    mentionedMembershipIdx: index("post_mentions_mentioned_membership_idx").on(
+      table.mentionedMembershipId,
+      table.createdAt,
+    ),
+    postOrgSpaceFk: foreignKey({
+      columns: [table.postId, table.orgId, table.spaceId],
+      foreignColumns: [posts.id, posts.orgId, posts.spaceId],
+      name: "post_mentions_post_org_space_fk",
+    }).onDelete("cascade"),
+    mentionedSpaceMembershipFk: foreignKey({
+      columns: [table.spaceId, table.mentionedMembershipId, table.orgId],
+      foreignColumns: [
+        spaceMemberships.spaceId,
+        spaceMemberships.membershipId,
+        spaceMemberships.orgId,
+      ],
+      name: "post_mentions_mentioned_space_membership_fk",
+    }).onDelete("restrict"),
+    rangeCheck: check(
+      "post_mentions_range_check",
+      sql`${table.start} >= 0 AND ${table.end} > ${table.start}`,
+    ),
+    labelCheck: check(
+      "post_mentions_label_check",
+      sql`char_length(${table.label}) BETWEEN 1 AND 300`,
+    ),
   }),
 );
 
@@ -706,15 +948,75 @@ export const postSaves = pgTable(
   }),
 );
 
-export const comments = pgTable("comments", {
-  id: text("id").primaryKey(),
-  postId: text("post_id").notNull(),
-  authorMembershipId: text("author_membership_id").notNull(),
-  body: text("body").notNull(),
-  status: commentStatusEnum("status").notNull().default("visible"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
-});
+export const comments = pgTable(
+  "comments",
+  {
+    id: text("id").primaryKey(),
+    postId: text("post_id").notNull(),
+    authorMembershipId: text("author_membership_id").notNull(),
+    body: text("body").notNull(),
+    status: commentStatusEnum("status").notNull().default("visible"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    idPostIdx: uniqueIndex("comments_id_post_idx").on(table.id, table.postId),
+  }),
+);
+
+export const commentMentions = pgTable(
+  "comment_mentions",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    spaceId: text("space_id").notNull(),
+    postId: text("post_id").notNull(),
+    commentId: text("comment_id").notNull(),
+    mentionedMembershipId: text("mentioned_membership_id").notNull(),
+    label: text("label").notNull(),
+    start: integer("start").notNull(),
+    end: integer("end").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    commentStartIdx: uniqueIndex("comment_mentions_comment_start_end_idx").on(
+      table.commentId,
+      table.start,
+      table.end,
+    ),
+    mentionedMembershipIdx: index("comment_mentions_mentioned_membership_idx").on(
+      table.mentionedMembershipId,
+      table.createdAt,
+    ),
+    commentPostFk: foreignKey({
+      columns: [table.commentId, table.postId],
+      foreignColumns: [comments.id, comments.postId],
+      name: "comment_mentions_comment_post_fk",
+    }).onDelete("cascade"),
+    postOrgSpaceFk: foreignKey({
+      columns: [table.postId, table.orgId, table.spaceId],
+      foreignColumns: [posts.id, posts.orgId, posts.spaceId],
+      name: "comment_mentions_post_org_space_fk",
+    }).onDelete("cascade"),
+    mentionedSpaceMembershipFk: foreignKey({
+      columns: [table.spaceId, table.mentionedMembershipId, table.orgId],
+      foreignColumns: [
+        spaceMemberships.spaceId,
+        spaceMemberships.membershipId,
+        spaceMemberships.orgId,
+      ],
+      name: "comment_mentions_mentioned_space_membership_fk",
+    }).onDelete("restrict"),
+    rangeCheck: check(
+      "comment_mentions_range_check",
+      sql`${table.start} >= 0 AND ${table.end} > ${table.start}`,
+    ),
+    labelCheck: check(
+      "comment_mentions_label_check",
+      sql`char_length(${table.label}) BETWEEN 1 AND 300`,
+    ),
+  }),
+);
 
 export const matchRuns = pgTable(
   "match_runs",
@@ -948,6 +1250,8 @@ export const notifications = pgTable(
     title: text("title").notNull(),
     body: text("body").notNull(),
     link: text("link").notNull(),
+    sourcePostId: text("source_post_id"),
+    sourceCommentId: text("source_comment_id"),
     readAt: timestamp("read_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
@@ -957,6 +1261,14 @@ export const notifications = pgTable(
       table.spaceId,
       table.createdAt,
     ),
+    postMentionRecipientIdx: uniqueIndex("notifications_post_mention_recipient_idx")
+      .on(table.membershipId, table.type, table.sourcePostId)
+      .where(
+        sql`${table.sourcePostId} IS NOT NULL AND ${table.sourceCommentId} IS NULL`,
+      ),
+    commentMentionRecipientIdx: uniqueIndex("notifications_comment_mention_recipient_idx")
+      .on(table.membershipId, table.type, table.sourceCommentId)
+      .where(sql`${table.sourceCommentId} IS NOT NULL`),
     spaceOrgFk: foreignKey({
       columns: [table.spaceId, table.orgId],
       foreignColumns: [spaces.id, spaces.orgId],
@@ -967,5 +1279,19 @@ export const notifications = pgTable(
       foreignColumns: [memberships.id, memberships.orgId],
       name: "notifications_membership_org_fk",
     }).onDelete("cascade"),
+    sourcePostOrgSpaceFk: foreignKey({
+      columns: [table.sourcePostId, table.orgId, table.spaceId],
+      foreignColumns: [posts.id, posts.orgId, posts.spaceId],
+      name: "notifications_source_post_org_space_fk",
+    }).onDelete("cascade"),
+    sourceCommentPostFk: foreignKey({
+      columns: [table.sourceCommentId, table.sourcePostId],
+      foreignColumns: [comments.id, comments.postId],
+      name: "notifications_source_comment_post_fk",
+    }).onDelete("cascade"),
+    mentionSourceCheck: check(
+      "notifications_mention_source_check",
+      sql`(${table.type}::text = 'post_mentioned' AND ${table.spaceId} IS NOT NULL AND ${table.sourcePostId} IS NOT NULL AND ${table.sourceCommentId} IS NULL) OR (${table.type}::text = 'comment_mentioned' AND ${table.spaceId} IS NOT NULL AND ${table.sourcePostId} IS NOT NULL AND ${table.sourceCommentId} IS NOT NULL) OR (${table.type}::text NOT IN ('post_mentioned', 'comment_mentioned') AND ${table.sourcePostId} IS NULL AND ${table.sourceCommentId} IS NULL)`,
+    ),
   }),
 );

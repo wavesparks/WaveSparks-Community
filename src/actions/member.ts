@@ -11,6 +11,12 @@ import { requireSpaceAccessForAction } from "@/lib/space-auth";
 import { buildNotification, enqueueNotificationEmail } from "@/server/notifications";
 import { opportunitySourceForPost } from "@/lib/opportunities";
 import {
+  commentSubmissionSchema,
+  extractFirstExternalSafeHttpUrl,
+  normalizeSafeHttpUrl,
+  postSubmissionSchema,
+} from "@/lib/post-content";
+import {
   getPostCommentRevalidationPaths,
   getPostListPathForType,
   getPostListRevalidationPaths,
@@ -19,6 +25,7 @@ import { profileFromFormData, validateProfileFormData } from "@/lib/profile-form
 import { getProfileReadiness } from "@/lib/activation";
 import { sanitizeMatchFeedbackReasons } from "@/lib/match-feedback";
 import { parseTags } from "@/lib/utils";
+import { env } from "@/lib/env";
 import { absoluteAppUrl } from "@/lib/urls";
 import {
   enqueueAnalyticsEvent,
@@ -28,12 +35,15 @@ import {
 import { canAccessFeed } from "@/server/permissions";
 import {
   createCommentInSpace,
+  createRichCommentInSpace,
   createIntroRequestInSpace,
   getIntroRequestByIdInSpace,
   createPostInSpace,
+  createRichPostInSpace,
   followMembershipInSpace,
   getMembershipById,
   getPostByIdInSpace,
+  getPostLinkPreviewById,
   getProfileByMembershipId,
   getSpaceIntent,
   getSpaceMembership,
@@ -500,42 +510,141 @@ export async function saveMatchFeedbackAction(
   redirect(`/org/${slug}/matches?status=match_feedback_saved`);
 }
 
+export interface ContentActionState {
+  error?: string;
+  fieldErrors?: Record<string, string[] | undefined>;
+  message?: string;
+}
+
+function jsonFormValue(formData: FormData, name: string, fallback: unknown) {
+  const value = String(formData.get(name) ?? "").trim();
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return Symbol.for("invalid-json");
+  }
+}
+
+function plainTextFormValue(formData: FormData, name: string) {
+  // Native form submission serializes textarea line endings as CRLF, while
+  // selectionStart and JavaScript string offsets use LF. Persist one canonical
+  // representation so UTF-16 mention ranges remain stable across the boundary.
+  return String(formData.get(name) ?? "").replace(/\r\n?/gu, "\n");
+}
+
+function validationState(
+  fieldErrors: Record<string, string[] | undefined>,
+  error = "Check the highlighted fields and try again.",
+): ContentActionState {
+  return { error, fieldErrors };
+}
+
 export async function createPostInSpaceAction(
   slug: string,
   spaceId: string,
   membershipId: string,
   formData: FormData,
-) {
+): Promise<never>;
+export async function createPostInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  previousState: ContentActionState,
+  formData: FormData,
+): Promise<ContentActionState>;
+export async function createPostInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  stateOrFormData: ContentActionState | FormData,
+  submittedFormData?: FormData,
+): Promise<ContentActionState> {
+  const stateful = !(stateOrFormData instanceof FormData);
+  const formData = stateOrFormData instanceof FormData ? stateOrFormData : submittedFormData;
+  if (!formData) {
+    if (stateful) return { error: "The post form could not be read." };
+    throw new Error("The post form could not be read.");
+  }
   const { viewer, space } = await requireSpaceAccessForAction({
     slug,
     spaceId,
     membershipId,
     requireProfile: true,
   });
-  const type = String(formData.get("type") ?? "general_update") as PostType;
-  const post = await createPostInSpace(
-    {
-      orgId: viewer.org.id,
-      spaceId,
-      authorMembershipId: viewer.membership.id,
-      type,
-      opportunitySource: opportunitySourceForPost(
+  const images = jsonFormValue(formData, "images", []);
+  const mentions = jsonFormValue(formData, "mentions", []);
+  const parsed = postSubmissionSchema.safeParse({
+    type: String(formData.get("type") ?? "general_update"),
+    title: String(formData.get("title") ?? ""),
+    body: plainTextFormValue(formData, "body"),
+    images,
+    linkPreviewId: String(formData.get("link_preview_id") ?? "").trim() || undefined,
+    mentions,
+  });
+  if (!parsed.success) {
+    const state = validationState(parsed.error.flatten().fieldErrors);
+    if (stateful) return state;
+    throw new Error(state.error);
+  }
+  const type = parsed.data.type as PostType;
+  if (parsed.data.linkPreviewId) {
+    const [preview, firstUrl] = await Promise.all([
+      getPostLinkPreviewById(parsed.data.linkPreviewId),
+      Promise.resolve(extractFirstExternalSafeHttpUrl(parsed.data.body, env.appUrl)),
+    ]);
+    if (
+      !preview ||
+      !firstUrl ||
+      normalizeSafeHttpUrl(preview.originalUrl) !== firstUrl.href
+    ) {
+      const state = validationState(
+        { linkPreviewId: ["The selected preview no longer matches the first link."] },
+        "Refresh or remove the link preview and try again.",
+      );
+      if (stateful) return state;
+      throw new Error(state.error);
+    }
+  }
+
+  let post;
+  try {
+    post = await createRichPostInSpace(
+      {
+        orgId: viewer.org.id,
+        spaceId,
+        authorMembershipId: viewer.membership.id,
         type,
-        viewer.membership,
-        formData.get("opportunity_source"),
-      ),
-      title: String(formData.get("title") ?? "").trim(),
-      body: String(formData.get("body") ?? "").trim(),
-      tags: parseTags(formData.get("tags")),
-      relatedStartupName: String(formData.get("related_startup_name") ?? ""),
-      relatedRolesNeeded: parseTags(formData.get("related_roles_needed")),
-      status: "active",
-      featured: false,
-      hidden: false,
-      commentsLocked: false,
-    },
-    { recordAnalytics: false },
-  );
+        opportunitySource: opportunitySourceForPost(
+          type,
+          viewer.membership,
+          formData.get("opportunity_source"),
+        ),
+        title: parsed.data.title.trim(),
+        body: parsed.data.body,
+        tags: parseTags(formData.get("tags")),
+        relatedStartupName: String(formData.get("related_startup_name") ?? ""),
+        relatedRolesNeeded: parseTags(formData.get("related_roles_needed")),
+        status: "active",
+        featured: false,
+        hidden: false,
+        commentsLocked: false,
+      },
+      {
+        images: parsed.data.images.map((image) => ({
+          id: image.id,
+          alt: image.alt,
+          position: image.position,
+        })),
+        linkPreviewId: parsed.data.linkPreviewId ?? undefined,
+        mentions: parsed.data.mentions,
+      },
+    );
+  } catch (error) {
+    if (!stateful) throw error;
+    console.error("[wavesparks] rich post creation failed", error);
+    return { error: "We couldn't publish this post. Check its attachments and try again." };
+  }
   enqueueAnalyticsEvent({
     id: `evt_${nanoid(8)}`,
     orgId: viewer.org.id,
@@ -545,6 +654,25 @@ export async function createPostInSpaceAction(
     payload: { postId: post.id, type: post.type },
     createdAt: post.createdAt,
   });
+  const postPath = `${spaceRoot(slug, space.slug)}/posts/${post.id}`;
+  for (const mentionedMembershipId of new Set(
+    parsed.data.mentions.map((mention) => mention.membershipId),
+  )) {
+    if (mentionedMembershipId === viewer.membership.id) continue;
+    enqueueNotificationWrite(
+      buildNotification(
+        `ntf_${nanoid(8)}`,
+        viewer.org.id,
+        mentionedMembershipId,
+        "post_mentioned",
+        `You were mentioned in ${getCommunityDisplayName(space)}`,
+        "Open the post to join the conversation.",
+        postPath,
+        spaceId,
+        { postId: post.id },
+      ),
+    );
+  }
   if (
     ["ask", "opportunity", "looking_for_cofounder", "looking_for_mentor"].includes(
       post.type,
@@ -562,7 +690,17 @@ export async function createPostInSpaceAction(
     : post.type === "resource"
       ? "knowledge"
       : "feed";
-  redirect(`${spaceRoot(slug, space.slug)}/${destination}?status=post_created`);
+  const destinationQuery = new URLSearchParams({ status: "post_created" });
+  if (
+    destination === "opportunities" &&
+    post.opportunitySource &&
+    post.opportunitySource !== "official"
+  ) {
+    destinationQuery.set("source", post.opportunitySource);
+  }
+  redirect(
+    `${spaceRoot(slug, space.slug)}/${destination}?${destinationQuery.toString()}`,
+  );
 }
 
 export async function createPostAction(slug: string, membershipId: string, formData: FormData) {
@@ -880,7 +1018,29 @@ export async function addCommentInSpaceAction(
   membershipId: string,
   postId: string,
   formData: FormData,
-) {
+): Promise<never>;
+export async function addCommentInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  postId: string,
+  previousState: ContentActionState,
+  formData: FormData,
+): Promise<ContentActionState>;
+export async function addCommentInSpaceAction(
+  slug: string,
+  spaceId: string,
+  membershipId: string,
+  postId: string,
+  stateOrFormData: ContentActionState | FormData,
+  submittedFormData?: FormData,
+): Promise<ContentActionState> {
+  const stateful = !(stateOrFormData instanceof FormData);
+  const formData = stateOrFormData instanceof FormData ? stateOrFormData : submittedFormData;
+  if (!formData) {
+    if (stateful) return { error: "The comment form could not be read." };
+    throw new Error("The comment form could not be read.");
+  }
   const { viewer, space } = await requireSpaceAccessForAction({
     slug,
     spaceId,
@@ -897,15 +1057,32 @@ export async function addCommentInSpaceAction(
   ) {
     throw new Error("Comments are not available for this post.");
   }
-  const comment = await createCommentInSpace(
-    spaceId,
-    {
-      postId,
-      authorMembershipId: viewer.membership.id,
-      body: String(formData.get("body") ?? "").trim(),
-    },
-    { recordAnalytics: false },
-  );
+  const parsed = commentSubmissionSchema.safeParse({
+    body: plainTextFormValue(formData, "body"),
+    mentions: jsonFormValue(formData, "mentions", []),
+  });
+  if (!parsed.success) {
+    const state = validationState(parsed.error.flatten().fieldErrors);
+    if (stateful) return state;
+    throw new Error(state.error);
+  }
+
+  let comment;
+  try {
+    comment = await createRichCommentInSpace(
+      spaceId,
+      {
+        postId,
+        authorMembershipId: viewer.membership.id,
+        body: parsed.data.body,
+      },
+      parsed.data.mentions,
+    );
+  } catch (error) {
+    if (!stateful) throw error;
+    console.error("[wavesparks] rich comment creation failed", error);
+    return { error: "We couldn't add this comment. Check its mentions and try again." };
+  }
   enqueueAnalyticsEvent({
     id: `evt_${nanoid(8)}`,
     orgId: viewer.org.id,
@@ -915,6 +1092,25 @@ export async function addCommentInSpaceAction(
     payload: { postId: comment.postId },
     createdAt: comment.createdAt,
   });
+  const commentPath = `${spaceRoot(slug, space.slug)}/posts/${post.id}#comment-${comment.id}`;
+  for (const mentionedMembershipId of new Set(
+    parsed.data.mentions.map((mention) => mention.membershipId),
+  )) {
+    if (mentionedMembershipId === viewer.membership.id) continue;
+    enqueueNotificationWrite(
+      buildNotification(
+        `ntf_${nanoid(8)}`,
+        viewer.org.id,
+        mentionedMembershipId,
+        "comment_mentioned",
+        `You were mentioned in ${getCommunityDisplayName(space)}`,
+        "Open the comment to continue the conversation.",
+        commentPath,
+        spaceId,
+        { postId: post.id, commentId: comment.id },
+      ),
+    );
+  }
   revalidateSpacePostPaths(slug, space.slug, post.id);
   redirect(`${spaceRoot(slug, space.slug)}/posts/${postId}?status=comment_added`);
 }

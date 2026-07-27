@@ -61,6 +61,8 @@ import {
   getCommentRecordById,
   getMembershipRecordById,
   getPostById,
+  getPostImageById,
+  getPostLinkPreviewById,
   getSpaceById,
   getProfileRecordById,
   importCohortMembers,
@@ -84,6 +86,8 @@ import {
   updateMembershipRole,
   updateOrganizationSettings,
   updatePostModeration,
+  updatePostImageModeration,
+  updatePostLinkPreviewModeration,
   updateProfileFlags,
 } from "@/server/store";
 import { buildMemberImportPreview } from "@/server/member-import";
@@ -1133,6 +1137,58 @@ export async function updatePostModerationAction(slug: string, postId: string, f
     }
   }
   redirect(`/org/${slug}/admin/posts?status=post_moderation_updated`);
+}
+
+export async function moderatePostImageAction(
+  slug: string,
+  imageId: string,
+  status: "visible" | "removed",
+) {
+  const { org, membership } = await requireAdminForAction(slug);
+  const image = await getPostImageById(imageId);
+  if (!image?.postId || image.orgId !== org.id) throw new Error("Unauthorized.");
+  const post = await getPostById(image.postId);
+  const space = await getSpaceById(image.spaceId);
+  if (!post || post.orgId !== org.id || !space || space.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+  await updatePostImageModeration(image.id, status, membership.id);
+  revalidatePath(`/org/${slug}/admin/posts`);
+  for (const path of getSpacePostCommentRevalidationPaths(
+    slug,
+    space.slug,
+    post.id,
+    post.type,
+  )) {
+    revalidatePath(path);
+  }
+  redirect(`/org/${slug}/admin/posts?status=post_media_moderation_updated`);
+}
+
+export async function moderatePostLinkPreviewAction(
+  slug: string,
+  previewId: string,
+  status: "visible" | "removed",
+) {
+  const { org, membership } = await requireAdminForAction(slug);
+  const preview = await getPostLinkPreviewById(previewId);
+  if (!preview?.postId || preview.orgId !== org.id) throw new Error("Unauthorized.");
+  const post = await getPostById(preview.postId);
+  const space = await getSpaceById(preview.spaceId);
+  if (!post || post.orgId !== org.id || !space || space.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+  await updatePostLinkPreviewModeration(preview.id, status, membership.id);
+  revalidatePath(`/org/${slug}/admin/posts`);
+  for (const path of getSpacePostCommentRevalidationPaths(
+    slug,
+    space.slug,
+    post.id,
+    post.type,
+  )) {
+    revalidatePath(path);
+  }
+  redirect(`/org/${slug}/admin/posts?status=post_media_moderation_updated`);
 }
 
 export async function updateProfileFlagsAction(slug: string, profileId: string, formData: FormData) {

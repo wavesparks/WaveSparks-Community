@@ -16,6 +16,8 @@ const spaceScopedNotificationTypes = new Set<NotificationType>([
   "intro_accepted",
   "intro_declined",
   "manual_intro",
+  "post_mentioned",
+  "comment_mentioned",
 ]);
 
 function usesMemoryE2EEmailTransport() {
@@ -152,6 +154,7 @@ export function buildNotification(
   body: string,
   link: string,
   spaceId?: string,
+  source?: { postId: string; commentId?: string },
 ): Notification {
   if (spaceScopedNotificationTypes.has(type) && !spaceId) {
     throw new Error("Content notifications must belong to a Space.");
@@ -165,6 +168,8 @@ export function buildNotification(
     title,
     body,
     link,
+    sourcePostId: source?.postId,
+    sourceCommentId: source?.commentId,
     createdAt: new Date().toISOString(),
   };
 }
