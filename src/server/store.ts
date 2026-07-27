@@ -8815,6 +8815,33 @@ export async function getMatchFeedbackSummaryForOrg(orgId: string) {
   return summarizeMatchFeedback(rows.map(matchFeedbackFromRow));
 }
 
+function availableMatchTargetRecord(
+  store: StoreState,
+  match: MatchRecord,
+) {
+  const targetProfile = store.profiles.find(
+    (profile) => profile.id === match.targetProfileId,
+  );
+  const targetMembership = targetProfile
+    ? store.memberships.find(
+        (membership) =>
+          membership.id === targetProfile.membershipId &&
+          membership.orgId === match.orgId,
+      )
+    : undefined;
+  if (
+    !targetProfile?.introOptIn ||
+    !targetMembership ||
+    (match.matchType === "mentor_match" &&
+      (targetMembership.mentorStatus !== "approved" ||
+        !targetProfile.offeringMatchTypes.includes("mentor_match")))
+  ) {
+    return undefined;
+  }
+
+  return { targetMembership, targetProfile };
+}
+
 function eligibleMatchTargetRecord(
   store: StoreState,
   match: MatchRecord,
@@ -8994,6 +9021,7 @@ export async function listMatchTargetRecordsForProfile(
         (match) =>
           match.sourceProfileId === profileId &&
           isCurrentMatchRecord(match) &&
+          Boolean(availableMatchTargetRecord(store, match)) &&
           (!options.spaceId || match.spaceId === options.spaceId) &&
           (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
           (!options.matchType || match.matchType === options.matchType) &&
@@ -9070,6 +9098,14 @@ export async function listMatchTargetRecordsForProfile(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
         eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        eq(targetProfiles.introOptIn, true),
+        or(
+          sql`${dbSchema.matches.matchType} <> 'mentor_match'`,
+          and(
+            eq(targetMemberships.mentorStatus, "approved"),
+            sql`'mentor_match' = ANY(${targetProfiles.offeringMatchTypes})`,
+          ),
+        ),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -9115,6 +9151,7 @@ export async function listVisibleMatchTargetMembershipIdsForProfile(
         (match) =>
           match.sourceProfileId === profileId &&
           isCurrentMatchRecord(match) &&
+          Boolean(availableMatchTargetRecord(store, match)) &&
           (!options.spaceId || match.spaceId === options.spaceId) &&
           (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
           !match.hiddenByAdmin &&
@@ -9169,6 +9206,14 @@ export async function listVisibleMatchTargetMembershipIdsForProfile(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
         eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        eq(targetProfiles.introOptIn, true),
+        or(
+          sql`${dbSchema.matches.matchType} <> 'mentor_match'`,
+          and(
+            eq(targetMemberships.mentorStatus, "approved"),
+            sql`'mentor_match' = ANY(${targetProfiles.offeringMatchTypes})`,
+          ),
+        ),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -9247,6 +9292,14 @@ export async function listVisibleMatchTargetMembershipIdsForMembership(
       and(
         eq(sourceProfiles.membershipId, membershipId),
         eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        eq(targetProfiles.introOptIn, true),
+        or(
+          sql`${dbSchema.matches.matchType} <> 'mentor_match'`,
+          and(
+            eq(targetMemberships.mentorStatus, "approved"),
+            sql`'mentor_match' = ANY(${targetProfiles.offeringMatchTypes})`,
+          ),
+        ),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -9278,6 +9331,7 @@ export async function hasVisibleMatchForProfile(
       (match) =>
         match.sourceProfileId === profileId &&
         isCurrentMatchRecord(match) &&
+        Boolean(availableMatchTargetRecord(store, match)) &&
         (!options.spaceId || match.spaceId === options.spaceId) &&
         (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
         !match.hiddenByAdmin &&
@@ -9328,6 +9382,14 @@ export async function hasVisibleMatchForProfile(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
         eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        eq(targetProfiles.introOptIn, true),
+        or(
+          sql`${dbSchema.matches.matchType} <> 'mentor_match'`,
+          and(
+            eq(targetMemberships.mentorStatus, "approved"),
+            sql`'mentor_match' = ANY(${targetProfiles.offeringMatchTypes})`,
+          ),
+        ),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -11057,17 +11119,20 @@ export async function createIntroRequestInSpace(
     if (pending) {
       throw new Error("These two people already have a pending introduction request here.");
     }
+    const store = getStore();
+    const receiver = store.memberships.find(
+      (membership) => membership.id === input.receiverMembershipId,
+    );
+    const receiverProfile = store.profiles.find(
+      (profile) => profile.membershipId === input.receiverMembershipId,
+    );
+    if (!receiverProfile?.introOptIn) {
+      throw new Error("This member is not available for introductions.");
+    }
     if (input.kind === "mentoring") {
-      const store = getStore();
-      const receiver = store.memberships.find(
-        (membership) => membership.id === input.receiverMembershipId,
-      );
-      const receiverProfile = store.profiles.find(
-        (profile) => profile.membershipId === input.receiverMembershipId,
-      );
       if (
         receiver?.mentorStatus !== "approved" ||
-        !receiverProfile?.offeringMatchTypes.includes("mentor_match")
+        !receiverProfile.offeringMatchTypes.includes("mentor_match")
       ) {
         throw new Error("This mentor is no longer accepting mentoring requests.");
       }
@@ -11091,15 +11156,22 @@ export async function createIntroRequestInSpace(
       throw new Error("Both people need active access to this community or event.");
     }
 
+    const [receiverProfileRow] = await tx
+      .select({
+        introOptIn: dbSchema.profiles.introOptIn,
+        offeringMatchTypes: dbSchema.profiles.offeringMatchTypes,
+      })
+      .from(dbSchema.profiles)
+      .where(eq(dbSchema.profiles.membershipId, input.receiverMembershipId))
+      .limit(1);
+    if (!receiverProfileRow?.introOptIn) {
+      throw new Error("This member is not available for introductions.");
+    }
+
     if (input.kind === "mentoring") {
-      const [receiverProfileRow] = await tx
-        .select({ offeringMatchTypes: dbSchema.profiles.offeringMatchTypes })
-        .from(dbSchema.profiles)
-        .where(eq(dbSchema.profiles.membershipId, input.receiverMembershipId))
-        .limit(1);
       if (
         receiverRow.mentorStatus !== "approved" ||
-        !receiverProfileRow?.offeringMatchTypes.includes("mentor_match")
+        !receiverProfileRow.offeringMatchTypes.includes("mentor_match")
       ) {
         throw new Error("This mentor is no longer accepting mentoring requests.");
       }

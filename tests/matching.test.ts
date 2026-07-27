@@ -236,6 +236,28 @@ describe("matching engine", () => {
     ).toBeNull();
   });
 
+  it("does not recommend a target who has paused incoming introduction requests", () => {
+    const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
+    const target = seedProfiles.find((profile) => profile.id === "pro_rhea")!;
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+
+    expect(
+      computeMatch(
+        seedOrganization,
+        sourceMembership,
+        source,
+        targetMembership,
+        { ...target, introOptIn: false },
+        "cofounder_match",
+      ),
+    ).toBeNull();
+  });
+
   it("uses member-friendly language in match explanations", () => {
     const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
     const target = seedProfiles.find((profile) => profile.id === "pro_rhea")!;

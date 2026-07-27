@@ -534,11 +534,30 @@ describe("feed filters and social recommendations", () => {
     await expect(
       getMatchViews(profile.membershipId, [mentorMatch!], "org_wavespark"),
     ).resolves.toEqual([]);
+    await expect(
+      listVisibleMatchTargetMembershipIdsForProfile(profile.id),
+    ).resolves.not.toContain(targetMembership.id);
     const matchCards = await getMatchCardViewsForProfile(
       profile.id,
       profile.membershipId,
     );
     expect(matchCards.some(({ match }) => match.id === mentorMatch!.id)).toBe(false);
+  });
+
+  it("filters stale match views immediately after the target pauses intro requests", async () => {
+    const match = getStore().matches.find((candidate) => candidate.sourceProfileId === "pro_jules");
+    expect(match).toBeDefined();
+    const targetProfile = (await getProfileById(match!.targetProfileId))!;
+    targetProfile.introOptIn = false;
+
+    await expect(
+      getMatchViews("mem_jules", [match!], "org_wavespark"),
+    ).resolves.toEqual([]);
+    await expect(
+      listVisibleMatchTargetMembershipIdsForProfile("pro_jules"),
+    ).resolves.not.toContain(targetProfile.membershipId);
+    const matchCards = await getMatchCardViewsForProfile("pro_jules", "mem_jules");
+    expect(matchCards.some(({ match: cardMatch }) => cardMatch.id === match!.id)).toBe(false);
   });
 
   it("loads a post thread with author and visible comment profiles", async () => {

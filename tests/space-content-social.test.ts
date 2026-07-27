@@ -251,6 +251,32 @@ describe("Space-scoped content and social data", () => {
     ).resolves.toHaveLength(1);
   });
 
+  it("rechecks receiver intro availability at the store write boundary", async () => {
+    const event = await createTestSpace("Intro availability");
+    await Promise.all([
+      grant(event.id, "mem_jules"),
+      grant(event.id, "mem_leila"),
+    ]);
+    const receiverProfile = (await getProfileByMembershipId("mem_leila"))!;
+    receiverProfile.introOptIn = false;
+
+    await expect(
+      createIntroRequestInSpace({
+        orgId: seedOrganization.id,
+        spaceId: event.id,
+        requesterMembershipId: "mem_jules",
+        receiverMembershipId: "mem_leila",
+        kind: "general",
+        sourceType: "profile",
+        sourceId: receiverProfile.id,
+        introPurpose: "store boundary availability",
+        note: "The receiver has paused incoming requests.",
+        status: "pending",
+        suggestedFirstMessage: "Would you be open to connecting?",
+      }),
+    ).rejects.toThrow("not available for introductions");
+  });
+
   it("shows account notifications plus only authorized Space notifications", async () => {
     const eventA = await createTestSpace("Notify Alpha");
     const eventB = await createTestSpace("Notify Beta");

@@ -81,6 +81,7 @@ export interface PrelaunchQaSnapshotParticipant {
   intentId: string;
   orgId: string;
   spaceId: string;
+  mentorStatus: "not_mentor" | "needs_review" | "approved";
   seekingMatchTypes: PrelaunchQaMatchType[];
   offeringMatchTypes: PrelaunchQaMatchType[];
 }
@@ -95,6 +96,7 @@ interface RosterRow {
   full_name: string;
   profile_embedding_model: string | null;
   membership_org_id: string;
+  mentor_status: string;
   intent_id: string;
   intent_org_id: string;
   intent_space_id: string;
@@ -264,6 +266,7 @@ export async function capturePrelaunchQaDatabaseSnapshot(
       p.seeking_match_types,
       p.offering_match_types,
       m.org_id AS membership_org_id,
+      m.mentor_status,
       si.id AS intent_id,
       si.org_id AS intent_org_id,
       si.space_id AS intent_space_id,
@@ -293,6 +296,12 @@ export async function capturePrelaunchQaDatabaseSnapshot(
     if (!person || seenSourceIds.has(person.sourceId)) {
       throw new Error("QA database fullName values do not map one-to-one to input sourceId values.");
     }
+    const expectedMentorStatus = person.kind === "mentor" ? "approved" : "not_mentor";
+    if (row.mentor_status !== expectedMentorStatus) {
+      throw new Error(
+        `QA database ${person.kind} ${row.profile_id} has mentor status ${row.mentor_status}; expected ${expectedMentorStatus}.`,
+      );
+    }
     seenSourceIds.add(person.sourceId);
     return {
       sourceId: person.sourceId,
@@ -302,6 +311,7 @@ export async function capturePrelaunchQaDatabaseSnapshot(
       intentId: row.intent_id,
       orgId: row.membership_org_id,
       spaceId: row.intent_space_id,
+      mentorStatus: expectedMentorStatus,
       seekingMatchTypes: snapshotMatchTypes(
         row.seeking_match_types,
         row.profile_id,
@@ -446,6 +456,7 @@ export function assemblePrelaunchQaEvaluationInput(
       first.intentId !== latest.intentId ||
       first.fullName !== latest.fullName ||
       first.kind !== latest.kind ||
+      first.mentorStatus !== latest.mentorStatus ||
       first.seekingMatchTypes.join("\u0000") !== latest.seekingMatchTypes.join("\u0000") ||
       first.offeringMatchTypes.join("\u0000") !== latest.offeringMatchTypes.join("\u0000")
     ) {

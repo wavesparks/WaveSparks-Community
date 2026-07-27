@@ -1150,7 +1150,7 @@ export async function getMatchViews(membershipId: string, matchRecords: Array<{
     const profile = record?.profile;
     const membership = record?.membership;
 
-    if (!profile || !membership) {
+    if (!profile || !membership || !profile.introOptIn) {
       return null;
     }
     if (
@@ -1205,7 +1205,11 @@ export async function getMatchCardViewsForProfile(
   }> = [];
 
   for (const record of records) {
-    if (!record.targetProfile || !record.targetMembership) {
+    if (
+      !record.targetProfile ||
+      !record.targetMembership ||
+      !record.targetProfile.introOptIn
+    ) {
       continue;
     }
     if (

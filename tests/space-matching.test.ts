@@ -313,6 +313,26 @@ describe("Space-scoped matching", () => {
     }
   });
 
+  it("keeps outgoing matches while excluding a member from incoming recommendations", () => {
+    const space = eventSpace("space_event_intro_eligibility");
+    const base = compatibleRecords(space);
+    const pausedRecord = spaceRecord(
+      space,
+      base[1].membership,
+      { ...base[1].profile, introOptIn: false },
+    );
+    const matches = recomputeMatchesForSpaceMembers(
+      seedOrganization,
+      space,
+      [base[0], pausedRecord],
+      seedMatchTypeConfigs,
+      { limit: null },
+    );
+
+    expect(matches.some((match) => match.targetProfileId === pausedRecord.profile.id)).toBe(false);
+    expect(matches.some((match) => match.sourceProfileId === pausedRecord.profile.id)).toBe(true);
+  });
+
   it("hides a stale match immediately when the target is removed from the Space", async () => {
     const fixture = await readableSpaceMatchFixture("space_event_removed_match_target");
     fixture.targetSpaceMembership.accessStatus = "removed";
@@ -335,6 +355,26 @@ describe("Space-scoped matching", () => {
     fixture.targetIntent.matchingOptIn = false;
 
     await expectStaleTargetHidden(fixture);
+    expect(getStore().matches.some((match) => match.id === fixture.match.id)).toBe(true);
+  });
+
+  it("hides a stale match immediately when the target pauses intro requests", async () => {
+    const fixture = await readableSpaceMatchFixture("space_event_intro_paused_match_target");
+    fixture.targetProfile.introOptIn = false;
+
+    const [targetMembershipIds, cards] = await Promise.all([
+      listVisibleMatchTargetMembershipIdsForProfile(fixture.sourceProfile.id, {
+        spaceId: fixture.space.id,
+        limit: 1000,
+      }),
+      getMatchCardViewsForProfileInSpace(
+        fixture.space.id,
+        fixture.sourceProfile.id,
+        fixture.sourceProfile.membershipId,
+      ),
+    ]);
+    expect(targetMembershipIds).not.toContain(fixture.targetMembership.id);
+    expect(cards.map((card) => card.match.id)).not.toContain(fixture.match.id);
     expect(getStore().matches.some((match) => match.id === fixture.match.id)).toBe(true);
   });
 

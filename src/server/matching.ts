@@ -1191,6 +1191,7 @@ export function computeMatch(
     !target.onboardingComplete ||
     !source.profileVisibleInMatching ||
     !target.profileVisibleInMatching ||
+    !target.introOptIn ||
     !config.active ||
     !mentorProviderIsEligible(config, targetMembership) ||
     !participates(source, target, config)
@@ -1215,6 +1216,7 @@ export function computeSpaceMatch(
     sourceRecord.profile.id === targetRecord.profile.id ||
     !isSpaceMatchingMemberEligible(space, sourceRecord) ||
     !isSpaceMatchingMemberEligible(space, targetRecord) ||
+    !targetRecord.profile.introOptIn ||
     !config.active ||
     !mentorProviderIsEligible(config, targetRecord.membership) ||
     !participates(sourceRecord.profile, targetRecord.profile, config)

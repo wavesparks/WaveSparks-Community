@@ -161,6 +161,12 @@ describe("mentor designation store", () => {
     );
 
     mentor.mentorStatus = "approved";
+    mentorProfile.introOptIn = false;
+    await expect(createIntroRequestInSpace(input)).rejects.toThrow(
+      "not available for introductions",
+    );
+
+    mentorProfile.introOptIn = true;
     await expect(createIntroRequestInSpace(input)).resolves.toMatchObject({
       kind: "mentoring",
       receiverMembershipId: mentor.id,

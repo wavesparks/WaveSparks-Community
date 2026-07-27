@@ -66,7 +66,7 @@ export const PRELAUNCH_QA = {
   deidentificationConfirmation: "DEIDENTIFIED_QA_ONLY",
   publicDataConfirmation: "PUBLIC_AIRTABLE_PROFILE_DATA_QA_ONLY",
   cleanupConfirmation: "DELETE_PRELAUNCH_QA",
-  latestMigrationTimestamp: 1_784_096_677_394,
+  latestMigrationTimestamp: 1_785_136_131_801,
 } as const;
 
 type PublicAirtableQaMatchSlug =
@@ -1019,7 +1019,7 @@ interface SchemaPresenceRow {
   space_memberships: string | null;
   space_intents: string | null;
   match_type_configs: string | null;
-  migration_0012_columns: string | number;
+  migration_0017_columns: string | number;
 }
 
 interface MigrationTimestampRow {
@@ -1065,15 +1065,28 @@ export async function runPrelaunchQaPreflight(sqlClient: postgres.Sql) {
         SELECT count(*)
         FROM information_schema.columns
         WHERE table_schema = 'public'
-          AND table_name = 'profiles'
-          AND column_name IN (
-            'bio',
-            'problem_interest',
-            'current_focus',
-            'technical_experience_level',
-            'technical_experience'
+          AND (
+            (
+              table_name = 'profiles'
+              AND column_name IN (
+                'bio',
+                'problem_interest',
+                'current_focus',
+                'technical_experience_level',
+                'technical_experience'
+              )
+            )
+            OR (
+              table_name = 'memberships'
+              AND column_name IN (
+                'mentor_status',
+                'mentor_reviewed_at',
+                'mentor_reviewed_by_membership_id'
+              )
+            )
+            OR (table_name = 'intro_requests' AND column_name = 'kind')
           )
-      )::integer AS migration_0012_columns
+      )::integer AS migration_0017_columns
   `;
   const requiredTables = [
     "migration_table",
@@ -1087,9 +1100,9 @@ export async function runPrelaunchQaPreflight(sqlClient: postgres.Sql) {
     "match_type_configs",
   ] as const;
   const missingTables = requiredTables.filter((name) => !presence?.[name]);
-  if (missingTables.length || Number(presence?.migration_0012_columns) !== 5) {
+  if (missingTables.length || Number(presence?.migration_0017_columns) !== 9) {
     throw new Error(
-      `Prelaunch QA requires migrations through 0012; missing=${missingTables.join(",") || "none"}, profile_columns=${Number(presence?.migration_0012_columns ?? 0)}/5.`,
+      `Prelaunch QA requires migrations through 0017; missing=${missingTables.join(",") || "none"}, required_columns=${Number(presence?.migration_0017_columns ?? 0)}/9.`,
     );
   }
 
@@ -1102,7 +1115,7 @@ export async function runPrelaunchQaPreflight(sqlClient: postgres.Sql) {
     latestMigrationTimestamp < PRELAUNCH_QA.latestMigrationTimestamp
   ) {
     throw new Error(
-      `Prelaunch QA requires migration 0012 (${PRELAUNCH_QA.latestMigrationTimestamp}); latest=${latestMigrationTimestamp}.`,
+      `Prelaunch QA requires migration 0017 (${PRELAUNCH_QA.latestMigrationTimestamp}); latest=${latestMigrationTimestamp}.`,
     );
   }
 
@@ -1744,12 +1757,14 @@ export async function seedPrelaunchQa(db: PrelaunchQaDatabase, rows: PrelaunchQa
             userId: stored.userId,
             accountStatus: stored.accountStatus,
             status: stored.status,
+            mentorStatus: stored.mentorStatus,
           }) !==
             stableSerialize({
               orgId: membership.orgId,
               userId: membership.userId,
               accountStatus: membership.accountStatus,
               status: membership.status,
+              mentorStatus: membership.mentorStatus,
             })
         );
       }) ||

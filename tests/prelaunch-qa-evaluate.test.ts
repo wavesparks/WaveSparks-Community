@@ -90,6 +90,7 @@ function rosterRows() {
     full_name: person.fullName,
     profile_embedding_model: "text-embedding-3-large",
     membership_org_id: orgId,
+    mentor_status: person.kind === "mentor" ? "approved" : "not_mentor",
     intent_id: `intent_${person.sourceId}`,
     intent_org_id: orgId,
     intent_space_id: spaceId,
@@ -108,6 +109,7 @@ function snapshot(id: string): PrelaunchQaDatabaseSnapshot {
     intentId: `intent_${person.sourceId}`,
     orgId,
     spaceId,
+    mentorStatus: person.kind === "mentor" ? ("approved" as const) : ("not_mentor" as const),
     seekingMatchTypes: person.kind === "person" ? ["mentor_match" as const] : [],
     offeringMatchTypes: person.kind === "mentor" ? ["mentor_match" as const] : [],
   }));
@@ -213,6 +215,7 @@ describe("prelaunch QA database evaluation adapter", () => {
 
     expect(captured.participants).toHaveLength(60);
     expect(captured.participants[0]).toMatchObject({
+      mentorStatus: "not_mentor",
       seekingMatchTypes: ["mentor_match"],
       offeringMatchTypes: [],
     });
@@ -234,6 +237,7 @@ describe("prelaunch QA database evaluation adapter", () => {
     const rosterQuery = (sqlClient.mock.calls[0][0] as TemplateStringsArray).join("?");
     expect(rosterQuery).toContain("p.seeking_match_types");
     expect(rosterQuery).toContain("p.offering_match_types");
+    expect(rosterQuery).toContain("m.mentor_status");
   });
 
   it("rejects unsupported database eligibility flags before evaluating matches", async () => {
@@ -244,6 +248,16 @@ describe("prelaunch QA database evaluation adapter", () => {
     await expect(
       capturePrelaunchQaDatabaseSnapshot(sqlClient as never, qaInput(), "run_latest"),
     ).rejects.toThrow(/unsupported seeking match types/);
+  });
+
+  it("rejects a QA mentor that has not passed canonical mentor review", async () => {
+    const rows = rosterRows();
+    rows.find((row) => row.full_name === "QA Mentor 01")!.mentor_status = "needs_review";
+    const sqlClient = vi.fn().mockResolvedValueOnce(rows);
+
+    await expect(
+      capturePrelaunchQaDatabaseSnapshot(sqlClient as never, qaInput(), "run_latest"),
+    ).rejects.toThrow(/expected approved/);
   });
 
   it("assembles stable DB identities, the 35/15 split, labels, and two snapshots", () => {
