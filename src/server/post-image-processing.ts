@@ -1,4 +1,7 @@
-import sharp from "sharp";
+export {
+  expectedPostImagePathPrefix,
+  processedPostImagePath,
+} from "@/server/post-image-paths";
 
 export const POST_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const POST_IMAGE_MAX_COUNT = 4;
@@ -66,22 +69,6 @@ export function safePostImageFileName(fileName: string) {
   );
 }
 
-export function expectedPostImagePathPrefix(input: {
-  spaceId: string;
-  membershipId: string;
-  imageId: string;
-}) {
-  return `post-images/${input.spaceId}/${input.membershipId}/${input.imageId}/`;
-}
-
-export function processedPostImagePath(input: {
-  spaceId: string;
-  membershipId: string;
-  imageId: string;
-}) {
-  return `${expectedPostImagePathPrefix(input)}__wavesparks_processed__.webp`;
-}
-
 export async function processPostImage(bytes: Uint8Array): Promise<ProcessedPostImage> {
   if (!bytes.byteLength || bytes.byteLength > POST_IMAGE_MAX_BYTES) {
     throw new Error("Each image must be 5 MB or smaller.");
@@ -91,6 +78,7 @@ export async function processPostImage(bytes: Uint8Array): Promise<ProcessedPost
     throw new Error("Use a genuine JPG, PNG, or WebP image.");
   }
 
+  const { default: sharp } = await import("sharp");
   const pipeline = sharp(bytes, {
     animated: false,
     failOn: "warning",

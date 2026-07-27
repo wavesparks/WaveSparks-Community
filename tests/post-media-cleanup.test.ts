@@ -26,8 +26,23 @@ function restoreEnvironment() {
 describe("post media cleanup", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.doUnmock("sharp");
     vi.resetModules();
     restoreEnvironment();
+  });
+
+  it("rejects unauthorized requests without loading the image processor", async () => {
+    process.env.CRON_SECRET = "cleanup-test-secret";
+    vi.doMock("sharp", () => {
+      throw new Error("sharp must not load in the cleanup route");
+    });
+
+    const { GET } = await import("@/app/api/internal/post-media/cleanup/route");
+    const response = await GET(
+      new Request("http://localhost/api/internal/post-media/cleanup"),
+    );
+
+    expect(response.status).toBe(401);
   });
 
   it("removes old staged rows and untracked Blob objects but keeps recent media", async () => {

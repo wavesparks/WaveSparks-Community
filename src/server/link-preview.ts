@@ -4,7 +4,6 @@ import { BlockList, isIP } from "node:net";
 import { request as httpsRequest } from "node:https";
 
 import { load } from "cheerio";
-import sharp from "sharp";
 
 import { supportedPostImageFormat } from "@/server/post-image-processing";
 
@@ -285,6 +284,7 @@ async function fetchPreviewImage(rawUrl: string, base: URL, deadline: number) {
   }
   const detectedFormat = supportedPostImageFormat(response.bytes);
   if (!detectedFormat) throw new Error("The preview thumbnail format is unsupported.");
+  const { default: sharp } = await import("sharp");
   const pipeline = sharp(response.bytes, {
     animated: false,
     failOn: "warning",

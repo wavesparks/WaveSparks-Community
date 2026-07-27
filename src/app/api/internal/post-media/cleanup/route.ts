@@ -1,5 +1,5 @@
 import { env } from "@/lib/env";
-import { processedPostImagePath } from "@/server/post-image-processing";
+import { processedPostImagePath } from "@/server/post-image-paths";
 import {
   deletePrivateMedia,
   listPrivateMedia,

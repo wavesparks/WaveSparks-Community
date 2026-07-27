@@ -1,6 +1,16 @@
 import type { NextConfig } from "next";
 
+const sharpRuntimeFiles = [
+  "./node_modules/.pnpm/sharp@0.35.*/node_modules/@img/sharp-linux-x64/**/*",
+  "./node_modules/.pnpm/sharp@0.35.*/node_modules/@img/sharp-libvips-linux-x64/**/*",
+];
+
 const nextConfig: NextConfig = {
+  outputFileTracingIncludes: {
+    "/api/org/\\[slug\\]/spaces/\\[spaceId\\]/link-preview": sharpRuntimeFiles,
+    "/api/org/\\[slug\\]/spaces/\\[spaceId\\]/post-images/upload":
+      sharpRuntimeFiles,
+  },
   async redirects() {
     return [
       {
