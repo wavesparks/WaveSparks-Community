@@ -15,16 +15,14 @@ import { getSpaceViewerContext } from "@/lib/space-auth";
 import { getPostMediaStorageMode } from "@/server/post-media-storage";
 
 function defaultOpportunitySource({
-  affiliationType,
-  archetypes,
   canAdmin,
+  canMentor,
 }: {
-  affiliationType: string;
-  archetypes: string[];
   canAdmin: boolean;
+  canMentor: boolean;
 }) {
   if (canAdmin) return "official";
-  if (affiliationType === "mentor" || archetypes.includes("mentor")) return "mentor";
+  if (canMentor) return "mentor";
   return "member";
 }
 
@@ -60,9 +58,8 @@ export default async function SpaceComposePage({
   const destination = opportunityMode ? "opportunities" : "feed";
   const backPath = `/org/${slug}/s/${space.slug}/${destination}`;
   const source = defaultOpportunitySource({
-    affiliationType: viewer.membership.affiliationType,
-    archetypes: viewer.membership.archetypes,
     canAdmin: viewer.canAdmin,
+    canMentor: viewer.canMentor,
   });
   const mediaStorageMode = getPostMediaStorageMode();
 
@@ -124,6 +121,7 @@ export default async function SpaceComposePage({
             )}
             appOrigin={env.appUrl}
             canAdmin={viewer.canAdmin}
+            canMentor={viewer.canMentor}
             communityName={communityName}
             defaultOpportunitySource={source}
             defaultType={opportunityMode ? "opportunity" : feedPostType}

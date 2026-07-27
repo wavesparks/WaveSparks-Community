@@ -1,6 +1,7 @@
 import { UserButton } from "@clerk/nextjs";
 import {
   CalendarDays,
+  GraduationCap,
   LockKeyhole,
   PenLine,
   Shield,
@@ -113,7 +114,7 @@ export function SpaceShell({
               <BrandLogo className="h-8 max-w-[150px]" />
             </Link>
 
-            <div className="min-w-[220px] flex-1 sm:max-w-sm">
+            <div className="order-3 w-full min-w-0 flex-none sm:order-none sm:min-w-[220px] sm:flex-1 sm:max-w-sm">
               <SpaceSwitcher
                 currentSpace={currentSpace}
                 orgSlug={viewer.org.slug}
@@ -130,8 +131,20 @@ export function SpaceShell({
               >
                 Home
               </LinkButton>
+              {viewer.canMentor ? (
+                <LinkButton
+                  aria-label="Mentoring"
+                  href={`/org/${viewer.org.slug}/mentoring`}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <GraduationCap aria-hidden className="size-4" />
+                  <span className="hidden xl:inline">Mentoring</span>
+                </LinkButton>
+              ) : null}
               {viewer.canAdmin ? (
                 <LinkButton
+                  aria-label="Admin"
                   href={`/org/${viewer.org.slug}/admin/members`}
                   size="sm"
                   variant="ghost"
@@ -148,6 +161,7 @@ export function SpaceShell({
                 Inbox
               </LinkButton>
               <LinkButton
+                aria-label="Profile"
                 href={`/org/${viewer.org.slug}/profile`}
                 size="sm"
                 variant="secondary"
@@ -211,7 +225,7 @@ export function SpaceShell({
               {canInteract ? (
                 <LinkButton
                   className="w-full lg:w-auto"
-                  href={`/org/${viewer.org.slug}/s/${currentSpace.slug}/compose`}
+                  href={`/org/${viewer.org.slug}/s/${currentSpace.slug}/compose?kind=feed`}
                   size="sm"
                 >
                   <PenLine aria-hidden className="size-4" />

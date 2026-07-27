@@ -37,6 +37,9 @@ export function IntroRequestCard({
               {request.isIncoming ? "Received" : "Sent"} ·{" "}
               {introSourceLabels[request.sourceType]}
             </p>
+            {request.kind === "mentoring" ? (
+              <Badge variant="accent">Mentoring</Badge>
+            ) : null}
             {displaySourceName ? <Badge variant="muted">{displaySourceName}</Badge> : null}
           </div>
           <h3 className="mt-1 text-xl font-semibold leading-tight text-[var(--ink)]">
@@ -58,7 +61,9 @@ export function IntroRequestCard({
         <div className="rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] p-4 text-sm text-[var(--ink)]">
           <p className="font-semibold">Contact details</p>
           <p className="mt-2">{request.contactDetails.email}</p>
-          <p>{request.contactDetails.whatsapp}</p>
+          {request.contactDetails.whatsapp ? (
+            <p>{request.contactDetails.whatsapp}</p>
+          ) : null}
         </div>
       ) : null}
       <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm leading-6 text-[var(--ink-soft)]">

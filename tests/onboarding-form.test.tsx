@@ -80,6 +80,7 @@ describe("OnboardingForm", () => {
     render(
       <OnboardingForm
         action={action}
+        canMentor
         initialStep={0}
         links={[]}
         matchTypeConfigs={seedMatchTypeConfigs}
@@ -92,10 +93,30 @@ describe("OnboardingForm", () => {
 
     await user.click(screen.getByRole("button", { name: "Save draft" }));
 
-    await waitFor(() => expect(screen.getByLabelText("Maximum number of mentees")).toHaveFocus());
+    await waitFor(() => expect(screen.getByLabelText("Preferred number of mentees")).toHaveFocus());
     expect(details.open).toBe(true);
     expect(screen.getByText("Enter a whole number from 0 to 100.")).toBeInTheDocument();
     expect(action).not.toHaveBeenCalled();
+  });
+
+  it("opens mentoring details immediately for the mentor edit entry point", () => {
+    render(
+      <OnboardingForm
+        action={vi.fn()}
+        canMentor
+        initialStep={3}
+        links={[]}
+        matchTypeConfigs={seedMatchTypeConfigs}
+        openMentoringDetails
+        profile={seedProfiles[0]}
+        returnTo="/org/wavesparks/mentoring#mentor-profile"
+      />,
+    );
+
+    expect(document.getElementById("mentoring_details")).toHaveAttribute("open");
+    expect(document.querySelector('input[name="return_to"]')).toHaveValue(
+      "/org/wavesparks/mentoring#mentor-profile",
+    );
   });
 
   it("serializes checked and unchecked privacy controls unambiguously", async () => {

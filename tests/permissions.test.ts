@@ -1,6 +1,11 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
-import { canAccessFeed, canViewAdminRoute, canViewContactDetails } from "@/server/permissions";
+import {
+  canAccessFeed,
+  canUseMentorFeatures,
+  canViewAdminRoute,
+  canViewContactDetails,
+} from "@/server/permissions";
 import { seedOrganization } from "@/data/seed-data";
 import {
   addNotification,
@@ -16,11 +21,17 @@ import {
   hasUnreadNotificationsForMembership,
   listIntroRequestsForMembership,
   listMembershipProfileRecordsByIds,
+  listVisibleSpacesForMembership,
   markNotificationsReadForMembership,
   resetStore,
   upsertSessionUser,
 } from "@/server/store";
-import { getIntroRequestViews, getNotificationViews } from "@/server/view-models";
+import {
+  getAccountIntroHistoryViews,
+  getIntroRequestViews,
+  getIntroRequestViewsForSpace,
+  getNotificationViews,
+} from "@/server/view-models";
 
 describe("permission guards", () => {
   beforeEach(() => {
@@ -162,6 +173,33 @@ describe("permission guards", () => {
     expect(canAccessFeed(pendingMembership, pendingProfile)).toBe(false);
   });
 
+  it("lets connected approved mentors use mentor features despite a legacy pending status", async () => {
+    const mentor = (await getMembershipById("mem_marcus"))!;
+
+    expect(
+      canUseMentorFeatures({
+        ...mentor,
+        accountStatus: "connected",
+        mentorStatus: "approved",
+        status: "pending",
+      }),
+    ).toBe(true);
+    expect(
+      canUseMentorFeatures({
+        ...mentor,
+        accountStatus: "invited",
+        mentorStatus: "approved",
+      }),
+    ).toBe(false);
+    expect(
+      canUseMentorFeatures({
+        ...mentor,
+        accountStatus: "connected",
+        mentorStatus: "needs_review",
+      }),
+    ).toBe(false);
+  });
+
   it("loads one membership record with user and profile for action authorization", async () => {
     const record = await getMembershipRecordById("mem_jules");
 
@@ -210,6 +248,34 @@ describe("permission guards", () => {
     ).resolves.toEqual([]);
     expect(acceptedIntro?.otherParty.membershipId).toBe("mem_marcus");
     expect(acceptedIntro?.contactDetails?.email).toContain("@");
+  });
+
+  it("honors WhatsApp sharing consent in every accepted-introduction view", async () => {
+    const otherProfile = (await getProfileByMembershipId("mem_marcus"))!;
+    otherProfile.whatsappVisibleAfterAccept = false;
+    const visibleSpaceRecords = await listVisibleSpacesForMembership("mem_jules");
+    const visibleSpaces = visibleSpaceRecords.map(({ space }) => space);
+    const mainSpace = visibleSpaces.find((space) => space.kind === "main")!;
+
+    const viewCollections = await Promise.all([
+      getIntroRequestViews("mem_jules", seedOrganization.id),
+      getIntroRequestViewsForSpace(
+        mainSpace.id,
+        "mem_jules",
+        seedOrganization.id,
+      ),
+      getAccountIntroHistoryViews(
+        "mem_jules",
+        seedOrganization.id,
+        visibleSpaces,
+      ),
+    ]);
+
+    for (const views of viewCollections) {
+      const acceptedIntro = views.find((request) => request.id === "intro_1");
+      expect(acceptedIntro?.contactDetails?.email).toContain("@");
+      expect(acceptedIntro?.contactDetails?.whatsapp).toBeUndefined();
+    }
   });
 
   it("limits the member notification inbox to the latest records", async () => {

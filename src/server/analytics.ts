@@ -14,7 +14,7 @@ type AnalyticsPostInput = Pick<Post, "authorMembershipId" | "createdAt">;
 type AnalyticsCommentInput = Pick<Comment, "createdAt">;
 type AnalyticsIntroRequestInput = Pick<
   IntroRequest,
-  "createdAt" | "introPurpose" | "respondedAt" | "status"
+  "createdAt" | "introPurpose" | "kind" | "respondedAt" | "status"
 >;
 type AnalyticsEventInput = Pick<AnalyticsEvent, "eventName">;
 
@@ -119,7 +119,7 @@ export function buildOrgAnalyticsSnapshot(input: OrgAnalyticsInput): OrgAnalytic
         intro.status === "accepted" && intro.introPurpose === "co-founder conversation",
     ).length,
     mentorMatchesAccepted: input.introRequests.filter(
-      (intro) => intro.status === "accepted" && intro.introPurpose === "mentor guidance",
+      (intro) => intro.status === "accepted" && intro.kind === "mentoring",
     ).length,
     teamsFormed: input.analyticsEvents.filter((event) => event.eventName === "team_formed")
       .length,

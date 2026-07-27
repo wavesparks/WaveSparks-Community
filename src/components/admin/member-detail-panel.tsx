@@ -7,6 +7,7 @@ import {
   resendMembershipInvitationAction,
   revokeMembershipInvitationAction,
   updateMemberSpaceAccessAction,
+  updateMentorDesignationAction,
   updateMembershipAction,
 } from "@/actions/admin";
 import {
@@ -21,6 +22,7 @@ import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
 import type {
   AccountStatus,
+  MentorStatus,
   MembershipRole,
   MembershipInvitationStatus,
   SpaceAccessStatus,
@@ -46,6 +48,7 @@ export interface MemberDetailPanelProps {
     accountStatus: AccountStatus;
     approvalNote?: string;
     id: string;
+    mentorStatus: MentorStatus;
     role: MembershipRole;
   };
   spaces: Array<{
@@ -61,6 +64,8 @@ export interface MemberDetailPanelProps {
 function confirmationMessage(
   initialRole: MembershipRole,
   nextRole: MembershipRole,
+  initialMentorStatus: MentorStatus,
+  nextMentorStatus: MentorStatus,
   initialStatus: AccountStatus,
   nextStatus: AccountStatus,
 ) {
@@ -68,6 +73,12 @@ function confirmationMessage(
 
   if (initialRole !== "org_admin" && nextRole === "org_admin") {
     warnings.push("grant this member administrator access");
+  }
+  if (initialMentorStatus !== "approved" && nextMentorStatus === "approved") {
+    warnings.push("grant this member the Approved Mentor designation");
+  }
+  if (initialMentorStatus === "approved" && nextMentorStatus !== "approved") {
+    warnings.push("revoke this member’s Approved Mentor designation");
   }
   if (initialStatus !== nextStatus && nextStatus === "suspended") {
     warnings.push("block this account from Wavesparks Community and every Event");
@@ -93,6 +104,9 @@ export function MemberDetailPanel({
 }: MemberDetailPanelProps) {
   const summaryId = useId();
   const [role, setRole] = useState<MembershipRole>(membership.role);
+  const [mentorStatus, setMentorStatus] = useState<MentorStatus>(
+    membership.mentorStatus,
+  );
   const [status, setStatus] = useState<AccountStatus>(membership.accountStatus);
   const [selectedSpaceId, setSelectedSpaceId] = useState(spaces[0]?.id ?? "");
   const selectedSpace = spaces.find((space) => space.id === selectedSpaceId);
@@ -107,6 +121,8 @@ export function MemberDetailPanel({
     const message = confirmationMessage(
       membership.role,
       role,
+      membership.mentorStatus,
+      mentorStatus,
       membership.accountStatus,
       status,
     );
@@ -136,13 +152,20 @@ export function MemberDetailPanel({
               <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">{member.headline}</p>
             ) : null}
           </div>
-          <Badge variant={connected ? "accent" : invitationPending ? "default" : "muted"}>
-            {connected
-              ? "Connected"
-              : invitationPending
-                ? "Invitation pending"
-                : "Not connected"}
-          </Badge>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={connected ? "accent" : invitationPending ? "default" : "muted"}>
+              {connected
+                ? "Connected"
+                : invitationPending
+                  ? "Invitation pending"
+                  : "Not connected"}
+            </Badge>
+            {membership.mentorStatus === "approved" ? (
+              <Badge variant="accent">Approved mentor</Badge>
+            ) : membership.mentorStatus === "needs_review" ? (
+              <Badge variant="default">Mentor review</Badge>
+            ) : null}
+          </div>
         </div>
 
         <form
@@ -151,7 +174,7 @@ export function MemberDetailPanel({
           onSubmit={confirmUpdate}
         >
           <div>
-            <Label htmlFor={`${membership.id}-role`}>Role</Label>
+            <Label htmlFor={`${membership.id}-role`}>Account permissions</Label>
             <Select
               id={`${membership.id}-role`}
               name="role"
@@ -164,6 +187,23 @@ export function MemberDetailPanel({
               <option value="member">{getMembershipRoleLabel("member")}</option>
               <option value="org_admin">{getMembershipRoleLabel("org_admin")}</option>
             </Select>
+          </div>
+          <div>
+            <Label htmlFor={`${membership.id}-mentor-status`}>Mentor designation</Label>
+            <Select
+              id={`${membership.id}-mentor-status`}
+              name="mentor_status"
+              onChange={(event) => setMentorStatus(event.target.value as MentorStatus)}
+              value={mentorStatus}
+            >
+              <option value="not_mentor">Not a mentor</option>
+              <option value="needs_review">Needs review</option>
+              <option value="approved">Approved mentor</option>
+            </Select>
+            <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
+              Approved mentors can offer mentoring only in communities or Events they can access.
+              This does not grant administrator permissions.
+            </p>
           </div>
           <div>
             <Label htmlFor={`${membership.id}-status`}>Account status</Label>
@@ -195,6 +235,46 @@ export function MemberDetailPanel({
             <SubmitButton pendingLabel="Saving member">Save changes</SubmitButton>
           </div>
         </form>
+
+        {membership.mentorStatus === "needs_review" ? (
+          <div className="space-y-3 border-t border-[var(--line)] pt-4">
+            <div>
+              <p className="text-sm font-semibold text-[var(--ink)]">Mentor review</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
+                Review this person’s mentor experience before enabling mentor profiles,
+                matching, and mentoring requests.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <form
+                action={updateMentorDesignationAction.bind(null, slug, membership.id)}
+                onSubmit={(event) => {
+                  if (!window.confirm("Approve this person as a mentor?")) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                <input name="mentor_status" type="hidden" value="approved" />
+                <SubmitButton pendingLabel="Approving mentor" size="sm">
+                  Approve mentor
+                </SubmitButton>
+              </form>
+              <form
+                action={updateMentorDesignationAction.bind(null, slug, membership.id)}
+                onSubmit={(event) => {
+                  if (!window.confirm("Reject this mentor designation review?")) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                <input name="mentor_status" type="hidden" value="not_mentor" />
+                <SubmitButton pendingLabel="Rejecting review" size="sm" variant="ghost">
+                  Reject
+                </SubmitButton>
+              </form>
+            </div>
+          </div>
+        ) : null}
 
         <div className="space-y-3 border-t border-[var(--line)] pt-4">
           <div>

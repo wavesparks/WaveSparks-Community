@@ -57,6 +57,7 @@ h4 {
 
 .ws-page-shell {
   position: relative;
+  isolation: isolate;
   min-height: 100vh;
   overflow-x: hidden;
   background:
@@ -68,7 +69,7 @@ h4 {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -1;
   pointer-events: none;
   background:
     radial-gradient(
@@ -81,11 +82,6 @@ h4 {
       color-mix(in srgb, var(--cyan) 7%, transparent),
       transparent 74%
     );
-}
-
-.ws-page-shell > * {
-  position: relative;
-  z-index: 1;
 }
 
 .ws-night-panel {

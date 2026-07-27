@@ -1,4 +1,4 @@
-import { MessageSquarePlus, SearchX, Sparkles, UsersRound } from "lucide-react";
+import { SearchX, Sparkles, UsersRound } from "lucide-react";
 
 import { FilterBar } from "@/components/community/filter-bar";
 import { PostCard } from "@/components/community/post-card";
@@ -63,12 +63,6 @@ export default async function SpaceFeedPage({
           title={`Updates from ${communityName}`}
         />
         <div className="flex flex-col gap-2 sm:flex-row">
-          {context.canInteract ? (
-            <LinkButton href={`/org/${slug}/s/${space.slug}/compose?kind=feed`}>
-              <MessageSquarePlus className="size-4" />
-              Create post
-            </LinkButton>
-          ) : null}
           <LinkButton
             href={`/org/${slug}/s/${space.slug}/matches`}
             variant="secondary"
@@ -178,7 +172,7 @@ export default async function SpaceFeedPage({
           ) : context.canInteract ? (
             <LinkButton
               className="shrink-0"
-              href={`/org/${slug}/s/${space.slug}/compose`}
+              href={`/org/${slug}/s/${space.slug}/compose?kind=feed`}
             >
               Create post
             </LinkButton>

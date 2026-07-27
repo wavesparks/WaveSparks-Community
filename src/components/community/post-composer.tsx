@@ -39,6 +39,7 @@ export function PostComposer({
   action,
   appOrigin,
   canAdmin,
+  canMentor = false,
   communityName,
   defaultOpportunitySource,
   defaultType,
@@ -52,6 +53,7 @@ export function PostComposer({
   action: ComposerAction;
   appOrigin?: string;
   canAdmin: boolean;
+  canMentor?: boolean;
   communityName: string;
   defaultOpportunitySource: "member" | "mentor" | "official";
   defaultType: PostType;
@@ -144,7 +146,7 @@ export function PostComposer({
       {opportunityPost ? (
         <div>
           <Label htmlFor="opportunity_source">Shared by</Label>
-          {canAdmin ? (
+          {canAdmin || canMentor ? (
             <Select
               id="opportunity_source"
               name="opportunity_source"
@@ -155,16 +157,22 @@ export function PostComposer({
               }
               value={opportunitySource}
             >
-              <option value="official">Organizers</option>
               <option value="member">Participants</option>
-              <option value="mentor">Mentors</option>
+              {canMentor ? <option value="mentor">Mentors</option> : null}
+              {canAdmin ? <option value="official">Organizers</option> : null}
             </Select>
           ) : (
             <>
               <Input
                 disabled
                 id="opportunity_source"
-                value={defaultOpportunitySource === "mentor" ? "Mentors" : "Participants"}
+                value={
+                  defaultOpportunitySource === "official"
+                    ? "Organizers"
+                    : defaultOpportunitySource === "mentor"
+                      ? "Mentors"
+                      : "Participants"
+                }
               />
               <input
                 name="opportunity_source"

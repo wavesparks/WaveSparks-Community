@@ -22,6 +22,9 @@ export function buildSeedRows(seedData: typeof import("@/data/seed-data")) {
     clerkInvitationUpdatedAt: membership.clerkInvitationUpdatedAt
       ? new Date(membership.clerkInvitationUpdatedAt)
       : undefined,
+    mentorReviewedAt: membership.mentorReviewedAt
+      ? new Date(membership.mentorReviewedAt)
+      : undefined,
     createdAt: new Date(membership.createdAt),
     updatedAt: new Date(membership.updatedAt),
     approvedAt: membership.approvedAt ? new Date(membership.approvedAt) : undefined,

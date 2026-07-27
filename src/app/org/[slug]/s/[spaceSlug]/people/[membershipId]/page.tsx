@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink, UserPlus } from "lucide-react";
+import { ArrowLeft, ExternalLink, GraduationCap, UserPlus } from "lucide-react";
 
 import {
   followMembershipInSpaceAction,
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { Select } from "@/components/ui/select";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
@@ -63,6 +64,16 @@ export default async function SpacePersonDetailPage({
 
   const isSelf = viewer.membership.id === profile.membershipId;
   const introCopy = getActiveIntroStatusCopy(profile.introStatus);
+  const requestedConnection = singleQueryValue(query.connection);
+  const defaultIntroKind =
+    profile.acceptingMentoringRequests && requestedConnection === "mentoring"
+      ? "mentoring"
+      : "general";
+  const mentorRequestStatus = !profile.openToIntroductions
+    ? "Not currently accepting introductions."
+    : profile.acceptingMentoringRequests
+      ? "Currently accepting mentoring requests."
+      : "Not currently accepting mentoring requests. You can still request a general introduction.";
   const profilePath = `/org/${slug}/s/${space.slug}/people/${profile.membershipId}`;
   const followAction = profile.isFollowing
     ? unfollowMembershipInSpaceAction.bind(
@@ -114,6 +125,12 @@ export default async function SpacePersonDetailPage({
               <div className="flex flex-wrap gap-2">
                 <Badge>{profile.stage}</Badge>
                 <Badge variant="muted">{profile.affiliationLabel}</Badge>
+                {profile.isApprovedMentor ? (
+                  <Badge className="gap-1" variant="accent">
+                    <GraduationCap className="size-3.5" aria-hidden />
+                    Approved mentor
+                  </Badge>
+                ) : null}
                 <Badge variant="accent">
                   {space.kind === "main" ? "Member of" : "Participant in"}{" "}
                   {communityName}
@@ -199,6 +216,79 @@ export default async function SpacePersonDetailPage({
         </Card>
 
         <div className="space-y-6">
+          {profile.isApprovedMentor ? (
+            <Card className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <GraduationCap className="size-5 text-[var(--accent)]" aria-hidden />
+                <SectionHeading eyebrow="Approved mentor" title="Mentoring" />
+              </div>
+              <p className="text-sm leading-6 text-[var(--ink-soft)]">
+                {mentorRequestStatus}
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--ink)]">Expertise</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[
+                      ...profile.mentorExpertiseTags,
+                      ...profile.mentorFunctionalStrengths,
+                    ].map((tag, index) => (
+                      <Badge key={`mentor-expertise-${tag}-${index}`} variant="muted">
+                        {tag}
+                      </Badge>
+                    ))}
+                    {!profile.mentorExpertiseTags.length &&
+                    !profile.mentorFunctionalStrengths.length ? (
+                      <p className="text-sm text-[var(--ink-soft)]">Not added yet.</p>
+                    ) : null}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-[var(--ink)]">Experience by stage</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {profile.mentorStageExperience.map((stage, index) => (
+                      <Badge key={`mentor-stage-${stage}-${index}`} variant="muted">
+                        {stage}
+                      </Badge>
+                    ))}
+                    {!profile.mentorStageExperience.length ? (
+                      <p className="text-sm text-[var(--ink-soft)]">Not added yet.</p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              {profile.mentorOffers.length ? (
+                <div>
+                  <p className="text-sm font-semibold text-[var(--ink)]">Mentoring offered</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {profile.mentorOffers.map((offer, index) => (
+                      <Badge key={`mentor-offer-${offer}-${index}`} variant="accent">
+                        {offer}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm leading-6 text-[var(--ink-soft)]">
+                <p>
+                  <span className="font-semibold text-[var(--ink)]">Availability:</span>{" "}
+                  {profile.mentorAvailability
+                    ? profile.mentorAvailability.replaceAll("_", " ")
+                    : "Not added yet"}
+                </p>
+                <p>
+                  <span className="font-semibold text-[var(--ink)]">Preferred capacity:</span>{" "}
+                  {profile.maxMentees === null
+                    ? "Not added yet"
+                    : `${profile.maxMentees} mentee${profile.maxMentees === 1 ? "" : "s"}`}
+                </p>
+                {profile.mentorshipPreferences ? (
+                  <p className="mt-2">{profile.mentorshipPreferences}</p>
+                ) : null}
+              </div>
+            </Card>
+          ) : null}
+
           <Card className="scroll-mt-64 space-y-4" id="request-introduction">
             <SectionHeading title={`Introductions in ${communityName}`} />
             {!context.canInteract ? (
@@ -222,8 +312,20 @@ export default async function SpacePersonDetailPage({
               <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                 <p className="text-sm font-semibold text-[var(--ink)]">This is your profile</p>
                 <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                  Other {peopleLabel} in {communityName} can request an introduction here.
+                  {profile.openToIntroductions
+                    ? `Other ${peopleLabel} in ${communityName} can request an introduction here.`
+                    : "You are not currently accepting new introduction requests."}
                 </p>
+                {!profile.openToIntroductions ? (
+                  <LinkButton
+                    className="mt-3"
+                    href={`/org/${slug}/onboarding?space=${encodeURIComponent(space.slug)}&return_to=${encodeURIComponent(`/org/${slug}/s/${space.slug}/people/${profile.membershipId}#request-introduction`)}`}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    Update introduction settings
+                  </LinkButton>
+                ) : null}
               </div>
             ) : introCopy ? (
               <div className="space-y-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
@@ -238,6 +340,15 @@ export default async function SpacePersonDetailPage({
                 >
                   View introduction
                 </LinkButton>
+              </div>
+            ) : !profile.openToIntroductions ? (
+              <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                <p className="text-sm font-semibold text-[var(--ink)]">
+                  Not accepting introductions
+                </p>
+                <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+                  This person is not currently open to new introduction requests.
+                </p>
               </div>
             ) : (
               <form
@@ -256,6 +367,21 @@ export default async function SpacePersonDetailPage({
                 />
                 <input name="source_type" type="hidden" value="profile" />
                 <input name="source_id" type="hidden" value={profile.profileId} />
+                {profile.acceptingMentoringRequests ? (
+                  <div>
+                    <Label htmlFor="profile-intro-kind">Connection type</Label>
+                    <Select
+                      defaultValue={defaultIntroKind}
+                      id="profile-intro-kind"
+                      name="intro_kind"
+                    >
+                      <option value="general">General introduction</option>
+                      <option value="mentoring">Mentoring request</option>
+                    </Select>
+                  </div>
+                ) : (
+                  <input name="intro_kind" type="hidden" value="general" />
+                )}
                 <div>
                   <Label htmlFor="profile-intro-purpose">What would you like to discuss?</Label>
                   <Input
@@ -285,7 +411,9 @@ export default async function SpacePersonDetailPage({
                 </div>
                 <SubmitButton className="w-full" pendingLabel="Sending request">
                   <UserPlus className="size-4" />
-                  Request introduction
+                  {profile.acceptingMentoringRequests
+                    ? "Send request"
+                    : "Request introduction"}
                 </SubmitButton>
               </form>
             )}

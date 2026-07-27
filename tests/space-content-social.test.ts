@@ -334,6 +334,61 @@ describe("Space-scoped content and social data", () => {
     ).rejects.toThrow("must target its owning Space");
   });
 
+  it("allows only an approved mentor's authoritative pending request to link to Mentoring", async () => {
+    const event = await createTestSpace("Mentoring Notification Event");
+    await Promise.all([
+      grant(event.id, "mem_jules"),
+      grant(event.id, "mem_marcus"),
+    ]);
+    const mentorProfile = (await getProfileByMembershipId("mem_marcus"))!;
+    await createIntroRequestInSpace(
+      {
+        orgId: seedOrganization.id,
+        spaceId: event.id,
+        requesterMembershipId: "mem_jules",
+        receiverMembershipId: "mem_marcus",
+        kind: "mentoring",
+        sourceType: "profile",
+        sourceId: mentorProfile.id,
+        introPurpose: "Mentoring guidance",
+        note: "A canonical mentoring request.",
+        status: "pending",
+        suggestedFirstMessage: "Would you be open to a mentoring conversation?",
+      },
+      { recordAnalytics: false },
+    );
+
+    await expect(
+      addNotification(
+        buildNotification(
+          "ntf_mentoring_workspace",
+          seedOrganization.id,
+          "mem_marcus",
+          "intro_requested",
+          "New mentoring request",
+          "Review this request in Mentoring.",
+          "/org/wavesparks/mentoring",
+          event.id,
+        ),
+      ),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      addNotification(
+        buildNotification(
+          "ntf_forged_mentoring_workspace",
+          seedOrganization.id,
+          "mem_jules",
+          "intro_requested",
+          "Forged mentoring request",
+          "This recipient is not an approved mentor.",
+          "/org/wavesparks/mentoring",
+          event.id,
+        ),
+      ),
+    ).rejects.toThrow("must target its owning Space");
+  });
+
   it("retains completed private Intro history without retaining pending access", async () => {
     const event = await createTestSpace("History Event");
     await Promise.all([

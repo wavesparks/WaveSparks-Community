@@ -9,7 +9,8 @@ Clerk signs you in; Wavesparks verifies your personal invitation and controls ac
 | Area | Scope |
 | --- | --- |
 | Sign-in, password, primary email, session | Clerk account |
-| Global role and safety status | Wavesparks organization account |
+| Account permissions and safety status | Wavesparks organization account |
+| Mentor designation | Wavesparks organization account; independent of permissions and Space access |
 | Main Community access | Main Community only |
 | Event access | That Event only |
 | Core profile | Shared across every Space |
@@ -113,6 +114,14 @@ Core profile information includes your identity, professional context, venture i
 
 Private email and WhatsApp details are never used as public directory fields or embedding input.
 
+### Mentor designation and services
+
+An `Approved mentor` badge means an Admin has verified the account's organization-level mentor designation. Participant, Alumni, Guest, Member, and Administrator are separate identities or permissions and may coexist with that badge. Profile labels, archetypes, or affiliation text alone do not make someone an approved mentor.
+
+Approved mentors can publish their mentor service details, offer mentor matching, publish Mentor opportunities, and use `/org/:orgSlug/mentoring` for their own mentoring requests. They still need active access to each source Space, cannot see Admin tools or cross-Space data, and receive contact details only after an introduction is accepted.
+
+Availability and preferred mentee count are informational and may influence ordering; they do not automatically reject a request. Turn off the mentor-matching offering to pause new mentor matches and direct mentoring requests. If approval is revoked, the service profile is retained privately for a future reapproval while new discovery, requests and matching stop.
+
 ## 6. Set intent separately in each Space
 
 The Matches page stores a separate Space intent containing:
@@ -142,6 +151,8 @@ The same global profile may appear in multiple Spaces, but the local intent and 
 ## 8. Request and accept introductions
 
 An introduction starts from a match, member profile, post, or Admin-curated connection and retains its source Space. If the same two people share several Spaces, they can still have only one unresolved request at a time.
+
+Ordinary introductions stay in **Introductions**. A request becomes a mentoring request only when it comes from a canonical mentor match or the approved mentor's **Request mentoring** profile entry point; the server determines that kind and routes it to the mentor's private Mentoring workspace. A client cannot turn a general request into mentoring by changing form data.
 
 Before acceptance:
 

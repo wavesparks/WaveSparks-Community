@@ -7,6 +7,7 @@ import { legacySeekingMatchTypes } from "@/lib/match-config";
 import { canonicalLegacyBio } from "@/lib/profile-bio";
 import { LOCAL_EMBEDDING_MODEL } from "@/server/embeddings";
 import { buildEmbedding, buildMatchingEmbeddingTexts } from "@/server/matching";
+import { isApprovedMentor } from "@/server/permissions";
 
 function field(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -294,6 +295,7 @@ export function profileFromFormData({
     matchTypeConfigs.filter((config) => config.active).map((config) => [config.slug, config]),
   );
   const configuredSlugs = new Set(configBySlug.keys());
+  const approvedMentor = isApprovedMentor(membership);
   const selectedConfiguredTypes = (values: string[]) => [
     ...new Set(values.filter((value) => configuredSlugs.has(value))),
   ];
@@ -308,11 +310,19 @@ export function profileFromFormData({
     );
   }
   if (hasOfferingIntentSubmission) {
-    profile.offeringMatchTypes = usesConfiguredMatchingIntent
+    const submittedOfferingTypes = usesConfiguredMatchingIntent
       ? selectedConfiguredTypes(selectedOfferingTypes)
       : selectedOfferingTypes.length
         ? [...new Set(selectedOfferingTypes)]
         : [];
+    profile.offeringMatchTypes = approvedMentor
+      ? submittedOfferingTypes
+      : [
+          ...submittedOfferingTypes.filter((slug) => slug !== "mentor_match"),
+          ...(existingProfile?.offeringMatchTypes.includes("mentor_match")
+            ? ["mentor_match"]
+            : []),
+        ];
   } else if (!existingProfile || formData.has("looking_for_types")) {
     // Legacy forms only described what a member was looking for. Preserve the
     // historical symmetric defaults for those submissions.
@@ -321,7 +331,7 @@ export function profileFromFormData({
       ...(profile.seekingMatchTypes.includes("collaborator_match")
         ? ["collaborator_match"]
         : []),
-      ...(membership.archetypes.includes("mentor") ? ["mentor_match"] : []),
+      ...(approvedMentor ? ["mentor_match"] : []),
     ];
   }
   profile.desiredRoles = submittedTags(formData, "desired_roles", profile.desiredRoles);
@@ -404,37 +414,39 @@ export function profileFromFormData({
     "structure_vs_chaos",
     profile.structureVsChaos,
   );
-  profile.mentorExpertiseTags = submittedTags(
-    formData,
-    "mentor_expertise_tags",
-    profile.mentorExpertiseTags,
-  );
-  profile.mentorStageExperience = submittedTags(
-    formData,
-    "mentor_stage_experience",
-    profile.mentorStageExperience,
-  );
-  profile.mentorFunctionalStrengths = submittedTags(
-    formData,
-    "mentor_functional_strengths",
-    profile.mentorFunctionalStrengths,
-  );
-  profile.mentorAvailability = submittedField(
-    formData,
-    ["mentor_availability"],
-    profile.mentorAvailability,
-  );
-  profile.mentorOffers = submittedTags(formData, "mentor_offers", profile.mentorOffers);
-  profile.maxMentees = formData.has("max_mentees")
-    ? field(formData, "max_mentees")
-    ? fieldNumber(formData, "max_mentees")
-    : null
-    : profile.maxMentees;
-  profile.mentorshipPreferences = submittedField(
-    formData,
-    ["mentorship_preferences"],
-    profile.mentorshipPreferences,
-  );
+  if (approvedMentor) {
+    profile.mentorExpertiseTags = submittedTags(
+      formData,
+      "mentor_expertise_tags",
+      profile.mentorExpertiseTags,
+    );
+    profile.mentorStageExperience = submittedTags(
+      formData,
+      "mentor_stage_experience",
+      profile.mentorStageExperience,
+    );
+    profile.mentorFunctionalStrengths = submittedTags(
+      formData,
+      "mentor_functional_strengths",
+      profile.mentorFunctionalStrengths,
+    );
+    profile.mentorAvailability = submittedField(
+      formData,
+      ["mentor_availability"],
+      profile.mentorAvailability,
+    );
+    profile.mentorOffers = submittedTags(formData, "mentor_offers", profile.mentorOffers);
+    profile.maxMentees = formData.has("max_mentees")
+      ? field(formData, "max_mentees")
+        ? fieldNumber(formData, "max_mentees")
+        : null
+      : profile.maxMentees;
+    profile.mentorshipPreferences = submittedField(
+      formData,
+      ["mentorship_preferences"],
+      profile.mentorshipPreferences,
+    );
+  }
   profile.publicContactEnabled = submittedBoolean(
     formData,
     "public_contact_enabled",

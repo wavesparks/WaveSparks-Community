@@ -3,6 +3,7 @@ import {
   ArrowRight,
   CalendarDays,
   Clock3,
+  GraduationCap,
   LockKeyhole,
   Shield,
   Sparkles,
@@ -212,8 +213,24 @@ export function MySpacesView({
             Home
           </p>
           <div className="ml-auto flex items-center gap-2">
+            {viewer.canMentor ? (
+              <LinkButton
+                aria-label="Mentoring"
+                href={`/org/${viewer.org.slug}/mentoring`}
+                size="sm"
+                variant="ghost"
+              >
+                <GraduationCap aria-hidden className="size-4" />
+                <span className="hidden sm:inline">Mentoring</span>
+              </LinkButton>
+            ) : null}
             {viewer.canAdmin ? (
-              <LinkButton href={`/org/${viewer.org.slug}/admin/members`} size="sm" variant="ghost">
+              <LinkButton
+                aria-label="Admin"
+                href={`/org/${viewer.org.slug}/admin/members`}
+                size="sm"
+                variant="ghost"
+              >
                 <Shield aria-hidden className="size-4" />
                 <span className="hidden sm:inline">Admin</span>
               </LinkButton>

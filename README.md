@@ -56,6 +56,7 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 - `CLERK_JWT_KEY` is optional but recommended so the OAuth handoff API can verify client session tokens directly during preview-domain sign-in flows.
 - If Clerk keys are missing, authenticated app areas are unavailable until `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are configured.
 - `memberships.account_status` represents the application-owned account relationship (`invited`, `connected`, `suspended`, or `deprovisioned`). It does not grant community access.
+- `memberships.role` controls only account permissions (`member` or `org_admin`), while `memberships.mentor_status` independently records mentor designation (`not_mentor`, `needs_review`, or `approved`). `Approved mentor` never implies Admin.
 - `space_memberships.access_status` is the authority for Main Community or Event access. Main and Event entitlements are independent, and one person may belong to any combination of Spaces.
 - Effective access requires a connected, non-suspended account, an active entitlement for the requested Space, and a lifecycle that permits member access.
 - Clerk webhooks synchronize user identity only. They never create memberships, roles, Main Community access, or Event access.
@@ -64,6 +65,7 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 - `/org/wavesparks/admin/members` manages accounts and invitations. `/org/wavesparks/admin/spaces` manages the permanent Main Community and independent Events.
 - Admins can upload or paste up to 100 CSV/XLSX rows, map fields, preview classifications, choose one destination Space, confirm, inspect row-level results, and retry failed invitations.
 - A global Admin can audit every Space but must explicitly join a Space before appearing in its participant roster, posting, using People, or entering its matching pool.
+- An Approved mentor must likewise have active access to the current Space. Only the canonical local designation enables mentor badges, service fields, mentor matching, Mentor opportunity sources, and the account-level Mentoring workspace; descriptive affiliation and archetype fields grant nothing.
 - Wavesparks reports an invitation as sent only after Clerk accepts the application-level identity invitation. Clerk sends the email, while the Wavesparks one-time authorization token is stored only as a hash in Neon; delivery failures are stored on the local invitation for retry.
 - Public registration and shared invitation codes are disabled. New accounts start at `/org/wavesparks/accept-invitation` from a personal, expiring Wavesparks link and complete identity verification with Clerk.
 - Wavesparks Admin is the membership and authorization surface. Clerk application invitations only bootstrap identity; Clerk Organizations are intentionally unused.
@@ -112,8 +114,9 @@ Provision production-style preview accounts for role testing:
 pnpm db:preview-accounts -- --environment=development --apply
 ```
 
-This creates or updates one connected admin, mentor, and founder account with explicit
-Main Community access. Set up matching Clerk users for the printed emails to sign in. The
+This creates or updates connected Member, Approved Mentor, Administrator, and
+Administrator + Approved Mentor accounts with explicit Main Community access. Set up matching
+Clerk users for the printed emails to sign in. The
 script writes a summary to `/tmp/wavesparks-preview-accounts.txt`.
 
 ## Useful scripts
@@ -198,6 +201,8 @@ back to `/api/internal/membership-invitations/accept`.
 pnpm readiness:prod -- --env-only
 pnpm db:migrate -- --environment=production
 pnpm db:migrate -- --environment=production --apply --confirm-production
+pnpm cron:matches -- --environment=production
+pnpm cron:matches -- --environment=production --apply --confirm-production
 pnpm invitations:migrate -- --environment=production
 pnpm invitations:migrate -- --environment=production --apply --confirm-production
 pnpm readiness:prod

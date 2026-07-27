@@ -155,6 +155,7 @@ import {
   retryMemberInvitationsAction,
   resendMembershipInvitationAction,
   updatePostModerationAction,
+  updateMentorDesignationAction,
   updateMembershipAction,
   updateProfileFlagsAction,
 } from "@/actions/admin";
@@ -184,6 +185,8 @@ async function setAdminViewer() {
     membership,
     profile,
     canAdmin: true,
+    isApprovedMentor: membership.mentorStatus === "approved",
+    canMentor: membership.mentorStatus === "approved",
     scopes: ["org:admin", "org:member"],
   };
 
@@ -307,6 +310,7 @@ describe("admin server actions", () => {
     expect(user).toBeDefined();
     expect(membership).toMatchObject({
       accountStatus: "invited",
+      mentorStatus: "not_mentor",
       role: "member",
       status: "pending",
     });
@@ -336,6 +340,60 @@ describe("admin server actions", () => {
     expect(afterMock).toHaveBeenCalledTimes(1);
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/admin/members");
 
+  });
+
+  it("persists an approved mentor invitation independently from account permissions", async () => {
+    const adminMembership = await setAdminViewer();
+    const destination = await createEventDestination("Mentor invitation destination");
+    const formData = formDataFromEntries({
+      email: "new.mentor@example.com",
+      name: "New Mentor",
+      role: "member",
+      mentor_status: "approved",
+      destination_space_id: destination.id,
+      space_access_status: "active",
+    });
+
+    await expect(createManagedAccountAction("wavesparks", formData)).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavesparks/admin/members?status=member_invited",
+    );
+
+    const user = getStore().users.find(
+      (candidate) => candidate.email === "new.mentor@example.com",
+    );
+    const membership = getStore().memberships.find(
+      (candidate) => candidate.userId === user?.id,
+    );
+    expect(membership).toMatchObject({
+      role: "member",
+      mentorStatus: "approved",
+      mentorReviewedAt: expect.any(String),
+      mentorReviewedByMembershipId: adminMembership.id,
+    });
+    await expect(getSpaceMembership(destination.id, membership!.id)).resolves.toMatchObject({
+      accessStatus: "active",
+    });
+    expect(createOrganizationInvitationMock).not.toHaveBeenCalled();
+  });
+
+  it("does not allow invitations to forge a pending mentor review", async () => {
+    await setAdminViewer();
+    const destination = await createEventDestination("Invalid mentor invitation destination");
+    const formData = formDataFromEntries({
+      email: "pending.mentor@example.com",
+      name: "Pending Mentor",
+      role: "member",
+      mentor_status: "needs_review",
+      destination_space_id: destination.id,
+      space_access_status: "active",
+    });
+
+    await expect(createManagedAccountAction("wavesparks", formData)).rejects.toThrow(
+      "New invitations can be Not a mentor or Approved mentor.",
+    );
+    expect(
+      getStore().users.some((candidate) => candidate.email === "pending.mentor@example.com"),
+    ).toBe(false);
   });
 
   it("records a failed Clerk identity invitation delivery instead of reporting success", async () => {
@@ -491,6 +549,7 @@ describe("admin server actions", () => {
       email: "new.admin@example.com",
       name: "New Admin",
       role: "org_admin",
+      mentor_status: "approved",
       status: "pending",
       destination_space_id: "",
     });
@@ -512,7 +571,11 @@ describe("admin server actions", () => {
     );
     expect(
       getStore().memberships.find((membership) => membership.userId === user?.id),
-    ).toMatchObject({ role: "org_admin", status: "pending" });
+    ).toMatchObject({
+      mentorStatus: "approved",
+      role: "org_admin",
+      status: "pending",
+    });
     const membership = getStore().memberships.find(
       (candidate) => candidate.userId === user?.id,
     )!;
@@ -549,6 +612,7 @@ describe("admin server actions", () => {
 
     expect(await getUserById(existingUser.id)).toMatchObject({ name: "Priya Desai" });
     expect(await getMembershipById(existingMembership.id)).toMatchObject({
+      mentorStatus: "needs_review",
       role: "member",
       status: "pending",
     });
@@ -664,6 +728,7 @@ describe("admin server actions", () => {
       ).toMatchObject({
         invitedByUserId: "usr_avery",
         accountStatus: "invited",
+        mentorStatus: "not_mentor",
         role: "member",
         status: "pending",
       });
@@ -1261,6 +1326,50 @@ describe("admin server actions", () => {
           notification.type === "membership_approved",
       ),
     ).toBe(false);
+  });
+
+  it("approves a mentor independently and schedules every affected Space for recompute", async () => {
+    const adminMembership = await setAdminViewer();
+    const main = mainSpace();
+    await grantSpaceMembership({
+      orgId: seedOrganization.id,
+      spaceId: main.id,
+      membershipId: "mem_priya",
+      accessStatus: "active",
+    });
+    const formData = formDataFromEntries({ mentor_status: "approved" });
+
+    await expect(
+      updateMentorDesignationAction("wavesparks", "mem_priya", formData),
+    ).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavesparks/admin/members?status=membership_updated",
+    );
+
+    await expect(getMembershipById("mem_priya")).resolves.toMatchObject({
+      role: "member",
+      mentorStatus: "approved",
+      mentorReviewedAt: expect.any(String),
+      mentorReviewedByMembershipId: adminMembership.id,
+    });
+    expect(afterMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/mentoring");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/people");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/people/mem_priya");
+  });
+
+  it("re-authorizes mentor designation changes inside the Server Action", async () => {
+    const before = (await getMembershipById("mem_priya"))!.mentorStatus;
+    const formData = formDataFromEntries({ mentor_status: "approved" });
+
+    await expect(
+      updateMentorDesignationAction("wavesparks", "mem_priya", formData),
+    ).rejects.toThrow("Unauthorized.");
+
+    await expect(getMembershipById("mem_priya")).resolves.toMatchObject({
+      mentorStatus: before,
+    });
+    expect(afterMock).not.toHaveBeenCalled();
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 
   it("updates profile flags before recomputing matches after the response", async () => {

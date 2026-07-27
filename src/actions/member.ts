@@ -32,7 +32,11 @@ import {
   enqueueMembershipEmail,
   enqueueNotificationWrite,
 } from "@/server/action-side-effects";
-import { canAccessFeed } from "@/server/permissions";
+import {
+  canAccessFeed,
+  canAdminOrganization,
+  isApprovedMentor,
+} from "@/server/permissions";
 import {
   createCommentInSpace,
   createRichCommentInSpace,
@@ -67,9 +71,12 @@ import {
 } from "@/server/store";
 import type {
   IntroSourceType,
+  IntroKind,
   IntroStatus,
   MatchFeedbackValue,
+  Membership,
   PostType,
+  Profile,
   SpaceIntent,
 } from "@/lib/domain";
 
@@ -162,6 +169,39 @@ function withStatus(path: string, status: string) {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+function introRequestDeliveryCopy(kind: IntroKind, communityName: string) {
+  if (kind === "mentoring") {
+    return {
+      body: `Someone in ${communityName} would like mentoring guidance from you.`,
+      destinationLabel: "Mentoring",
+      status: "mentoring_requested",
+      title: `New mentoring request in ${communityName}`,
+    } as const;
+  }
+
+  return {
+    body: `Someone in ${communityName} would like an introduction.`,
+    destinationLabel: "your requests",
+    status: "intro_requested",
+    title: `New introduction request in ${communityName}`,
+  } as const;
+}
+
+function onboardingStatePath(
+  slug: string,
+  state: Record<string, string | number>,
+  returnTo?: string,
+) {
+  const url = new URL(`/org/${slug}/onboarding`, "https://wavespark.local");
+  for (const [key, value] of Object.entries(state)) {
+    url.searchParams.set(key, String(value));
+  }
+  if (returnTo) {
+    url.searchParams.set("return_to", returnTo);
+  }
+  return `${url.pathname}${url.search}`;
+}
+
 function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: string) {
   after(async () => {
     try {
@@ -238,27 +278,37 @@ async function requireIntroSourceInSpace(input: {
   sourceType: IntroSourceType;
   sourceId: string;
   requesterProfileId: string;
-  receiverMembershipId: string;
-  receiverProfileId: string;
-}) {
+  receiverMembership: Membership;
+  receiverProfile: Profile;
+  requestedKind?: string;
+}): Promise<IntroKind> {
   if (input.sourceType === "profile") {
-    if (input.sourceId !== input.receiverProfileId) {
+    if (input.sourceId !== input.receiverProfile.id) {
       throw new Error("Profile source does not belong to the selected member.");
     }
-    return;
+    if (input.requestedKind === "mentoring") {
+      if (!isApprovedMentor(input.receiverMembership)) {
+        throw new Error("This member is not an Approved Mentor.");
+      }
+      if (!input.receiverProfile.offeringMatchTypes.includes("mentor_match")) {
+        throw new Error("This mentor is not accepting mentoring requests.");
+      }
+      return "mentoring";
+    }
+    return "general";
   }
 
   if (input.sourceType === "post") {
     const sourcePost = await getPostByIdInSpace(input.spaceId, input.sourceId);
     if (
       !sourcePost ||
-      sourcePost.authorMembershipId !== input.receiverMembershipId
+      sourcePost.authorMembershipId !== input.receiverMembership.id
     ) {
       throw new Error(
         "This post does not belong to the selected member in this community or event.",
       );
     }
-    return;
+    return "general";
   }
 
   const matches = await listMatchesForProfile(input.requesterProfileId, {
@@ -270,10 +320,20 @@ async function requireIntroSourceInSpace(input: {
     !sourceMatch ||
     sourceMatch.spaceId !== input.spaceId ||
     sourceMatch.sourceProfileId !== input.requesterProfileId ||
-    sourceMatch.targetProfileId !== input.receiverProfileId
+    sourceMatch.targetProfileId !== input.receiverProfile.id
   ) {
     throw new Error("This match does not belong to these members in this community or event.");
   }
+  if (sourceMatch.matchType === "mentor_match") {
+    if (
+      !isApprovedMentor(input.receiverMembership) ||
+      !input.receiverProfile.offeringMatchTypes.includes("mentor_match")
+    ) {
+      throw new Error("This mentor match is no longer available.");
+    }
+    return "mentoring";
+  }
+  return "general";
 }
 
 function revalidateMemberDiscoveryPaths(slug: string) {
@@ -311,11 +371,18 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
     slug,
     membershipId,
   );
+  const returnTo = formData.has("return_to")
+    ? safeReturnPath(slug, formData, `/org/${slug}/profile`)
+    : undefined;
   const validation = validateProfileFormData(formData);
   if (!validation.isValid) {
     const fields = validation.errors.map((error) => error.field).join(",");
     redirect(
-      `/org/${slug}/onboarding?status=profile_invalid&fields=${encodeURIComponent(fields)}`,
+      onboardingStatePath(
+        slug,
+        { status: "profile_invalid", fields },
+        returnTo,
+      ),
     );
   }
   const [matchTypeConfigs, existingLinks] = await Promise.all([
@@ -357,7 +424,15 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
     );
     const missing = readiness.missingFields.map((field) => field.label).join(", ");
     redirect(
-      `/org/${slug}/onboarding?status=${intent === "draft" ? "profile_draft_saved" : "profile_incomplete"}&step=${firstMissingStep}&missing=${encodeURIComponent(missing)}`,
+      onboardingStatePath(
+        slug,
+        {
+          status: intent === "draft" ? "profile_draft_saved" : "profile_incomplete",
+          step: firstMissingStep,
+          missing,
+        },
+        returnTo,
+      ),
     );
   }
   redirect(
@@ -619,6 +694,7 @@ export async function createPostInSpaceAction(
           type,
           viewer.membership,
           formData.get("opportunity_source"),
+          { canAdmin: viewer.canAdmin },
         ),
         title: parsed.data.title.trim(),
         body: parsed.data.body,
@@ -704,7 +780,7 @@ export async function createPostInSpaceAction(
 }
 
 export async function createPostAction(slug: string, membershipId: string, formData: FormData) {
-  const { org, membership } = await requireMemberForAction(slug, membershipId, {
+  const { org, user, membership } = await requireMemberForAction(slug, membershipId, {
     requireFeedAccess: true,
   });
 
@@ -720,6 +796,7 @@ export async function createPostAction(slug: string, membershipId: string, formD
         type,
         membership,
         formData.get("opportunity_source"),
+        { canAdmin: canAdminOrganization(user, membership) },
       ),
       title: String(formData.get("title") ?? ""),
       body: String(formData.get("body") ?? ""),
@@ -1202,13 +1279,14 @@ export async function requestIntroInSpaceAction(
   const sourceId =
     String(formData.get("source_id") ?? "") ||
     (sourceType === "profile" ? receiverProfile.id : "");
-  await requireIntroSourceInSpace({
+  const kind = await requireIntroSourceInSpace({
     spaceId,
     sourceType,
     sourceId,
     requesterProfileId: viewer.profile.id,
-    receiverMembershipId: receiverMembership.id,
-    receiverProfileId: receiverProfile.id,
+    receiverMembership,
+    receiverProfile,
+    requestedKind: String(formData.get("intro_kind") ?? "general"),
   });
 
   const note = String(formData.get("note") ?? "").trim();
@@ -1225,6 +1303,7 @@ export async function requestIntroInSpaceAction(
       spaceId,
       requesterMembershipId: viewer.membership.id,
       receiverMembershipId: receiverMembership.id,
+      kind,
       sourceType,
       sourceId,
       introPurpose: String(
@@ -1237,16 +1316,18 @@ export async function requestIntroInSpaceAction(
     { recordAnalytics: false },
   );
   const requestsPath = `${spaceRoot(slug, space.slug)}/requests`;
+  const receiverRequestsPath = kind === "mentoring" ? `/org/${slug}/mentoring` : requestsPath;
   const communityName = getCommunityDisplayName(space);
+  const deliveryCopy = introRequestDeliveryCopy(kind, communityName);
   enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
       viewer.org.id,
       receiverMembership.id,
       "intro_requested",
-      `New introduction request in ${communityName}`,
-      `Someone in ${communityName} would like an introduction.`,
-      requestsPath,
+      deliveryCopy.title,
+      deliveryCopy.body,
+      receiverRequestsPath,
       spaceId,
     ),
   );
@@ -1257,6 +1338,7 @@ export async function requestIntroInSpaceAction(
     membershipId: viewer.membership.id,
     eventName: "intro_requested",
     payload: {
+      kind: intro.kind,
       receiverMembershipId: intro.receiverMembershipId,
       sourceType: intro.sourceType,
     },
@@ -1264,14 +1346,15 @@ export async function requestIntroInSpaceAction(
   });
   enqueueNotificationEmail({
     to: receiverProfile.emailForIntro,
-    subject: `New introduction request in ${communityName}`,
-    html: `<p>Someone in ${communityName} would like an introduction.</p><p>Open <a href="${absoluteAppUrl(requestsPath)}">your requests</a> to respond.</p>`,
+    subject: deliveryCopy.title,
+    html: `<p>${deliveryCopy.body}</p><p>Open <a href="${absoluteAppUrl(receiverRequestsPath)}">${deliveryCopy.destinationLabel}</a> to respond.</p>`,
     membershipId: receiverMembership.id,
     spaceId,
   });
   revalidateSpaceDiscoveryPaths(slug, space.slug);
   revalidatePath(`/org/${slug}/requests`);
-  redirect(`${requestsPath}?status=intro_requested`);
+  revalidatePath(`/org/${slug}/mentoring`);
+  redirect(`${requestsPath}?status=${deliveryCopy.status}`);
 }
 
 export async function requestIntroAction(slug: string, requesterMembershipId: string, formData: FormData) {
@@ -1308,13 +1391,14 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     String(formData.get("source_id") ?? "") ||
     (sourceType === "profile" ? receiverProfile.id : "");
 
-  await requireIntroSourceInSpace({
+  const kind = await requireIntroSourceInSpace({
     spaceId: mainSpace.id,
     sourceType,
     sourceId,
     requesterProfileId: profile.id,
-    receiverMembershipId: receiverMembership.id,
-    receiverProfileId: receiverProfile.id,
+    receiverMembership,
+    receiverProfile,
+    requestedKind: String(formData.get("intro_kind") ?? "general"),
   });
 
   if (pendingIntro) {
@@ -1334,6 +1418,7 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     spaceId: mainSpace.id,
     requesterMembershipId: membership.id,
     receiverMembershipId: receiverMembership.id,
+    kind,
     sourceType,
     sourceId,
     introPurpose: String(formData.get("intro_purpose") ?? "general connection"),
@@ -1342,15 +1427,20 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     suggestedFirstMessage,
   }, { recordAnalytics: false });
   const mainRequestsPath = `${spaceRoot(slug, mainSpace.slug)}/requests`;
+  const receiverRequestsPath = kind === "mentoring" ? `/org/${slug}/mentoring` : mainRequestsPath;
+  const deliveryCopy = introRequestDeliveryCopy(
+    kind,
+    getCommunityDisplayName(mainSpace),
+  );
   enqueueNotificationWrite(
     buildNotification(
       `ntf_${nanoid(8)}`,
       org.id,
       receiverMembership.id,
       "intro_requested",
-      "New introduction request in Wavesparks Community",
-      "Someone in Wavesparks Community would like an introduction.",
-      mainRequestsPath,
+      deliveryCopy.title,
+      deliveryCopy.body,
+      receiverRequestsPath,
       mainSpace.id,
     ),
   );
@@ -1361,6 +1451,7 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
     membershipId: membership.id,
     eventName: "intro_requested",
     payload: {
+      kind: intro.kind,
       receiverMembershipId: intro.receiverMembershipId,
       sourceType: intro.sourceType,
     },
@@ -1368,23 +1459,24 @@ export async function requestIntroAction(slug: string, requesterMembershipId: st
   });
 
   if (receiverProfile) {
-    const requestsUrl = absoluteAppUrl(mainRequestsPath);
+    const requestsUrl = absoluteAppUrl(receiverRequestsPath);
     enqueueNotificationEmail({
       to: receiverProfile.emailForIntro,
-      subject: "New introduction request in Wavesparks Community",
-      html: `<p>Someone in Wavesparks Community would like an introduction.</p><p>Open <a href="${requestsUrl}">your requests</a> to respond.</p>`,
+      subject: deliveryCopy.title,
+      html: `<p>${deliveryCopy.body}</p><p>Open <a href="${requestsUrl}">${deliveryCopy.destinationLabel}</a> to respond.</p>`,
       membershipId: receiverMembership.id,
       spaceId: mainSpace.id,
     });
   }
 
   revalidatePath(`/org/${slug}/requests`);
+  revalidatePath(`/org/${slug}/mentoring`);
   revalidatePath(mainRequestsPath);
   revalidatePath(`/org/${slug}/matches`);
   revalidatePath(`/org/${slug}/people`);
   revalidatePath(`/org/${slug}/people/${receiverMembership.id}`);
   revalidateMemberActivationPaths(slug);
-  redirect(`/org/${slug}/requests?status=intro_requested`);
+  redirect(`/org/${slug}/requests?status=${deliveryCopy.status}`);
 }
 
 export async function respondIntroInSpaceAction(
@@ -1466,6 +1558,7 @@ export async function respondIntroInSpaceAction(
   });
   revalidatePath(requestsPath);
   revalidatePath(`/org/${slug}/requests`);
+  revalidatePath(`/org/${slug}/mentoring`);
   redirect(
     `${requestsPath}?status=${
       status === "accepted" ? "intro_accepted" : "intro_declined"
@@ -1540,6 +1633,7 @@ export async function respondIntroAction(slug: string, introRequestId: string, r
 
   revalidatePath(`/org/${slug}/requests`);
   revalidatePath(mainRequestsPath);
+  revalidatePath(`/org/${slug}/mentoring`);
   redirect(
     `/org/${slug}/requests?status=${
       status === "accepted" ? "intro_accepted" : "intro_declined"

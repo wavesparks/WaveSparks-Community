@@ -7,6 +7,17 @@ export function canAdminOrganization(user: User, membership: Membership) {
   );
 }
 
+export function isApprovedMentor(membership: Membership) {
+  return membership.mentorStatus === "approved";
+}
+
+export function canUseMentorFeatures(membership: Membership) {
+  return (
+    isApprovedMentor(membership) &&
+    membership.accountStatus === "connected"
+  );
+}
+
 export function canViewAdminRoute(user: User, membership: Membership) {
   return canAdminOrganization(user, membership) && membership.accountStatus === "connected";
 }

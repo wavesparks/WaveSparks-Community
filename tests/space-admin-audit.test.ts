@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { seedOrganization } from "@/data/seed-data";
 import type { MatchRecord } from "@/lib/domain";
+import { MATCHING_ALGORITHM_VERSION } from "@/server/matching";
 import { buildNotification } from "@/server/notifications";
 import {
   addNotification,
@@ -80,7 +81,7 @@ function testMatch(
     overlapTags: [],
     scoreBand: "high",
     confidence: "high",
-    algorithmVersion: "test-space-audit",
+    algorithmVersion: MATCHING_ALGORITHM_VERSION,
     surfacedAt: now,
     dismissedBySource: false,
     hiddenByAdmin: false,
@@ -179,6 +180,10 @@ describe("Space-scoped admin audit data", () => {
     store.matches.push(
       testMatch("match_alpha_visible", alpha.id),
       testMatch("match_alpha_hidden", alpha.id, { hiddenByAdmin: true, score: 80 }),
+      testMatch("match_alpha_stale", alpha.id, {
+        algorithmVersion: "hybrid-v3",
+        score: 100,
+      }),
       testMatch("match_beta_visible", beta.id, {
         sourceProfileId: "pro_kai",
         targetProfileId: "pro_marcus",

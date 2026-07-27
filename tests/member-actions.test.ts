@@ -50,6 +50,7 @@ import {
 } from "@/server/store";
 import { getNotificationViews } from "@/server/view-models";
 import { canAccessFeed } from "@/server/permissions";
+import { MATCHING_ALGORITHM_VERSION } from "@/server/matching";
 
 async function setViewer(membershipId: string) {
   const membership = (await getMembershipById(membershipId))!;
@@ -62,6 +63,8 @@ async function setViewer(membershipId: string) {
     membership,
     profile,
     canAdmin: false,
+    isApprovedMentor: membership.mentorStatus === "approved",
+    canMentor: membership.mentorStatus === "approved",
     scopes: ["org:member"],
   };
 }
@@ -158,7 +161,7 @@ function addMatchSource(input: {
     overlapTags: [],
     scoreBand: "high",
     confidence: "high",
-    algorithmVersion: "test",
+    algorithmVersion: MATCHING_ALGORITHM_VERSION,
     surfacedAt: now,
     dismissedBySource: false,
     hiddenByAdmin: false,
@@ -379,21 +382,22 @@ describe("member server actions", () => {
 
     await expect(
       requestIntroAction("wavesparks", "mem_jules", formData),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/requests?status=intro_requested");
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/requests?status=mentoring_requested");
 
     expect(
       getStore().introRequests.some(
         (request) =>
           request.requesterMembershipId === "mem_jules" &&
           request.receiverMembershipId === receiver.id &&
-          request.sourceId === sourceMatch.id,
+          request.sourceId === sourceMatch.id &&
+          request.kind === "mentoring",
       ),
     ).toBe(true);
     await expect(getNotificationViews(receiver.id)).resolves.toEqual(
       expect.not.arrayContaining([
         expect.objectContaining({
-          title: "New introduction request in Wavesparks Community",
-          link: "/org/wavesparks/s/main/requests",
+          title: "New mentoring request in Wavesparks Community",
+          link: "/org/wavesparks/mentoring",
         }),
       ]),
     );
@@ -402,8 +406,9 @@ describe("member server actions", () => {
     await expect(getNotificationViews(receiver.id)).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          title: "New introduction request in Wavesparks Community",
-          link: "/org/wavesparks/s/main/requests",
+          body: "Someone in Wavesparks Community would like mentoring guidance from you.",
+          title: "New mentoring request in Wavesparks Community",
+          link: "/org/wavesparks/mentoring",
         }),
       ]),
     );
@@ -497,6 +502,169 @@ describe("member server actions", () => {
     ).toBe(true);
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/people");
     expect(revalidatePathMock).toHaveBeenCalledWith(`/org/wavesparks/people/${receiver.id}`);
+  });
+
+  it("rejects a forged mentoring kind for a profile without mentor approval", async () => {
+    await setViewer("mem_jules");
+    const receiver = (await getMembershipById("mem_rhea"))!;
+    const receiverProfile = (await getProfileByMembershipId(receiver.id))!;
+    const formData = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "profile",
+      source_id: receiverProfile.id,
+      intro_kind: "mentoring",
+      intro_purpose: "forged mentoring request",
+      note: "A client must not be able to invent mentor approval.",
+      suggested_first_message: "This should not be delivered.",
+    });
+
+    await expect(
+      requestIntroAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("This member is not an Approved Mentor.");
+    expect(
+      getStore().introRequests.some(
+        (request) =>
+          request.requesterMembershipId === "mem_jules" &&
+          request.receiverMembershipId === receiver.id &&
+          request.introPurpose === "forged mentoring request",
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts mentoring kind from an Approved Mentor profile entry", async () => {
+    await setViewer("mem_jules");
+    const receiver = (await getMembershipById("mem_marcus"))!;
+    const receiverProfile = (await getProfileByMembershipId(receiver.id))!;
+    const formData = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "profile",
+      source_id: receiverProfile.id,
+      intro_kind: "mentoring",
+      intro_purpose: "mentor profile request",
+      note: "This request came from the canonical mentor profile entry.",
+      suggested_first_message: "Would you be open to a mentoring conversation?",
+    });
+
+    await expect(
+      requestIntroAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/requests?status=mentoring_requested");
+    expect(
+      getStore().introRequests.some(
+        (request) =>
+          request.requesterMembershipId === "mem_jules" &&
+          request.receiverMembershipId === receiver.id &&
+          request.kind === "mentoring" &&
+          request.sourceType === "profile" &&
+          request.sourceId === receiverProfile.id,
+      ),
+    ).toBe(true);
+  });
+
+  it("allows a new general request after a declined introduction becomes history", async () => {
+    await setViewer("mem_jules");
+    const receiver = (await getMembershipById("mem_rhea"))!;
+    const receiverProfile = (await getProfileByMembershipId(receiver.id))!;
+    expect(
+      getStore().introRequests.some(
+        (request) =>
+          request.requesterMembershipId === receiver.id &&
+          request.receiverMembershipId === "mem_jules" &&
+          request.status === "declined",
+      ),
+    ).toBe(true);
+    const formData = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "profile",
+      source_id: receiverProfile.id,
+      intro_kind: "general",
+      intro_purpose: "reconnect after resolved history",
+      note: "The prior request is resolved, so this should be a fresh conversation.",
+      suggested_first_message: "Would you be open to reconnecting?",
+    });
+
+    await expect(
+      requestIntroAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/requests?status=intro_requested");
+    expect(
+      getStore().introRequests.some(
+        (request) =>
+          request.requesterMembershipId === "mem_jules" &&
+          request.receiverMembershipId === receiver.id &&
+          request.status === "pending",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps general introductions but rejects mentoring after an Approved Mentor pauses the offering", async () => {
+    await setViewer("mem_jules");
+    const receiver = (await getMembershipById("mem_marcus"))!;
+    const receiverProfile = (await getProfileByMembershipId(receiver.id))!;
+    receiverProfile.offeringMatchTypes = receiverProfile.offeringMatchTypes.filter(
+      (matchType) => matchType !== "mentor_match",
+    );
+    const mentoringForm = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "profile",
+      source_id: receiverProfile.id,
+      intro_kind: "mentoring",
+      intro_purpose: "paused mentoring request",
+      note: "This should respect the mentor offering.",
+      suggested_first_message: "Would you be open to mentoring?",
+    });
+
+    await expect(
+      requestIntroAction("wavesparks", "mem_jules", mentoringForm),
+    ).rejects.toThrow("This mentor is not accepting mentoring requests.");
+
+    const generalForm = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "profile",
+      source_id: receiverProfile.id,
+      intro_kind: "general",
+      intro_purpose: "general request while mentoring is paused",
+      note: "A general introduction should remain available.",
+      suggested_first_message: "Would you be open to a general conversation?",
+    });
+
+    await expect(
+      requestIntroAction("wavesparks", "mem_jules", generalForm),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/requests?status=intro_requested");
+    expect(
+      getStore().introRequests.find(
+        (request) => request.introPurpose === "general request while mentoring is paused",
+      ),
+    ).toMatchObject({ kind: "general", receiverMembershipId: receiver.id });
+  });
+
+  it("rejects a stale mentor match after the mentor pauses the offering", async () => {
+    await setViewer("mem_jules");
+    const receiver = (await getMembershipById("mem_kai"))!;
+    const receiverProfile = (await getProfileByMembershipId(receiver.id))!;
+    receiverProfile.offeringMatchTypes = receiverProfile.offeringMatchTypes.filter(
+      (matchType) => matchType !== "mentor_match",
+    );
+    const mainSpace = getStore().spaces.find((space) => space.kind === "main")!;
+    const sourceMatch = addMatchSource({
+      id: "mtc_paused_mentor_source",
+      spaceId: mainSpace.id,
+      sourceProfileId: viewerRef.current!.profile!.id,
+      targetProfileId: receiverProfile.id,
+    });
+    const formData = formDataFromEntries({
+      receiver_membership_id: receiver.id,
+      source_type: "match",
+      source_id: sourceMatch.id,
+      intro_purpose: "stale mentor match request",
+      note: "The offering has been paused.",
+      suggested_first_message: "Would you be open to mentoring?",
+    });
+
+    await expect(
+      requestIntroAction("wavesparks", "mem_jules", formData),
+    ).rejects.toThrow("This mentor match is no longer available.");
+    expect(
+      getStore().introRequests.some((request) => request.sourceId === sourceMatch.id),
+    ).toBe(false);
   });
 
   it("saves and unsaves posts through server actions", async () => {

@@ -1,5 +1,6 @@
 export type PlatformRole = "platform_owner" | "standard";
 export type MembershipRole = "org_admin" | "member";
+export type MentorStatus = "not_mentor" | "needs_review" | "approved";
 export type AccountStatus = "invited" | "connected" | "suspended" | "deprovisioned";
 export type ClerkOrgRole = "org:admin" | "org:member" | (string & {});
 export type MembershipStatus =
@@ -51,6 +52,7 @@ export type MatchFactorKey =
   | "location";
 export type MatchFactorWeights = Record<MatchFactorKey, number>;
 export type IntroStatus = "pending" | "accepted" | "declined" | "expired";
+export type IntroKind = "general" | "mentoring";
 export type IntroSourceType = "match" | "post" | "profile" | "admin_manual";
 export type NotificationType =
   | "membership_approved"
@@ -131,6 +133,9 @@ export interface Membership {
   orgId: string;
   userId: string;
   role: MembershipRole;
+  mentorStatus: MentorStatus;
+  mentorReviewedAt?: string;
+  mentorReviewedByMembershipId?: string;
   accountStatus: AccountStatus;
   affiliationType: AffiliationType;
   status: MembershipStatus;
@@ -561,6 +566,7 @@ export interface IntroRequest {
   spaceId?: string;
   requesterMembershipId: string;
   receiverMembershipId: string;
+  kind: IntroKind;
   sourceType: IntroSourceType;
   sourceId: string;
   introPurpose: string;
@@ -702,6 +708,7 @@ export interface FeedPostView {
 export interface MemberDirectoryFilters {
   q?: string;
   affiliation?: string;
+  mentorStatus?: MentorStatus;
   stage?: string;
   industry?: string;
   need?: string;
@@ -709,6 +716,9 @@ export interface MemberDirectoryFilters {
 }
 
 export interface MemberDirectoryProfileView extends LimitedProfileCard {
+  isApprovedMentor: boolean;
+  acceptingMentoringRequests: boolean;
+  openToIntroductions: boolean;
   bio: string;
   problemInterest: string;
   currentFocus: string;
@@ -723,7 +733,13 @@ export interface MemberDirectoryProfileView extends LimitedProfileCard {
   problemSpaceTags: string[];
   skillTags: string[];
   desiredRoles: string[];
+  mentorExpertiseTags: string[];
+  mentorStageExperience: string[];
+  mentorFunctionalStrengths: string[];
+  mentorAvailability: string;
   mentorOffers: string[];
+  maxMentees: number | null;
+  mentorshipPreferences: string;
   profileLinks: ProfileLink[];
   isFollowing: boolean;
   introStatus?: IntroStatus;
@@ -751,6 +767,7 @@ export interface IntroRequestView {
   spaceId?: string;
   spaceName?: string;
   spaceSlug?: string;
+  kind: IntroKind;
   status: IntroStatus;
   introPurpose: string;
   note: string;
@@ -759,7 +776,7 @@ export interface IntroRequestView {
   respondedAt?: string;
   contactDetails?: {
     email: string;
-    whatsapp: string;
+    whatsapp?: string;
   };
   otherParty: LimitedProfileCard;
   isIncoming: boolean;
@@ -820,5 +837,7 @@ export interface ViewerContext {
   membership: Membership;
   profile?: Profile;
   canAdmin: boolean;
+  isApprovedMentor: boolean;
+  canMentor: boolean;
   scopes: string[];
 }

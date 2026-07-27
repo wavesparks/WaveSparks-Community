@@ -41,6 +41,22 @@ async function signInAdmin(page: Page) {
   });
 }
 
+async function signInApprovedMentor(page: Page) {
+  await signInWithLocalAuth(page, {
+    email: "marcus@example.com",
+    name: "Marcus Vale",
+    orgRole: "org:member",
+  });
+}
+
+async function signInAdminWithoutMentor(page: Page) {
+  await signInWithLocalAuth(page, {
+    email: "maya@wavesparks.co",
+    name: "Maya Chen",
+    orgRole: "org:admin",
+  });
+}
+
 async function signInWithoutMainAccess(page: Page) {
   await signInWithLocalAuth(page, {
     email: "priya@example.com",
@@ -144,6 +160,32 @@ test.describe("authenticated member Space flows", () => {
     await expect(
       page.getByRole("heading", { name: "Updates from Wavesparks Community" }),
     ).toBeVisible();
+    const spaceSwitcher = page.locator("header details").first();
+    await spaceSwitcher.locator("summary").click();
+    const switcherMenu = spaceSwitcher.locator(":scope > div").first();
+    await expect(switcherMenu).toBeVisible();
+    const switcherWinsHitTesting = await switcherMenu.evaluate((menu) => {
+      const bounds = menu.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        bounds.left + bounds.width / 2,
+        bounds.top + bounds.height / 2,
+      );
+      return Boolean(hit && menu.contains(hit));
+    });
+    expect(switcherWinsHitTesting).toBe(true);
+    const switcherBounds = await switcherMenu.boundingBox();
+    expect(switcherBounds).not.toBeNull();
+    expect(switcherBounds!.x).toBeGreaterThanOrEqual(0);
+    expect(switcherBounds!.x + switcherBounds!.width).toBeLessThanOrEqual(
+      page.viewportSize()!.width,
+    );
+    await page.keyboard.press("Escape");
+    await expect(switcherMenu).toBeHidden();
+    await expect(spaceSwitcher.locator("summary")).toBeFocused();
+    await spaceSwitcher.locator("summary").click();
+    await page.getByRole("heading", { name: "Updates from Wavesparks Community" }).click();
+    await expect(switcherMenu).toBeHidden();
+    await expect(page.getByRole("link", { name: "Profile" })).toBeVisible();
     await expect(page.getByText(privatePostTitle, { exact: true })).toBeVisible();
     const privatePostHref = await page
       .getByRole("link", { name: privatePostTitle })
@@ -171,6 +213,20 @@ test.describe("authenticated member Space flows", () => {
     await expect(
       page.getByText("Only members in Wavesparks Community", { exact: true }),
     ).toBeVisible();
+    const firstMatchScore = page.getByRole("meter", { name: "Match score" }).first();
+    await expect(firstMatchScore).toBeVisible();
+    await expect(firstMatchScore).toHaveText(/^\d{1,3}\/100 match$/);
+    const displayedScore = Number((await firstMatchScore.textContent())?.split("/")[0]);
+    expect(displayedScore).toBeGreaterThanOrEqual(1);
+    expect(displayedScore).toBeLessThanOrEqual(100);
+    await expect(firstMatchScore).toHaveAttribute("aria-valuemin", "1");
+    await expect(firstMatchScore).toHaveAttribute("aria-valuemax", "100");
+    await expect(firstMatchScore).toHaveAttribute("aria-valuenow", String(displayedScore));
+    await expect(firstMatchScore).toHaveAttribute(
+      "aria-valuetext",
+      `${displayedScore} out of 100`,
+    );
+    await expect(page.getByText("Possible match", { exact: true })).toHaveCount(0);
 
     await page.goto(sectionHref(mainFeedHref, "opportunities"));
     await expect(
@@ -234,6 +290,8 @@ test.describe("authenticated admin Space flows", () => {
     await expect(
       page.getByRole("heading", { name: "Updates from Wavesparks Community" }),
     ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Admin" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Profile" })).toBeVisible();
 
     await page.goto("/org/wavesparks/admin");
     await expect(page.getByRole("heading", { name: "Community overview" })).toBeVisible();
@@ -289,4 +347,46 @@ test.describe("authenticated admin Space flows", () => {
     "accepting a new Event-only invitation and later adding it to Main requires the Clerk E2E fixture",
     async () => {},
   );
+});
+
+test.describe("account permissions and mentor designation combinations", () => {
+  test.skip(!canUseLocalAuth, "This suite uses Playwright local auth.");
+
+  test("Member has neither Admin nor Mentoring access", async ({ page }) => {
+    await signInMember(page);
+    await page.goto("/org/wavesparks/mentoring");
+    await expect(page).toHaveURL(/\/org\/wavesparks\/?$/);
+    await page.goto("/org/wavesparks/admin");
+    await expect(page).toHaveURL(/\/org\/wavesparks\/?$/);
+  });
+
+  test("Approved Mentor has Mentoring but no Admin access", async ({ page }) => {
+    await signInApprovedMentor(page);
+    const mainFeedHref = await openMySpacesAndDiscoverMainFeed(page);
+    await expect(page.getByRole("link", { name: "Mentoring" })).toBeVisible();
+    await page.goto(mainFeedHref);
+    await expect(page.getByRole("link", { name: "Mentoring" })).toBeVisible();
+    await page.goto("/org/wavesparks/mentoring");
+    await expect(page.getByRole("heading", { name: "Mentoring", exact: true })).toBeVisible();
+    await page.goto("/org/wavesparks/admin");
+    await expect(page).toHaveURL(/\/org\/wavesparks\/?$/);
+  });
+
+  test("Administrator without mentor approval has Admin but no Mentoring access", async ({
+    page,
+  }) => {
+    await signInAdminWithoutMentor(page);
+    await page.goto("/org/wavesparks/admin");
+    await expect(page.getByRole("heading", { name: "Community overview" })).toBeVisible();
+    await page.goto("/org/wavesparks/mentoring");
+    await expect(page).toHaveURL(/\/org\/wavesparks\/?$/);
+  });
+
+  test("Administrator plus Approved Mentor has both access paths", async ({ page }) => {
+    await signInAdmin(page);
+    await page.goto("/org/wavesparks/admin");
+    await expect(page.getByRole("heading", { name: "Community overview" })).toBeVisible();
+    await page.goto("/org/wavesparks/mentoring");
+    await expect(page.getByRole("heading", { name: "Mentoring", exact: true })).toBeVisible();
+  });
 });

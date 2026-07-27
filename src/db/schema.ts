@@ -32,6 +32,11 @@ const vector = customType<{ data: number[]; driverData: string; config: { dimens
 });
 
 export const membershipRoleEnum = pgEnum("membership_role", ["org_admin", "member"]);
+export const mentorStatusEnum = pgEnum("mentor_status", [
+  "not_mentor",
+  "needs_review",
+  "approved",
+]);
 export const accountStatusEnum = pgEnum("account_status", [
   "invited",
   "connected",
@@ -89,6 +94,7 @@ export const introStatusEnum = pgEnum("intro_status", [
   "declined",
   "expired",
 ]);
+export const introKindEnum = pgEnum("intro_kind", ["general", "mentoring"]);
 export const introSourceTypeEnum = pgEnum("intro_source_type", [
   "match",
   "post",
@@ -201,6 +207,9 @@ export const memberships = pgTable("memberships", {
   orgId: text("org_id").notNull(),
   userId: text("user_id").notNull(),
   role: membershipRoleEnum("role").notNull().default("member"),
+  mentorStatus: mentorStatusEnum("mentor_status").notNull().default("not_mentor"),
+  mentorReviewedAt: timestamp("mentor_reviewed_at", { withTimezone: true }),
+  mentorReviewedByMembershipId: text("mentor_reviewed_by_membership_id"),
   accountStatus: accountStatusEnum("account_status").notNull().default("invited"),
   affiliationType: text("affiliation_type").notNull(),
   status: membershipStatusEnum("status").notNull().default("pending"),
@@ -224,6 +233,15 @@ export const memberships = pgTable("memberships", {
   clerkInvitationIdx: uniqueIndex("memberships_clerk_invitation_id_idx").on(
     table.clerkInvitationId,
   ),
+  orgMentorStatusIdx: index("memberships_org_mentor_status_idx").on(
+    table.orgId,
+    table.mentorStatus,
+  ),
+  mentorReviewerFk: foreignKey({
+    columns: [table.mentorReviewedByMembershipId, table.orgId],
+    foreignColumns: [table.id, table.orgId],
+    name: "memberships_mentor_reviewer_fk",
+  }).onDelete("restrict"),
 }));
 
 export const membershipInvitations = pgTable(
@@ -1054,7 +1072,7 @@ export const matches = pgTable("matches", {
   overlapTags: text("overlap_tags").array().notNull(),
   scoreBand: text("score_band").notNull(),
   confidence: text("confidence").notNull().default("medium"),
-  algorithmVersion: text("algorithm_version").notNull().default("hybrid-v2"),
+  algorithmVersion: text("algorithm_version").notNull().default("hybrid-v4"),
   runId: text("run_id"),
   surfacedAt: timestamp("surfaced_at", { withTimezone: true }).notNull(),
   dismissedBySource: boolean("dismissed_by_source").notNull().default(false),
@@ -1073,6 +1091,10 @@ export const matches = pgTable("matches", {
     foreignColumns: [spaces.id, spaces.orgId],
     name: "matches_space_org_fk",
   }).onDelete("restrict"),
+  scoreRangeCheck: check(
+    "matches_score_range_check",
+    sql`${table.score} BETWEEN 1 AND 100`,
+  ),
 }));
 
 export const matchFeedback = pgTable(
@@ -1112,6 +1134,7 @@ export const introRequests = pgTable(
     spaceId: text("space_id"),
     requesterMembershipId: text("requester_membership_id").notNull(),
     receiverMembershipId: text("receiver_membership_id").notNull(),
+    kind: introKindEnum("kind").notNull().default("general"),
     sourceType: introSourceTypeEnum("source_type").notNull(),
     sourceId: text("source_id").notNull(),
     introPurpose: text("intro_purpose").notNull(),

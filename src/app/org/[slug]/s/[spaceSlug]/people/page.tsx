@@ -20,9 +20,11 @@ import { getMemberDirectoryViewsForSpace } from "@/server/view-models";
 function parseDirectoryFilters(
   query: Record<string, string | string[] | undefined>,
 ): MemberDirectoryFilters {
+  const mentorStatus = singleQueryValue(query.mentor_status);
   return {
     q: singleQueryValue(query.q),
     affiliation: singleQueryValue(query.affiliation),
+    mentorStatus: mentorStatus === "approved" ? mentorStatus : undefined,
     stage: singleQueryValue(query.stage),
     industry: singleQueryValue(query.industry),
     need: singleQueryValue(query.need),
@@ -32,8 +34,9 @@ function parseDirectoryFilters(
 
 function hasDirectoryFilters(filters: MemberDirectoryFilters) {
   return Boolean(
-    filters.q ||
+      filters.q ||
       filters.affiliation ||
+      filters.mentorStatus ||
       filters.stage ||
       filters.industry ||
       filters.need ||
@@ -108,8 +111,15 @@ export default async function SpacePeoplePage({
               <option value="">Everyone</option>
               <option value="current participant">Participant</option>
               <option value="alumni">Alumni</option>
-              <option value="mentor">Mentor</option>
               <option value="invited outsider">Guest</option>
+            </Select>
+            <Select
+              aria-label="Filter people by mentor designation"
+              defaultValue={filters.mentorStatus ?? ""}
+              name="mentor_status"
+            >
+              <option value="">Any mentor status</option>
+              <option value="approved">Approved mentors</option>
             </Select>
             <Select
               aria-label="Filter people by startup stage"

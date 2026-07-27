@@ -113,6 +113,20 @@
       "when": 1785122047828,
       "tag": "0015_easy_terror",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785135071118,
+      "tag": "0016_right_nocturne",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785136131801,
+      "tag": "0017_motionless_mad_thinker",
+      "breakpoints": true
     }
   ]
 }

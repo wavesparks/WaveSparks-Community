@@ -105,6 +105,7 @@ const membership: Membership = {
   orgId: org.id,
   userId: user.id,
   role: "member",
+  mentorStatus: "not_mentor",
   accountStatus: "connected",
   affiliationType: "current participant",
   status: "approved",

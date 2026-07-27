@@ -78,6 +78,7 @@ const membership = {
   orgId: org.id,
   userId: user.id,
   role: "member",
+  mentorStatus: "not_mentor",
   accountStatus: "connected",
   affiliationType: "invited outsider",
   status: "approved",

@@ -60,6 +60,11 @@ function spaceStatusCopy(status: string | undefined, spaceName: string | undefin
         title: "Introduction request sent",
         body: "You can follow the response from Introductions.",
       };
+    case "mentoring_requested":
+      return {
+        title: "Mentoring request sent",
+        body: "This request is waiting for the mentor’s response. You can follow it from Introductions.",
+      };
     case "intro_existing":
       return {
         title: "Introduction request already exists",

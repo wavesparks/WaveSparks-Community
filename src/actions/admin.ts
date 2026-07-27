@@ -12,6 +12,7 @@ import {
 } from "@/lib/community-copy";
 import type {
   AccountStatus,
+  MentorStatus,
   MembershipRole,
   SpaceAccessStatus,
   SpaceLifecycle,
@@ -83,6 +84,7 @@ import {
   updateCohort,
   updateEventSpace,
   updateMembershipAccountStatus,
+  updateMembershipMentorStatus,
   updateMembershipRole,
   updateOrganizationSettings,
   updatePostModeration,
@@ -115,6 +117,17 @@ function membershipRole(value: FormDataEntryValue | null): MembershipRole {
     return value;
   }
   throw new Error("Choose Member or Administrator.");
+}
+
+function mentorStatus(value: FormDataEntryValue | null): MentorStatus {
+  if (
+    value === "not_mentor" ||
+    value === "needs_review" ||
+    value === "approved"
+  ) {
+    return value;
+  }
+  throw new Error("Choose a valid mentor designation.");
 }
 
 function importSpaceAccessStatus(
@@ -170,6 +183,25 @@ function enqueueSpaceMatchRecompute(slug: string, spaceId: string) {
       console.error("[wavesparks] Space match recompute failed", spaceId, error);
     }
   });
+}
+
+function revalidateMentorDesignationPaths(slug: string, membershipId: string) {
+  revalidatePath(`/org/${slug}/admin/matches`);
+  revalidatePath(`/org/${slug}/admin/members`);
+  revalidatePath(`/org/${slug}/admin/profiles`);
+  revalidatePath(`/org/${slug}/admin/requests`);
+  revalidatePath(`/org/${slug}/matches`);
+  revalidatePath(`/org/${slug}/mentoring`);
+  revalidatePath(`/org/${slug}/people`);
+  revalidatePath(`/org/${slug}/people/${membershipId}`);
+  revalidatePath(`/org/${slug}/requests`);
+}
+
+function revalidateMentorSpacePaths(slug: string, spaceSlug: string) {
+  revalidatePath(`/org/${slug}/s/${spaceSlug}/people`);
+  revalidatePath(`/org/${slug}/s/${spaceSlug}/matches`);
+  revalidatePath(`/org/${slug}/s/${spaceSlug}/opportunities`);
+  revalidatePath(`/org/${slug}/s/${spaceSlug}/requests`);
 }
 
 function cohortDetailStatusPath(slug: string, cohortId: string, status: string) {
@@ -810,6 +842,12 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   const email = String(formData.get("email") ?? "");
   const name = String(formData.get("name") ?? "");
   const role = membershipRole(formData.get("role") ?? "member");
+  const requestedMentorStatus = mentorStatus(
+    formData.get("mentor_status") ?? "not_mentor",
+  );
+  if (requestedMentorStatus === "needs_review") {
+    throw new Error("New invitations can be Not a mentor or Approved mentor.");
+  }
   if (role === "org_admin" && formData.get("confirm_admin_access") !== "on") {
     throw new Error("Confirm that you want to make this person an administrator.");
   }
@@ -883,6 +921,9 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
     name: existingCandidate?.user?.name ?? name,
     createPasswordCredential: false,
     role,
+    mentorStatus: requestedMentorStatus,
+    mentorReviewedByMembershipId:
+      requestedMentorStatus === "approved" ? admin.membership.id : undefined,
     // Migration-era metadata only; role and Space entitlement are authoritative.
     status: "pending",
     invitedByUserId: admin.user.id,
@@ -939,12 +980,15 @@ export async function updateMembershipAction(slug: string, membershipId: string,
     );
   }
   const nextRole = membershipRole(formData.get("role") ?? targetMembership.role);
-  const affectedAccountSpaceIds = [
-    ...new Set(
-      (await listSpaceMembershipRecordsByMembershipIds(org.id, [membershipId]))
-        .get(membershipId)
-        ?.map((record) => record.space.id) ?? [],
-    ),
+  const nextMentorStatus = mentorStatus(
+    formData.get("mentor_status") ?? targetMembership.mentorStatus,
+  );
+  const affectedAccountSpaces = [
+    ...new Map(
+      ((await listSpaceMembershipRecordsByMembershipIds(org.id, [membershipId]))
+        .get(membershipId) ?? [])
+        .map((record) => [record.space.id, record.space]),
+    ).values(),
   ];
   const nextAccountStatus = accountStatus(
     formData.get("account_status") ?? targetMembership.accountStatus,
@@ -960,12 +1004,23 @@ export async function updateMembershipAction(slug: string, membershipId: string,
   const roleUpdated = await updateMembershipRole(membershipId, nextRole, {
     existingMembership: targetMembership,
   });
+  const mentorUpdated = nextMentorStatus === targetMembership.mentorStatus
+    ? roleUpdated ?? targetMembership
+    : await updateMembershipMentorStatus(
+        membershipId,
+        nextMentorStatus,
+        {
+          existingMembership: roleUpdated ?? targetMembership,
+          reviewedByMembershipId: admin.membership.id,
+          recomputeMatches: false,
+        },
+      );
   const membership = await updateMembershipAccountStatus(
     membershipId,
     nextAccountStatus,
     {
       adminNote: String(formData.get("approval_note") ?? ""),
-      existingMembership: roleUpdated ?? targetMembership,
+      existingMembership: mentorUpdated ?? roleUpdated ?? targetMembership,
       recomputeMatches: false,
     },
   );
@@ -994,14 +1049,56 @@ export async function updateMembershipAction(slug: string, membershipId: string,
     invitationFailed = true;
   }
 
-  revalidatePath(`/org/${slug}/admin/members`);
+  revalidateMentorDesignationPaths(slug, membershipId);
   revalidatePath(`/org/${slug}/admin/spaces`);
-  affectedAccountSpaceIds.forEach((spaceId) =>
-    enqueueSpaceMatchRecompute(slug, spaceId),
-  );
+  affectedAccountSpaces.forEach((space) => {
+    revalidateMentorSpacePaths(slug, space.slug);
+    enqueueSpaceMatchRecompute(slug, space.id);
+  });
   redirect(
     `/org/${slug}/admin/members?status=${invitationFailed ? "membership_invitation_failed" : "membership_updated"}`,
   );
+}
+
+export async function updateMentorDesignationAction(
+  slug: string,
+  membershipId: string,
+  formData: FormData,
+) {
+  const admin = await requireAdminForAction(slug);
+  const targetRecord = await getMembershipRecordById(membershipId);
+  const targetMembership = targetRecord?.membership;
+  if (!targetMembership || targetMembership.orgId !== admin.org.id) {
+    throw new Error("Unauthorized.");
+  }
+
+  const nextMentorStatus = mentorStatus(formData.get("mentor_status"));
+  const affectedSpaces = [
+    ...new Map(
+      ((await listSpaceMembershipRecordsByMembershipIds(admin.org.id, [membershipId]))
+        .get(membershipId) ?? [])
+        .map((record) => [record.space.id, record.space]),
+    ).values(),
+  ];
+  const membership = await updateMembershipMentorStatus(
+    membershipId,
+    nextMentorStatus,
+    {
+      existingMembership: targetMembership,
+      reviewedByMembershipId: admin.membership.id,
+      recomputeMatches: false,
+    },
+  );
+  if (!membership) {
+    throw new Error("This member could not be found.");
+  }
+
+  revalidateMentorDesignationPaths(slug, membershipId);
+  affectedSpaces.forEach((space) => {
+    revalidateMentorSpacePaths(slug, space.slug);
+    enqueueSpaceMatchRecompute(slug, space.id);
+  });
+  redirect(`/org/${slug}/admin/members?status=membership_updated`);
 }
 
 export async function updateMemberSpaceAccessAction(

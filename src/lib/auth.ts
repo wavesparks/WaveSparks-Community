@@ -7,7 +7,11 @@ import {
   type KnownClerkIdentity,
 } from "@/lib/auth-identity";
 import type { Membership, Organization, Profile, User, ViewerContext } from "@/lib/domain";
-import { canAdminOrganization } from "@/server/permissions";
+import {
+  canAdminOrganization,
+  canUseMentorFeatures,
+  isApprovedMentor,
+} from "@/server/permissions";
 import {
   getOrganizationBySlug,
   getViewerRecordByClerkUserIdAndOrgId,
@@ -91,6 +95,8 @@ async function buildViewerContextForOrg(
   );
 
   const canAdmin = canAdminOrganization(user, membership);
+  const approvedMentor = isApprovedMentor(membership);
+  const canMentor = canUseMentorFeatures(membership);
 
   return {
     org,
@@ -98,6 +104,8 @@ async function buildViewerContextForOrg(
     membership,
     profile,
     canAdmin,
+    isApprovedMentor: approvedMentor,
+    canMentor,
     scopes: canAdmin ? ["org:admin", "org:member"] : ["org:member"],
   } satisfies ViewerContext;
 }

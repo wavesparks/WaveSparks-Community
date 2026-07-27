@@ -37,6 +37,8 @@ const event: SpaceShellSpace = {
 
 const viewer: ViewerContext = {
   canAdmin: false,
+  isApprovedMentor: false,
+  canMentor: false,
   membership: {
     accountStatus: "connected",
     affiliationType: "current participant",
@@ -48,6 +50,7 @@ const viewer: ViewerContext = {
     orgId: "org-wavesparks",
     programName: "Founder Lab",
     role: "member",
+    mentorStatus: "not_mentor",
     status: "approved",
     updatedAt: "2026-07-01T00:00:00.000Z",
     userId: "user-alex",
@@ -109,6 +112,36 @@ describe("MySpacesView member copy", () => {
     expect(document.body.textContent).not.toMatch(/\bspaces?\b/i);
     expect(document.body.textContent).not.toMatch(/\bnetwork\b/i);
   });
+
+  it("exposes the mentoring workspace only to approved mentors", () => {
+    const { rerender } = render(
+      <MySpacesView
+        accessibleSpaces={[mainCommunity, event]}
+        mainSpace={mainCommunity}
+        viewer={viewer}
+      />,
+    );
+
+    expect(screen.queryByRole("link", { name: "Mentoring" })).not.toBeInTheDocument();
+
+    rerender(
+      <MySpacesView
+        accessibleSpaces={[mainCommunity, event]}
+        mainSpace={mainCommunity}
+        viewer={{
+          ...viewer,
+          isApprovedMentor: true,
+          canMentor: true,
+          membership: { ...viewer.membership, mentorStatus: "approved" },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Mentoring" })).toHaveAttribute(
+      "href",
+      "/org/wavesparks/mentoring",
+    );
+  });
 });
 
 describe("AppShell member copy", () => {
@@ -136,5 +169,40 @@ describe("AppShell member copy", () => {
     expect(screen.getByText("Alex Chen")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("alex.chen+event@example.com");
     expect(document.body.textContent).not.toMatch(/\bnetwork\b/i);
+  });
+
+  it("shows the mentoring workspace only to approved mentors", () => {
+    const { rerender } = render(
+      <AppShell currentPath="/org/wavesparks" viewer={viewer}>
+        <p>Account content</p>
+      </AppShell>,
+    );
+
+    expect(screen.queryByRole("link", { name: /Mentoring/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Approved mentor")).not.toBeInTheDocument();
+
+    rerender(
+      <AppShell
+        currentPath="/org/wavesparks/mentoring"
+        viewer={{
+          ...viewer,
+          isApprovedMentor: true,
+          canMentor: true,
+          membership: { ...viewer.membership, mentorStatus: "approved" },
+        }}
+      >
+        <p>Mentor account content</p>
+      </AppShell>,
+    );
+
+    expect(screen.getByRole("link", { name: /Mentoring/ })).toHaveAttribute(
+      "href",
+      "/org/wavesparks/mentoring",
+    );
+    expect(screen.getByRole("link", { name: /Mentoring/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText("Approved mentor")).toBeInTheDocument();
   });
 });

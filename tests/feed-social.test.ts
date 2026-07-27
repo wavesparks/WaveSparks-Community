@@ -17,6 +17,7 @@ import {
   getProfileByMembershipId,
   getUserById,
   listActiveIntroRequestStatusesForRequester,
+  listActiveIntroRequestStatusesForRequesterInSpace,
   listFollowedMembershipIdsForMembership,
   listFollowsForMembership,
   listMembershipProfileRecordsByIds,
@@ -77,6 +78,23 @@ async function addPost(input: {
 describe("feed filters and social recommendations", () => {
   beforeEach(() => {
     resetStore();
+  });
+
+  it("treats accepted and declined introductions as history, not active blockers", async () => {
+    const mainSpace = getStore().spaces.find((space) => space.kind === "main")!;
+    const requesterStatuses = await listActiveIntroRequestStatusesForRequester(
+      "mem_jules",
+      ["mem_marcus"],
+    );
+    const spaceStatuses = await listActiveIntroRequestStatusesForRequesterInSpace(
+      mainSpace.id,
+      "mem_jules",
+      ["mem_marcus", "mem_rhea"],
+    );
+
+    expect(requesterStatuses.has("mem_marcus")).toBe(false);
+    expect(spaceStatuses.has("mem_marcus")).toBe(false);
+    expect(spaceStatuses.has("mem_rhea")).toBe(false);
   });
 
   it("keeps follows private to the follower and supports unfollow", async () => {
@@ -186,6 +204,7 @@ describe("feed filters and social recommendations", () => {
     interestProfile.bio = "community-kitchen-researcher";
     interestProfile.currentFocus = "accessible-transit-prototype";
     interestProfile.technicalExperience = "beginner-arduino-workshop";
+    interestProfile.mentorExpertiseTags = ["venture-debt-coaching"];
 
     const climateProfiles = await getMemberDirectoryViewsForOrg(org, {
       viewerMembershipId: "mem_jules",
@@ -193,6 +212,11 @@ describe("feed filters and social recommendations", () => {
       limit: 20,
     });
     const mentorProfiles = await getMemberDirectoryViewsForOrg(org, {
+      viewerMembershipId: "mem_jules",
+      filters: { mentorStatus: "approved" },
+      limit: 20,
+    });
+    const legacyMentorFilterProfiles = await getMemberDirectoryViewsForOrg(org, {
       viewerMembershipId: "mem_jules",
       filters: { affiliation: "mentor" },
       limit: 20,
@@ -203,6 +227,7 @@ describe("feed filters and social recommendations", () => {
         "community-kitchen-researcher",
         "accessible-transit-prototype",
         "beginner-arduino-workshop",
+        "venture-debt-coaching",
       ].map((q) =>
         getMemberDirectoryViewsForOrg(org, {
           viewerMembershipId: "mem_jules",
@@ -216,7 +241,17 @@ describe("feed filters and social recommendations", () => {
     expect(climateProfiles.some((profile) => profile.membershipId === "mem_marcus")).toBe(false);
     expect(climateProfiles.every((profile) => !("emailForIntro" in profile))).toBe(true);
     expect(climateProfiles.every((profile) => !("whatsappNumber" in profile))).toBe(true);
-    expect(mentorProfiles.every((profile) => profile.affiliationLabel === "Mentor")).toBe(true);
+    expect(mentorProfiles.every((profile) => profile.isApprovedMentor)).toBe(true);
+    expect(
+      mentorProfiles.some(
+        (profile) =>
+          profile.membershipId === "mem_kai" && profile.acceptingMentoringRequests,
+      ),
+    ).toBe(true);
+    expect(mentorProfiles.some((profile) => profile.affiliationLabel === "Alumni")).toBe(true);
+    expect(legacyMentorFilterProfiles.map((profile) => profile.membershipId)).toEqual(
+      mentorProfiles.map((profile) => profile.membershipId),
+    );
     expect(
       signalSearches.every((profiles) =>
         profiles.some((profile) => profile.membershipId === "mem_kai"),
@@ -236,6 +271,31 @@ describe("feed filters and social recommendations", () => {
       "lnk_rhea_github",
     ]);
     await expect(listProfileLinksByProfileIds([])).resolves.toEqual(new Map());
+  });
+
+  it("does not expose legacy mentor identity or fields without approval", async () => {
+    const org = (await getOrganizationBySlug("wavesparks"))!;
+    const membership = (await getMembershipById("mem_marcus"))!;
+    membership.mentorStatus = "needs_review";
+
+    const profile = await getMemberDirectoryProfileView({
+      orgId: org.id,
+      membershipId: membership.id,
+      viewerMembershipId: "mem_jules",
+    });
+
+    expect(profile).toMatchObject({
+      affiliationLabel: "Participant",
+      acceptingMentoringRequests: false,
+      isApprovedMentor: false,
+      maxMentees: null,
+      mentorAvailability: "",
+      mentorExpertiseTags: [],
+      mentorFunctionalStrengths: [],
+      mentorOffers: [],
+      mentorStageExperience: [],
+      mentorshipPreferences: "",
+    });
   });
 
   it("loads safe member profile detail with follow and profile-intro state", async () => {
@@ -459,6 +519,26 @@ describe("feed filters and social recommendations", () => {
     await expect(
       listProfileRecordsByIds([byProfile[0].targetProfileId], { orgId: "org_missing" }),
     ).resolves.toEqual([]);
+  });
+
+  it("filters stale mentor-match views immediately after mentor approval is removed", async () => {
+    const mentorMatch = getStore().matches.find(
+      (match) => match.matchType === "mentor_match",
+    );
+    expect(mentorMatch).toBeDefined();
+    const profile = (await getProfileById(mentorMatch!.sourceProfileId))!;
+    const targetProfile = (await getProfileById(mentorMatch!.targetProfileId))!;
+    const targetMembership = (await getMembershipById(targetProfile.membershipId))!;
+    targetMembership.mentorStatus = "needs_review";
+
+    await expect(
+      getMatchViews(profile.membershipId, [mentorMatch!], "org_wavespark"),
+    ).resolves.toEqual([]);
+    const matchCards = await getMatchCardViewsForProfile(
+      profile.id,
+      profile.membershipId,
+    );
+    expect(matchCards.some(({ match }) => match.id === mentorMatch!.id)).toBe(false);
   });
 
   it("loads a post thread with author and visible comment profiles", async () => {
@@ -690,12 +770,27 @@ describe("feed filters and social recommendations", () => {
 
   it("enforces opportunity source defaults by membership role", async () => {
     const admin = (await getMembershipById("mem_avery"))!;
+    const adminWithoutMentor = (await getMembershipById("mem_maya"))!;
     const mentor = (await getMembershipById("mem_marcus"))!;
     const member = (await getMembershipById("mem_jules"))!;
 
     expect(opportunitySourceForPost("opportunity", admin, "official")).toBe("official");
-    expect(opportunitySourceForPost("opportunity", mentor, "official")).toBe("mentor");
+    expect(opportunitySourceForPost("opportunity", admin, "mentor")).toBe("mentor");
+    expect(
+      opportunitySourceForPost("opportunity", adminWithoutMentor, "mentor"),
+    ).toBe("official");
+    expect(opportunitySourceForPost("opportunity", admin, "member")).toBe("member");
+    expect(opportunitySourceForPost("opportunity", mentor, "mentor")).toBe("mentor");
+    expect(opportunitySourceForPost("opportunity", mentor, "member")).toBe("member");
+    expect(opportunitySourceForPost("opportunity", mentor, "official")).toBe("member");
     expect(opportunitySourceForPost("opportunity", member, "official")).toBe("member");
+    expect(
+      opportunitySourceForPost(
+        "opportunity",
+        { ...mentor, mentorStatus: "needs_review" },
+        "mentor",
+      ),
+    ).toBe("member");
     expect(opportunitySourceForPost("general_update", admin, "official")).toBeUndefined();
   });
 
@@ -756,5 +851,36 @@ describe("feed filters and social recommendations", () => {
 
     expect(result.profile.seekingMatchTypes).toEqual(["mentor_match"]);
     expect(result.profile.offeringMatchTypes).toEqual([]);
+  });
+
+  it("ignores forged mentor provider and service fields for an unapproved member", async () => {
+    const membership = (await getMembershipById("mem_jules"))!;
+    const user = (await getUserById(membership.userId))!;
+    const existingProfile = (await getProfileByMembershipId(membership.id))!;
+    const formData = new FormData();
+    formData.set("matching_intent_version", "2");
+    formData.append("seeking_match_types", "mentor_match");
+    formData.append("offering_match_types", "mentor_match");
+    formData.set("mentor_expertise_tags", "forged-expertise");
+    formData.set("mentor_offers", "forged-offer");
+    formData.set("mentor_availability", "weekly");
+    formData.set("max_mentees", "99");
+
+    const result = profileFromFormData({
+      formData,
+      membership,
+      user,
+      existingProfile,
+      matchTypeConfigs: seedMatchTypeConfigs,
+    });
+
+    expect(result.profile.seekingMatchTypes).toContain("mentor_match");
+    expect(result.profile.offeringMatchTypes).not.toContain("mentor_match");
+    expect(result.profile.mentorExpertiseTags).toEqual(
+      existingProfile.mentorExpertiseTags,
+    );
+    expect(result.profile.mentorOffers).toEqual(existingProfile.mentorOffers);
+    expect(result.profile.mentorAvailability).toBe(existingProfile.mentorAvailability);
+    expect(result.profile.maxMentees).toBe(existingProfile.maxMentees);
   });
 });

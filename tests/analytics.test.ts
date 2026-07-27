@@ -35,6 +35,7 @@ describe("organization analytics", () => {
       introRequests: seedIntroRequests.map((intro) => ({
         createdAt: intro.createdAt,
         introPurpose: intro.introPurpose,
+        kind: intro.kind,
         respondedAt: intro.respondedAt,
         status: intro.status,
       })),
@@ -73,6 +74,7 @@ describe("organization analytics", () => {
       introRequests: seedIntroRequests.map((intro) => ({
         createdAt: intro.createdAt,
         introPurpose: intro.introPurpose,
+        kind: intro.kind,
         respondedAt: intro.respondedAt,
         status: intro.status,
       })),
@@ -101,5 +103,33 @@ describe("organization analytics", () => {
     });
 
     expect(series).toEqual(snapshot.dailySeries);
+  });
+
+  it("uses typed mentoring requests instead of free-text purpose for mentor analytics", () => {
+    const snapshot = buildOrgAnalyticsSnapshot({
+      memberships: [],
+      profiles: [],
+      posts: [],
+      comments: [],
+      introRequests: [
+        {
+          createdAt: "2030-01-01T00:00:00.000Z",
+          introPurpose: "A tailored leadership conversation",
+          kind: "mentoring",
+          respondedAt: "2030-01-02T00:00:00.000Z",
+          status: "accepted",
+        },
+        {
+          createdAt: "2030-01-03T00:00:00.000Z",
+          introPurpose: "mentor guidance",
+          kind: "general",
+          respondedAt: "2030-01-04T00:00:00.000Z",
+          status: "accepted",
+        },
+      ],
+      analyticsEvents: [],
+    });
+
+    expect(snapshot.mentorMatchesAccepted).toBe(1);
   });
 });

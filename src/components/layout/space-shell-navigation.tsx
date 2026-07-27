@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
 import {
@@ -136,6 +136,27 @@ export function SpaceSwitcher({
       detailsRef.current.open = false;
     }
   };
+
+  useEffect(() => {
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const details = detailsRef.current;
+      if (details?.open && !details.contains(event.target as Node)) {
+        details.open = false;
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      const details = detailsRef.current;
+      if (event.key !== "Escape" || !details?.open) return;
+      details.open = false;
+      details.querySelector("summary")?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
 
   return (
     <details className="group relative min-w-0" ref={detailsRef}>

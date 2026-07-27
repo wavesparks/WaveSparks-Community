@@ -7,7 +7,7 @@ vi.mock("@/lib/auth-identity", () => ({
 }));
 
 import { POST } from "@/app/api/internal/preview-accounts/route";
-import { resetStore } from "@/server/store";
+import { getStore, resetStore } from "@/server/store";
 
 function request() {
   return new Request("http://localhost/api/internal/preview-accounts", {
@@ -41,7 +41,7 @@ describe("preview accounts internal route", () => {
     expect(response.status).toBe(401);
   });
 
-  it("provisions the three preview accounts for an admin", async () => {
+  it("provisions all four permission combinations for an admin", async () => {
     getCurrentAuthIdentityMock.mockResolvedValue({
       email: "avery@wavesparks.co",
       name: "Avery Tan",
@@ -52,12 +52,30 @@ describe("preview accounts internal route", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(payload.accounts).toHaveLength(3);
-    expect(payload.expectedKinds.sort()).toEqual(["admin", "founder", "mentor"]);
-    expect(payload.accounts.map((account: { kind: string }) => account.kind).sort()).toEqual([
+    expect(payload.accounts).toHaveLength(4);
+    expect(payload.expectedKinds.sort()).toEqual([
       "admin",
+      "admin_mentor",
       "founder",
       "mentor",
     ]);
+    expect(payload.accounts.map((account: { kind: string }) => account.kind).sort()).toEqual([
+      "admin",
+      "admin_mentor",
+      "founder",
+      "mentor",
+    ]);
+    expect(
+      getStore().memberships
+        .filter((membership) =>
+          payload.accounts.some(
+            (account: { email: string }) =>
+              getStore().users.find((user) => user.id === membership.userId)?.email ===
+              account.email,
+          ),
+        )
+        .filter((membership) => membership.mentorStatus === "approved")
+        .map((membership) => membership.mentorReviewedByMembershipId),
+    ).toEqual(["mem_avery", "mem_avery"]);
   });
 });

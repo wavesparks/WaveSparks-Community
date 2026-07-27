@@ -207,7 +207,17 @@ export interface PostThreadIntroContext {
 export interface IntroRequestViewOptions {
   limit?: number;
   direction?: "incoming" | "outgoing";
+  kind?: IntroRequestView["kind"];
   status?: IntroStatus;
+}
+
+function acceptedContactDetails(profile: Profile) {
+  return {
+    email: profile.emailForIntro,
+    ...(profile.whatsappVisibleAfterAccept && profile.whatsappNumber
+      ? { whatsapp: profile.whatsappNumber }
+      : {}),
+  } satisfies NonNullable<IntroRequestView["contactDetails"]>;
 }
 
 interface FeedEntry {
@@ -349,6 +359,14 @@ function displayName(profile: Profile) {
   return profile.preferredName || profile.fullName;
 }
 
+function publicAffiliationLabel(membership: Membership) {
+  return getAffiliationLabel(
+    membership.affiliationType === "mentor"
+      ? "current participant"
+      : membership.affiliationType,
+  );
+}
+
 export function toLimitedProfileCard(profile: Profile, membership: Membership): LimitedProfileCard {
   return {
     membershipId: membership.id,
@@ -360,7 +378,7 @@ export function toLimitedProfileCard(profile: Profile, membership: Membership): 
     whatTheyAreBuilding: profile.currentFocus || profile.startupOneLiner,
     whatTheyNeed: profile.lookingForTypes,
     keyTags: [...profile.industryTags, ...profile.skillTags].slice(0, 5),
-    affiliationLabel: getAffiliationLabel(membership.affiliationType),
+    affiliationLabel: publicAffiliationLabel(membership),
     location: [profile.city, profile.country].filter(Boolean).join(", "),
   };
 }
@@ -368,6 +386,7 @@ export function toLimitedProfileCard(profile: Profile, membership: Membership): 
 export function toFullAdminProfile(profile: Profile, membership: Membership): FullAdminProfile {
   return {
     ...toLimitedProfileCard(profile, membership),
+    affiliationLabel: getAffiliationLabel(membership.affiliationType),
     ...getProfileVisibilityForMember(profile, membership),
     emailForIntro: profile.emailForIntro,
     whatsappNumber: profile.whatsappNumber,
@@ -454,7 +473,9 @@ function feedEntryMatchesFilters(
 
   if (
     filters.authorAffiliation &&
-    membership.affiliationType !== filters.authorAffiliation
+    (filters.authorAffiliation === "mentor"
+      ? membership.mentorStatus !== "approved"
+      : membership.affiliationType !== filters.authorAffiliation)
   ) {
     return false;
   }
@@ -484,7 +505,8 @@ function feedEntryMatchesFilters(
       profile.preferredName,
       profile.headline,
       profile.industryTags.join(" "),
-      membership.affiliationType,
+      publicAffiliationLabel(membership),
+      membership.mentorStatus === "approved" ? "approved mentor" : "",
     ]
       .join(" ")
       .toLowerCase();
@@ -502,8 +524,14 @@ function toMemberDirectoryProfileView(input: {
   following: boolean;
   introStatus?: IntroStatus;
 }): MemberDirectoryProfileView {
+  const isApprovedMentor = input.membership.mentorStatus === "approved";
+  const acceptingMentoringRequests =
+    isApprovedMentor && input.profile.offeringMatchTypes.includes("mentor_match");
   return {
     ...toLimitedProfileCard(input.profile, input.membership),
+    isApprovedMentor,
+    acceptingMentoringRequests,
+    openToIntroductions: input.profile.introOptIn,
     bio: input.profile.bio || input.profile.longBio || input.profile.shortBio,
     problemInterest: input.profile.problemInterest,
     currentFocus: input.profile.currentFocus,
@@ -518,7 +546,17 @@ function toMemberDirectoryProfileView(input: {
     problemSpaceTags: input.profile.problemSpaceTags,
     skillTags: input.profile.skillTags,
     desiredRoles: input.profile.desiredRoles,
-    mentorOffers: input.profile.mentorOffers,
+    mentorExpertiseTags: isApprovedMentor ? input.profile.mentorExpertiseTags : [],
+    mentorStageExperience: isApprovedMentor ? input.profile.mentorStageExperience : [],
+    mentorFunctionalStrengths: isApprovedMentor
+      ? input.profile.mentorFunctionalStrengths
+      : [],
+    mentorAvailability: isApprovedMentor ? input.profile.mentorAvailability : "",
+    mentorOffers: isApprovedMentor ? input.profile.mentorOffers : [],
+    maxMentees: isApprovedMentor ? input.profile.maxMentees : null,
+    mentorshipPreferences: isApprovedMentor
+      ? input.profile.mentorshipPreferences
+      : "",
     profileLinks: input.profileLinks,
     isFollowing: input.following,
     ...(input.introStatus ? { introStatus: input.introStatus } : {}),
@@ -530,7 +568,16 @@ function directoryProfileMatchesFilters(
   membership: Membership,
   filters: MemberDirectoryFilters,
 ) {
-  if (filters.affiliation && membership.affiliationType !== filters.affiliation) {
+  if (filters.mentorStatus && membership.mentorStatus !== filters.mentorStatus) {
+    return false;
+  }
+
+  if (
+    filters.affiliation &&
+    (filters.affiliation === "mentor"
+      ? membership.mentorStatus !== "approved"
+      : membership.affiliationType !== filters.affiliation)
+  ) {
     return false;
   }
 
@@ -548,7 +595,7 @@ function directoryProfileMatchesFilters(
         ...profile.lookingForTypes,
         ...profile.desiredRoles,
         ...profile.helpNeededTags,
-        ...profile.mentorOffers,
+        ...(membership.mentorStatus === "approved" ? profile.mentorOffers : []),
       ],
       filters.need,
     )
@@ -582,7 +629,17 @@ function directoryProfileMatchesFilters(
     profile.skillTags.join(" "),
     profile.lookingForTypes.join(" "),
     profile.desiredRoles.join(" "),
-    membership.affiliationType,
+    ...(membership.mentorStatus === "approved"
+      ? [
+          profile.mentorExpertiseTags.join(" "),
+          profile.mentorFunctionalStrengths.join(" "),
+          profile.mentorStageExperience.join(" "),
+          profile.mentorOffers.join(" "),
+          profile.mentorshipPreferences,
+        ]
+      : []),
+    publicAffiliationLabel(membership),
+    membership.mentorStatus === "approved" ? "approved mentor" : "",
   ]
     .join(" ")
     .toLowerCase();
@@ -1096,6 +1153,13 @@ export async function getMatchViews(membershipId: string, matchRecords: Array<{
     if (!profile || !membership) {
       return null;
     }
+    if (
+      match.matchType === "mentor_match" &&
+      (membership.mentorStatus !== "approved" ||
+        !profile.offeringMatchTypes.includes("mentor_match"))
+    ) {
+      return null;
+    }
 
     return {
       id: match.id,
@@ -1142,6 +1206,13 @@ export async function getMatchCardViewsForProfile(
 
   for (const record of records) {
     if (!record.targetProfile || !record.targetMembership) {
+      continue;
+    }
+    if (
+      record.match.matchType === "mentor_match" &&
+      (record.targetMembership.mentorStatus !== "approved" ||
+        !record.targetProfile.offeringMatchTypes.includes("mentor_match"))
+    ) {
       continue;
     }
 
@@ -1291,6 +1362,7 @@ export async function getIntroRequestViews(
 
     return {
       id: request.id,
+      kind: request.kind,
       status: request.status,
       introPurpose: request.introPurpose,
       note: request.note,
@@ -1298,10 +1370,7 @@ export async function getIntroRequestViews(
       createdAt: request.createdAt,
       respondedAt: request.respondedAt,
       contactDetails: canViewContactDetails(membershipId, request)
-        ? {
-            email: otherProfile.emailForIntro,
-            whatsapp: otherProfile.whatsappNumber,
-          }
+        ? acceptedContactDetails(otherProfile)
         : undefined,
       otherParty: toLimitedProfileCard(otherProfile, otherMembership),
       isIncoming,
@@ -1342,6 +1411,7 @@ export async function getIntroRequestViewsForSpace(
     }
     return {
       id: request.id,
+      kind: request.kind,
       spaceId: request.spaceId,
       spaceName: space ? getCommunityDisplayName(space) : undefined,
       spaceSlug: space?.slug,
@@ -1352,10 +1422,7 @@ export async function getIntroRequestViewsForSpace(
       createdAt: request.createdAt,
       respondedAt: request.respondedAt,
       contactDetails: canViewContactDetails(membershipId, request)
-        ? {
-            email: otherRecord.profile.emailForIntro,
-            whatsapp: otherRecord.profile.whatsappNumber,
-          }
+        ? acceptedContactDetails(otherRecord.profile)
         : undefined,
       otherParty: toLimitedProfileCard(otherRecord.profile, otherRecord.membership),
       isIncoming,
@@ -1406,6 +1473,7 @@ export async function getAccountIntroHistoryViews(
     if (!otherRecord?.profile) return [];
     return [{
       id: request.id,
+      kind: request.kind,
       spaceId: request.spaceId,
       spaceName: request.spaceId
         ? nameBySpaceId.get(request.spaceId)
@@ -1420,10 +1488,7 @@ export async function getAccountIntroHistoryViews(
       createdAt: request.createdAt,
       respondedAt: request.respondedAt,
       contactDetails: canViewContactDetails(membershipId, request)
-        ? {
-            email: otherRecord.profile.emailForIntro,
-            whatsapp: otherRecord.profile.whatsappNumber,
-          }
+        ? acceptedContactDetails(otherRecord.profile)
         : undefined,
       otherParty: toLimitedProfileCard(otherRecord.profile, otherRecord.membership),
       isIncoming,

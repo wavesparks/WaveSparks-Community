@@ -159,6 +159,11 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
         title: "Introduction request sent",
         body: "You can follow the response from Introductions.",
       };
+    case "mentoring_requested":
+      return {
+        title: "Mentoring request sent",
+        body: "This request is waiting for the mentor’s response. You can follow it from Introductions.",
+      };
     case "intro_existing":
       return {
         title: "Introduction already requested",
@@ -347,7 +352,7 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
     case "membership_updated":
       return {
         title: "Member updated",
-        body: "The account status, access, and admin note are saved.",
+        body: "Account permissions, mentor designation, account status, and the admin note are saved.",
       };
     case "membership_invitation_failed":
       return {

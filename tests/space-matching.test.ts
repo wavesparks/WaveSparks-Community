@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   seedMatchTypeConfigs,
@@ -27,6 +27,7 @@ import {
   listMatchesForProfile,
   listVisibleMatchTargetMembershipIdsForProfile,
   listVisibleSpacesForMembership,
+  recomputeMatchesForAllOrganizations,
   recomputeMatchesForSpace,
   resetStore,
 } from "@/server/store";
@@ -236,6 +237,52 @@ describe("Space-scoped matching", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("uses explicit Space needs and offers as structured reciprocal evidence", () => {
+    const space = eventSpace("space_event_explicit_intent");
+    const config = {
+      ...seedMatchTypeConfigs.find((candidate) => candidate.slug === "cofounder_match")!,
+      minimumScore: 1,
+    };
+    const baselineRecords = compatibleRecords(space);
+    const baseline = recomputeMatchesForSpaceMembers(
+      seedOrganization,
+      space,
+      baselineRecords,
+      [config],
+      { limit: null },
+    ).find(
+      (match) =>
+        match.sourceProfileId === "pro_jules" && match.targetProfileId === "pro_rhea",
+    );
+    const explicitRecords = compatibleRecords(space).map((record) => ({
+      ...record,
+      intent: { ...record.intent },
+    }));
+    const source = explicitRecords.find((record) => record.profile.id === "pro_jules")!;
+    const target = explicitRecords.find((record) => record.profile.id === "pro_rhea")!;
+    source.intent.lookingFor = ["backend systems architecture"];
+    source.intent.offers = ["customer discovery interviews"];
+    target.intent.lookingFor = ["customer discovery interviews"];
+    target.intent.offers = ["backend systems architecture"];
+    const explicit = recomputeMatchesForSpaceMembers(
+      seedOrganization,
+      space,
+      explicitRecords,
+      [config],
+      { limit: null },
+    ).find(
+      (match) =>
+        match.sourceProfileId === "pro_jules" && match.targetProfileId === "pro_rhea",
+    );
+
+    expect(baseline).toBeDefined();
+    expect(explicit).toBeDefined();
+    expect(explicit!.score).toBeGreaterThan(baseline!.score);
+    expect(explicit!.scoreBreakdown.skills).toBeGreaterThan(
+      baseline!.scoreBreakdown.skills,
+    );
+  });
+
   it("excludes disconnected accounts, inactive Space access, and incomplete opt-ins", () => {
     const space = eventSpace("space_event_eligibility");
     const base = compatibleRecords(space);
@@ -286,6 +333,14 @@ describe("Space-scoped matching", () => {
   it("hides a stale match immediately when the target opts out in this Space", async () => {
     const fixture = await readableSpaceMatchFixture("space_event_opted_out_match_target");
     fixture.targetIntent.matchingOptIn = false;
+
+    await expectStaleTargetHidden(fixture);
+    expect(getStore().matches.some((match) => match.id === fixture.match.id)).toBe(true);
+  });
+
+  it("never presents a score produced by an older algorithm as current", async () => {
+    const fixture = await readableSpaceMatchFixture("space_event_old_algorithm_match");
+    fixture.match.algorithmVersion = "hybrid-v3";
 
     await expectStaleTargetHidden(fixture);
     expect(getStore().matches.some((match) => match.id === fixture.match.id)).toBe(true);
@@ -464,5 +519,60 @@ describe("Space-scoped matching", () => {
         matches: 0,
       },
     });
+  });
+
+  it("prepares embeddings and telemetry only for matching-eligible members", async () => {
+    const store = getStore();
+    const space = eventSpace("space_event_eligible_embeddings");
+    const records = compatibleRecords(space);
+    records[1].intent.matchingOptIn = false;
+    store.spaces.push(space);
+    store.spaceMemberships.push(...records.map((record) => record.spaceMembership));
+    store.spaceIntents.push(...records.map((record) => record.intent));
+    const optedOutProfile = store.profiles.find(
+      (profile) => profile.id === records[1].profile.id,
+    )!;
+    optedOutProfile.embeddingStatus = "pending";
+    optedOutProfile.embeddingUpdatedAt = undefined;
+    optedOutProfile.embeddingSourceHash = undefined;
+    optedOutProfile.seekingEmbedding = undefined;
+    optedOutProfile.offeringEmbedding = undefined;
+
+    await recomputeMatchesForSpace(space.id);
+
+    expect(optedOutProfile.embeddingUpdatedAt).toBeUndefined();
+    expect(store.matchRuns.find((run) => run.spaceId === space.id)).toMatchObject({
+      status: "completed",
+      metadata: { eligibleProfiles: 1 },
+    });
+  });
+
+  it("continues the scheduled refresh after one Space fails", async () => {
+    const store = getStore();
+    const failing = eventSpace("space_event_scheduled_failure");
+    const succeeding = eventSpace("space_event_scheduled_success");
+    store.spaces.push(failing, succeeding);
+    const attemptedSpaceIds: string[] = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const result = await recomputeMatchesForAllOrganizations({
+        recomputeSpace: async (spaceId) => {
+          attemptedSpaceIds.push(spaceId);
+          if (spaceId === failing.id) throw new Error("Synthetic Space failure");
+          return [];
+        },
+      });
+
+      expect(attemptedSpaceIds).toContain(failing.id);
+      expect(attemptedSpaceIds).toContain(succeeding.id);
+      expect(result.failedSpaceCount).toBe(1);
+      expect(result.organizations[0]).toMatchObject({
+        successfulSpaceCount: result.organizations[0].spaceCount - 1,
+        failures: [{ spaceId: failing.id }],
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
