@@ -283,6 +283,72 @@ test.describe("authenticated member Space flows", () => {
 test.describe("authenticated admin Space flows", () => {
   test.skip(!canUseLocalAuth, "This suite uses Playwright local auth.");
 
+  test("mobile Space header stays compact and follows visual keyboard order", async (
+    { page },
+    testInfo,
+  ) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await signInAdmin(page);
+    const mainFeedHref = await openMySpacesAndDiscoverMainFeed(page);
+    await page.goto(mainFeedHref);
+
+    const header = page.locator("header").first();
+    await expect(header).toBeVisible();
+    expect(await header.evaluate((element) => getComputedStyle(element).position)).toBe(
+      "relative",
+    );
+    const headerBounds = await header.boundingBox();
+    expect(headerBounds).not.toBeNull();
+    expect(headerBounds!.height).toBeLessThan(240);
+
+    const home = header.getByRole("link", { name: "Home", exact: true }).first();
+    const switcher = header.locator("details summary");
+    await switcher.click();
+    const switcherMenu = header.locator("details > div").first();
+    await expect(switcherMenu).toBeVisible();
+    const switcherBounds = await switcherMenu.boundingBox();
+    expect(switcherBounds).not.toBeNull();
+    expect(switcherBounds!.x).toBeGreaterThanOrEqual(0);
+    expect(switcherBounds!.x + switcherBounds!.width).toBeLessThanOrEqual(320);
+    await page.keyboard.press("Escape");
+    await expect(switcherMenu).toBeHidden();
+
+    const visibleFocusOrder = await header
+      .locator("a[href]:visible, summary:visible")
+      .evaluateAll((elements) =>
+        elements.slice(0, 6).map(
+          (element) =>
+            element.getAttribute("aria-label") ??
+            element.textContent?.replace(/\s+/g, " ").trim() ??
+            "",
+        ),
+      );
+    expect(visibleFocusOrder).toEqual([
+      "Home",
+      "Wavesparks Community",
+      "Mentoring",
+      "Admin",
+      "Inbox",
+      "Profile",
+    ]);
+
+    // Touch-only device emulation intentionally skips links during synthetic Tab navigation.
+    // The desktop project still exercises a real keyboard at this same 320px viewport.
+    if (testInfo.project.name !== "local-chromium") return;
+
+    await home.focus();
+    await page.keyboard.press("Tab");
+    await expect(switcher).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(header.getByRole("link", { name: "Mentoring" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(header.getByRole("link", { name: "Admin" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(header.getByRole("link", { name: "Inbox" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(header.getByRole("link", { name: "Profile" })).toBeFocused();
+  });
+
   test("admin reaches Community & Events and member management", async ({ page }) => {
     await signInAdmin(page);
     const mainFeedHref = await openMySpacesAndDiscoverMainFeed(page);
