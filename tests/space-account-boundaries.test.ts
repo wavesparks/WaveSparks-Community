@@ -69,6 +69,8 @@ async function setViewer(membershipId: string) {
     membership,
     profile,
     canAdmin: false,
+    isApprovedMentor: membership.mentorStatus === "approved",
+    canMentor: membership.mentorStatus === "approved",
     scopes: ["org:member"],
   };
 }

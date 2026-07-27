@@ -22,6 +22,8 @@ async function viewerForMembership(membershipId: string): Promise<ViewerContext>
     membership,
     profile,
     canAdmin: false,
+    isApprovedMentor: membership.mentorStatus === "approved",
+    canMentor: membership.mentorStatus === "approved",
     scopes: ["org:member"],
   };
 }

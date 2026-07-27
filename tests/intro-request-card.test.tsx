@@ -9,6 +9,7 @@ const request: IntroRequestView = {
   id: "intro-admin",
   introPurpose: "Meet a potential adviser",
   isIncoming: true,
+  kind: "general",
   note: "The team thought you should meet.",
   otherParty: {
     affiliationLabel: "Mentor",
@@ -49,5 +50,12 @@ describe("IntroRequestCard member copy", () => {
     expect(document.body.textContent).not.toContain("admin manual");
     expect(document.body.textContent).not.toContain("Main Community");
     expect(screen.getByText("Opening message")).toBeInTheDocument();
+  });
+
+  it("labels mentoring requests without changing contact privacy", () => {
+    render(<IntroRequestCard request={{ ...request, kind: "mentoring" }} />);
+
+    expect(screen.getByText("Mentoring")).toBeInTheDocument();
+    expect(screen.queryByText("Contact details")).not.toBeInTheDocument();
   });
 });

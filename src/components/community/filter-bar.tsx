@@ -41,12 +41,14 @@ export function FilterBar({
       <Form action={clearHref} className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <label className="relative min-w-[220px] flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--ink-soft)]" />
+            <Search aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--ink-soft)]" />
             <Input
+              aria-label={opportunityMode ? "Search opportunities" : "Search posts, tags, people"}
               className="pl-9"
               defaultValue={filters.q}
               name="q"
               placeholder={opportunityMode ? "Search opportunities" : "Search posts, tags, people"}
+              type="search"
             />
           </label>
           <details className="group w-full sm:w-auto">
@@ -62,6 +64,7 @@ export function FilterBar({
             <div className="mt-3 grid gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 md:grid-cols-2 xl:grid-cols-3">
               {opportunityMode ? (
                 <Select
+                  aria-label="Opportunity source"
                   defaultValue={filters.opportunitySource ?? defaultOpportunitySource ?? "all"}
                   name="source"
                 >
@@ -71,7 +74,11 @@ export function FilterBar({
                   <option value="all">All sources</option>
                 </Select>
               ) : null}
-              <Select defaultValue={filters.postType ?? "all"} name="type">
+              <Select
+                aria-label={opportunityMode ? "Opportunity type" : "Post type"}
+                defaultValue={filters.postType ?? "all"}
+                name="type"
+              >
                 <option value="all">
                   {opportunityMode ? "All opportunity types" : "All post types"}
                 </option>
@@ -91,15 +98,19 @@ export function FilterBar({
                   </>
                 )}
               </Select>
-              <Input defaultValue={filters.tag} name="tag" placeholder="Tag" />
-              <Select defaultValue={filters.authorAffiliation ?? ""} name="affiliation">
+              <Input aria-label="Tag" defaultValue={filters.tag} name="tag" placeholder="Tag" />
+              <Select
+                aria-label="Author affiliation"
+                defaultValue={filters.authorAffiliation ?? ""}
+                name="affiliation"
+              >
                 <option value="">Everyone</option>
                 <option value="current participant">Participant</option>
                 <option value="alumni">Alumni</option>
                 <option value="mentor">Mentor</option>
                 <option value="invited outsider">Guest</option>
               </Select>
-              <Select defaultValue={filters.authorStage ?? ""} name="stage">
+              <Select aria-label="Author stage" defaultValue={filters.authorStage ?? ""} name="stage">
                 <option value="">Any stage</option>
                 <option value="exploring">Exploring</option>
                 <option value="idea">Idea</option>
@@ -108,8 +119,18 @@ export function FilterBar({
                 <option value="early traction">Early traction</option>
                 <option value="scaling">Scaling</option>
               </Select>
-              <Input defaultValue={filters.authorIndustry} name="industry" placeholder="Industry" />
-              <Input defaultValue={filters.roleNeeded} name="role" placeholder="Role needed" />
+              <Input
+                aria-label="Author industry"
+                defaultValue={filters.authorIndustry}
+                name="industry"
+                placeholder="Industry"
+              />
+              <Input
+                aria-label="Role needed"
+                defaultValue={filters.roleNeeded}
+                name="role"
+                placeholder="Role needed"
+              />
               {showRecommendedFilter ? (
                 <label className="flex h-10 items-center gap-2 rounded-lg bg-[var(--surface)] px-3 text-sm text-[var(--ink-soft)] ring-1 ring-[var(--line)]">
                   <input

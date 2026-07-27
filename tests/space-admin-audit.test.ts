@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { seedOrganization } from "@/data/seed-data";
 import type { MatchRecord } from "@/lib/domain";
+import { MATCHING_ALGORITHM_VERSION } from "@/server/matching";
 import { buildNotification } from "@/server/notifications";
 import {
   addNotification,
+  countActiveSpaceMembersBySpaceIds,
   createCommentInSpace,
   createEventSpace,
   createIntroRequestInSpace,
@@ -13,6 +15,8 @@ import {
   getSpaceAuditMetrics,
   getStore,
   grantSpaceMembership,
+  listAdminMatchCardRecordsForSpace,
+  listAdminSpaceParticipantRecords,
   listIntroRequestsForSpace,
   listMatchProfileRecordsForSpace,
   listMatchRunsForSpace,
@@ -77,7 +81,7 @@ function testMatch(
     overlapTags: [],
     scoreBand: "high",
     confidence: "high",
-    algorithmVersion: "test-space-audit",
+    algorithmVersion: MATCHING_ALGORITHM_VERSION,
     surfacedAt: now,
     dismissedBySource: false,
     hiddenByAdmin: false,
@@ -164,9 +168,22 @@ describe("Space-scoped admin audit data", () => {
     });
 
     const store = getStore();
+    const baseIntent = store.spaceIntents.find(
+      (intent) => intent.membershipId === "mem_jules",
+    );
+    expect(baseIntent).toBeDefined();
+    store.spaceIntents.push({
+      ...baseIntent!,
+      id: "intent_alpha_jules",
+      spaceId: alpha.id,
+    });
     store.matches.push(
       testMatch("match_alpha_visible", alpha.id),
       testMatch("match_alpha_hidden", alpha.id, { hiddenByAdmin: true, score: 80 }),
+      testMatch("match_alpha_stale", alpha.id, {
+        algorithmVersion: "hybrid-v3",
+        score: 100,
+      }),
       testMatch("match_beta_visible", beta.id, {
         sourceProfileId: "pro_kai",
         targetProfileId: "pro_marcus",
@@ -215,6 +232,41 @@ describe("Space-scoped admin audit data", () => {
       "match_alpha_hidden",
     ]);
     expect(matches.every(({ match }) => match.spaceId === alpha.id)).toBe(true);
+
+    await expect(
+      countActiveSpaceMembersBySpaceIds(seedOrganization.id, [alpha.id, beta.id]),
+    ).resolves.toEqual(
+      new Map([
+        [alpha.id, 2],
+        [beta.id, 2],
+      ]),
+    );
+    const participantCards = await listAdminSpaceParticipantRecords(alpha.id);
+    expect(participantCards).toHaveLength(2);
+    expect(Object.keys(participantCards[0].profile ?? {}).sort()).toEqual([
+      "onboardingComplete",
+      "preferredName",
+    ]);
+    const participantWithIntent = participantCards.find((participant) => participant.intent);
+    expect(Object.keys(participantWithIntent?.intent ?? {}).sort()).toEqual([
+      "intentComplete",
+      "matchingOptIn",
+    ]);
+
+    const topMatchCards = await listAdminMatchCardRecordsForSpace(alpha.id, { limit: 1 });
+    expect(topMatchCards).toHaveLength(1);
+    expect(topMatchCards[0].match.id).toBe("match_alpha_visible");
+    expect(Object.keys(topMatchCards[0].match).sort()).toEqual([
+      "dismissedBySource",
+      "explanationText",
+      "hiddenByAdmin",
+      "id",
+      "matchType",
+      "scoreBand",
+      "spaceId",
+    ]);
+    expect(Object.keys(topMatchCards[0].sourceProfile ?? {})).toEqual(["preferredName"]);
+    expect(Object.keys(topMatchCards[0].targetProfile ?? {})).toEqual(["preferredName"]);
 
     const runs = await listMatchRunsForSpace(alpha.id);
     expect(runs.map((run) => run.id)).toEqual(["run_alpha"]);

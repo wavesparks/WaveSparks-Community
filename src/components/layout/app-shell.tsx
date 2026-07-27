@@ -1,5 +1,6 @@
 import {
   Bell,
+  GraduationCap,
   LayoutGrid,
   Shield,
   UserCircle2,
@@ -44,6 +45,9 @@ export function AppShell({
   const accountLinks = [
     { href: "", label: "Home", icon: LayoutGrid },
     { href: "requests", label: "Introductions", icon: Bell },
+    ...(viewer.canMentor
+      ? [{ href: "mentoring", label: "Mentoring", icon: GraduationCap }]
+      : []),
     viewer.profile?.onboardingComplete
       ? { href: "profile", label: "My Profile", icon: UserCircle2 }
       : { href: "onboarding", label: "Complete profile", icon: UserCircle2 },
@@ -89,9 +93,16 @@ export function AppShell({
                   </p>
                 </div>
               </div>
-              <Badge className="mt-3 bg-[var(--gold)] text-[var(--night)] ring-[var(--surface)] lg:mt-4">
-                {getAffiliationLabel(viewer.membership.affiliationType)}
-              </Badge>
+              <div className="mt-3 flex flex-wrap gap-2 lg:mt-4">
+                <Badge className="bg-[var(--gold)] text-[var(--night)] ring-[var(--surface)]">
+                  {getAffiliationLabel(viewer.membership.affiliationType)}
+                </Badge>
+                {viewer.canMentor ? (
+                  <Badge className="bg-[var(--cyan-soft)] text-[var(--night)] ring-[var(--cyan)]">
+                    Approved mentor
+                  </Badge>
+                ) : null}
+              </div>
             </div>
             <nav
               className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-1"

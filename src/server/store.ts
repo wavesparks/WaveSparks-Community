@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 
-import { getDb } from "@/db/client";
+import { getDb, getTransactionDb } from "@/db/client";
 import * as dbSchema from "@/db/schema";
 import {
   seedAnalyticsEvents,
@@ -22,12 +22,15 @@ import {
   seedUsers,
 } from "@/data/seed-data";
 import { env, isBootstrapAdminEmail } from "@/lib/env";
-import { localRoleFromClerkRole } from "@/lib/clerk-roles";
 import {
   getCommunityDisplayName,
   WAVESPARKS_COMMUNITY_NAME,
 } from "@/lib/community-copy";
 import { sanitizeMatchFeedbackReasons } from "@/lib/match-feedback";
+import {
+  mentionLabelForProfile,
+  validateMentionRanges,
+} from "@/lib/post-content";
 import {
   buildDailySeriesFromCounts,
   buildOrgAnalyticsSnapshot,
@@ -37,6 +40,7 @@ import {
   buildMatchingEmbeddingTexts,
   buildSpaceIntentEmbeddingTexts,
   isSpaceMatchingMemberEligible,
+  MATCHING_ALGORITHM_VERSION,
   recomputeMatchesForSpaceMembers,
   spaceAllowsMatching,
   type SpaceMatchingMember,
@@ -50,6 +54,7 @@ import {
   MATCHING_EMBEDDING_DIMENSIONS,
   MATCHING_EMBEDDING_MODEL,
 } from "@/server/embeddings";
+import { withSpaceRecomputeLock } from "@/server/space-recompute-lock";
 import type {
   AccountStatus,
   AnalyticsEvent,
@@ -57,7 +62,9 @@ import type {
   CohortMember,
   CohortMemberStatus,
   Comment,
+  CommentMention,
   Follow,
+  IntroKind,
   IntroRequest,
   IntroStatus,
   MatchRecord,
@@ -70,17 +77,27 @@ import type {
   ClerkOrgRole,
   ClerkInvitationStatus,
   Membership,
+  MembershipInvitation,
+  MembershipInvitationSummary,
+  MembershipInvitationStatus,
   MembershipRole,
   MembershipStatus,
+  MentorStatus,
   Notification,
   OpportunitySource,
   OrgAnalyticsSnapshot,
   Organization,
   Post,
+  PostImage,
+  PostImageView,
+  PostLinkPreview,
+  PostLinkPreviewView,
+  PostMention,
   PostSave,
   PostType,
   Profile,
   ProfileLink,
+  RichTextMention,
   Space,
   SpaceAccessStatus,
   SpaceIntent,
@@ -114,13 +131,18 @@ export interface StoreState {
   cohorts: Cohort[];
   cohortMembers: CohortMember[];
   memberships: Membership[];
+  membershipInvitations: MembershipInvitation[];
   spaces: Space[];
   spaceMemberships: SpaceMembership[];
   spaceIntents: SpaceIntent[];
   profiles: Profile[];
   profileLinks: ProfileLink[];
   posts: Post[];
+  postImages: PostImage[];
+  postLinkPreviews: PostLinkPreview[];
+  postMentions: PostMention[];
   comments: Comment[];
+  commentMentions: CommentMention[];
   follows: Follow[];
   postSaves: PostSave[];
   matchTypeConfigs: MatchTypeConfig[];
@@ -137,6 +159,8 @@ const spaceScopedNotificationTypes = new Set<Notification["type"]>([
   "intro_accepted",
   "intro_declined",
   "manual_intro",
+  "post_mentioned",
+  "comment_mentioned",
 ]);
 
 export interface AdminOverviewData {
@@ -222,12 +246,22 @@ export interface ActiveSpaceMemberRecord {
   intent?: SpaceIntent;
 }
 
+export interface AdminSpaceParticipantRecord {
+  spaceMembership: Pick<SpaceMembership, "id">;
+  membership: Pick<Membership, "id" | "role">;
+  user?: Pick<User, "email" | "name">;
+  profile?: Pick<Profile, "onboardingComplete" | "preferredName">;
+  intent?: Pick<SpaceIntent, "intentComplete" | "matchingOptIn">;
+}
+
 export type MemberWorkspaceInvitationStatus =
-  | ClerkInvitationStatus
+  | MembershipInvitationStatus
+  | "failed"
   | "connected"
   | "not_invited";
 
 export interface MemberWorkspaceRecord extends MembershipRecord {
+  invitation?: MembershipInvitationSummary;
   spaces: SpaceMembershipRecord[];
   /** @deprecated Read Space access from `spaces`. */
   cohorts: Cohort[];
@@ -236,6 +270,7 @@ export interface MemberWorkspaceRecord extends MembershipRecord {
 export interface MemberWorkspaceOptions {
   query?: string;
   accountStatus?: AccountStatus;
+  mentorStatus?: MentorStatus;
   spaceId?: string;
   /** @deprecated Membership status is retained only during the Space rollout. */
   status?: MembershipStatus;
@@ -264,6 +299,7 @@ export interface MemberImportCandidateRecord {
   email: string;
   user?: User;
   membership?: Membership;
+  invitation?: MembershipInvitationSummary;
   space?: Space;
   spaceMembership?: SpaceMembership;
   inSpace?: boolean;
@@ -336,6 +372,44 @@ export interface PostThreadRecord {
   post: Post;
   author?: MembershipRecord;
   comments: PostThreadCommentRecord[];
+  images: PostImageView[];
+  linkPreview?: PostLinkPreviewView;
+  mentions: RichTextMention[];
+}
+
+function toPostImageView(image: PostImage): PostImageView {
+  return {
+    id: image.id,
+    url: `/api/post-images/${image.id}`,
+    width: image.width ?? 1,
+    height: image.height ?? 1,
+    alt: image.alt?.trim() || "Post image",
+    position: image.position,
+  };
+}
+
+function toPostLinkPreviewView(preview: PostLinkPreview): PostLinkPreviewView {
+  return {
+    id: preview.id,
+    url: preview.originalUrl,
+    title: preview.title,
+    description: preview.description,
+    siteName: preview.siteName,
+    thumbnailUrl: preview.thumbnailBlobPathname
+      ? `/api/post-link-previews/${preview.id}/thumbnail`
+      : undefined,
+    thumbnailWidth: preview.thumbnailWidth,
+    thumbnailHeight: preview.thumbnailHeight,
+  };
+}
+
+function toRichTextMention(mention: PostMention | CommentMention): RichTextMention {
+  return {
+    membershipId: mention.mentionedMembershipId,
+    label: mention.label,
+    start: mention.start,
+    end: mention.end,
+  };
 }
 
 export interface PublicFeedPostRecord {
@@ -356,6 +430,21 @@ export interface MatchProfileRecord {
   match: MatchRecord;
   sourceProfile?: Profile;
   targetProfile?: Profile;
+}
+
+export interface AdminMatchCardRecord {
+  match: Pick<
+    MatchRecord,
+    | "dismissedBySource"
+    | "explanationText"
+    | "hiddenByAdmin"
+    | "id"
+    | "matchType"
+    | "scoreBand"
+    | "spaceId"
+  >;
+  sourceProfile?: Pick<Profile, "preferredName">;
+  targetProfile?: Pick<Profile, "preferredName">;
 }
 
 export interface MatchTargetRecord {
@@ -388,14 +477,23 @@ type IntroRequestDirection = "incoming" | "outgoing";
 
 interface IntroRequestListOptions extends TimeOrderedListOptions {
   direction?: IntroRequestDirection;
+  kind?: IntroKind;
   status?: IntroStatus;
 }
 
 interface OrgIntroRequestListOptions extends TimeOrderedListOptions {
   spaceId?: string;
+  kind?: IntroKind;
   status?: IntroStatus;
   sourceType?: IntroRequest["sourceType"];
 }
+
+export type CreateIntroRequestInput = Omit<
+  IntroRequest,
+  "id" | "createdAt" | "updatedAt" | "kind"
+> & {
+  kind?: IntroKind;
+};
 
 interface MatchProfileRecordListOptions {
   spaceId?: string;
@@ -549,13 +647,18 @@ function initializeStore(): StoreState {
     cohorts: [],
     cohortMembers: [],
     memberships,
+    membershipInvitations: [],
     spaces: [mainSpace],
     spaceMemberships,
     spaceIntents,
     profiles,
     profileLinks: structuredClone(seedProfileLinks),
     posts: structuredClone(seedPosts).map((post) => ({ ...post, spaceId: mainSpace.id })),
+    postImages: [],
+    postLinkPreviews: [],
+    postMentions: [],
     comments: structuredClone(seedComments),
+    commentMentions: [],
     follows: structuredClone(seedFollows).map((follow) => ({
       ...follow,
       spaceId: mainSpace.id,
@@ -611,12 +714,65 @@ function initializeStore(): StoreState {
 }
 
 function ensureStoreShape(store: StoreState) {
+  store.postImages ??= [];
+  store.postLinkPreviews ??= [];
+  store.postMentions ??= [];
+  store.commentMentions ??= [];
   store.follows ??= structuredClone(seedFollows);
   store.postSaves ??= structuredClone(seedPostSaves);
   store.passwordCredentials ??= [];
   store.clerkWebhookEvents ??= [];
   store.cohorts ??= [];
   store.cohortMembers ??= [];
+  store.membershipInvitations ??= [];
+  for (const membership of store.memberships) {
+    const profile = store.profiles.find(
+      (candidate) => candidate.membershipId === membership.id,
+    );
+    const hasLegacyMentorProfileSignal = Boolean(
+      profile &&
+        (profile.currentStatus.trim().toLowerCase() === "mentor" ||
+          profile.offeringMatchTypes.includes("mentor_match") ||
+          profile.mentorExpertiseTags.length > 0 ||
+          profile.mentorStageExperience.length > 0 ||
+          profile.mentorFunctionalStrengths.length > 0 ||
+          profile.mentorOffers.length > 0 ||
+          !["", "none"].includes(profile.mentorAvailability.trim().toLowerCase()) ||
+          typeof profile.maxMentees === "number" ||
+          profile.mentorshipPreferences.trim().length > 0),
+    );
+    membership.mentorStatus ??=
+      membership.affiliationType === "mentor" ||
+      membership.archetypes.includes("mentor") ||
+      hasLegacyMentorProfileSignal
+        ? "needs_review"
+        : "not_mentor";
+  }
+  const membershipById = new Map(
+    store.memberships.map((membership) => [membership.id, membership]),
+  );
+  const matchById = new Map(store.matches.map((match) => [match.id, match]));
+  for (const request of store.introRequests) {
+    const receiver = membershipById.get(request.receiverMembershipId);
+    const sourceMatch =
+      request.sourceType === "match" ? matchById.get(request.sourceId) : undefined;
+    const receiverHasMentorSignal = Boolean(
+      receiver &&
+        receiver.orgId === request.orgId &&
+        (receiver.mentorStatus === "needs_review" || receiver.mentorStatus === "approved"),
+    );
+    const hasExplicitLegacyMentoringSignal =
+      request.introPurpose.trim().toLowerCase() === "mentor guidance" ||
+      Boolean(
+        sourceMatch &&
+          sourceMatch.orgId === request.orgId &&
+          sourceMatch.matchType === "mentor_match",
+      );
+    request.kind ??=
+      receiverHasMentorSignal && hasExplicitLegacyMentoringSignal
+        ? "mentoring"
+        : "general";
+  }
   if (!store.spaces || !store.spaceMemberships || !store.spaceIntents) {
     const organization = store.organizations[0] ?? seedOrganization;
     const fallback = defaultSpaceState(
@@ -739,6 +895,9 @@ function membershipFromRow(row: typeof dbSchema.memberships.$inferSelect): Membe
     orgId: row.orgId,
     userId: row.userId,
     role: row.role,
+    mentorStatus: row.mentorStatus,
+    mentorReviewedAt: maybeIso(row.mentorReviewedAt),
+    mentorReviewedByMembershipId: row.mentorReviewedByMembershipId ?? undefined,
     accountStatus: row.accountStatus,
     affiliationType: row.affiliationType as Membership["affiliationType"],
     status: row.status,
@@ -750,6 +909,53 @@ function membershipFromRow(row: typeof dbSchema.memberships.$inferSelect): Membe
     approvedAt: maybeIso(row.approvedAt),
     createdAt: requiredIso(row.createdAt),
     updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function membershipInvitationFromRow(
+  row: typeof dbSchema.membershipInvitations.$inferSelect,
+): MembershipInvitation {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    membershipId: row.membershipId,
+    email: row.email,
+    tokenHash: row.tokenHash,
+    status: row.status,
+    expiresAt: requiredIso(row.expiresAt),
+    createdByMembershipId: row.createdByMembershipId,
+    clerkIdentityInvitationId: row.clerkIdentityInvitationId ?? undefined,
+    acceptedByClerkUserId: row.acceptedByClerkUserId ?? undefined,
+    sentAt: maybeIso(row.sentAt),
+    acceptedAt: maybeIso(row.acceptedAt),
+    revokedAt: maybeIso(row.revokedAt),
+    deliveryError: row.deliveryError ?? undefined,
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function membershipInvitationSummary(
+  invitation: MembershipInvitation | MembershipInvitationSummary,
+): MembershipInvitationSummary {
+  const status =
+    invitation.status === "pending" && new Date(invitation.expiresAt) <= new Date()
+      ? "expired"
+      : invitation.status;
+  return {
+    id: invitation.id,
+    orgId: invitation.orgId,
+    membershipId: invitation.membershipId,
+    email: invitation.email,
+    status,
+    expiresAt: invitation.expiresAt,
+    createdByMembershipId: invitation.createdByMembershipId,
+    sentAt: invitation.sentAt,
+    acceptedAt: invitation.acceptedAt,
+    revokedAt: invitation.revokedAt,
+    deliveryError: invitation.deliveryError,
+    createdAt: invitation.createdAt,
+    updatedAt: invitation.updatedAt,
   };
 }
 
@@ -971,6 +1177,89 @@ function postFromRow(row: typeof dbSchema.posts.$inferSelect): Post {
   };
 }
 
+function postImageFromRow(row: typeof dbSchema.postImages.$inferSelect): PostImage {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    uploaderMembershipId: row.uploaderMembershipId,
+    postId: row.postId ?? undefined,
+    blobPathname: row.blobPathname,
+    contentType: row.contentType,
+    sizeBytes: row.sizeBytes,
+    width: row.width ?? undefined,
+    height: row.height ?? undefined,
+    alt: row.alt ?? undefined,
+    position: row.position,
+    uploadStatus: row.uploadStatus,
+    uploadError: row.uploadError ?? undefined,
+    moderationStatus: row.moderationStatus,
+    moderatedByMembershipId: row.moderatedByMembershipId ?? undefined,
+    moderatedAt: maybeIso(row.moderatedAt),
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function postLinkPreviewFromRow(
+  row: typeof dbSchema.postLinkPreviews.$inferSelect,
+): PostLinkPreview {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    uploaderMembershipId: row.uploaderMembershipId,
+    postId: row.postId ?? undefined,
+    originalUrl: row.originalUrl,
+    title: row.title ?? undefined,
+    description: row.description ?? undefined,
+    siteName: row.siteName ?? undefined,
+    thumbnailBlobPathname: row.thumbnailBlobPathname ?? undefined,
+    thumbnailContentType: row.thumbnailContentType ?? undefined,
+    thumbnailSizeBytes: row.thumbnailSizeBytes ?? undefined,
+    thumbnailWidth: row.thumbnailWidth ?? undefined,
+    thumbnailHeight: row.thumbnailHeight ?? undefined,
+    fetchStatus: row.fetchStatus,
+    fetchError: row.fetchError ?? undefined,
+    moderationStatus: row.moderationStatus,
+    moderatedByMembershipId: row.moderatedByMembershipId ?? undefined,
+    moderatedAt: maybeIso(row.moderatedAt),
+    createdAt: requiredIso(row.createdAt),
+    updatedAt: requiredIso(row.updatedAt),
+  };
+}
+
+function postMentionFromRow(row: typeof dbSchema.postMentions.$inferSelect): PostMention {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    postId: row.postId,
+    mentionedMembershipId: row.mentionedMembershipId,
+    label: row.label,
+    start: row.start,
+    end: row.end,
+    createdAt: requiredIso(row.createdAt),
+  };
+}
+
+function commentMentionFromRow(
+  row: typeof dbSchema.commentMentions.$inferSelect,
+): CommentMention {
+  return {
+    id: row.id,
+    orgId: row.orgId,
+    spaceId: row.spaceId,
+    postId: row.postId,
+    commentId: row.commentId,
+    mentionedMembershipId: row.mentionedMembershipId,
+    label: row.label,
+    start: row.start,
+    end: row.end,
+    createdAt: requiredIso(row.createdAt),
+  };
+}
+
 function followFromRow(row: typeof dbSchema.follows.$inferSelect): Follow {
   return {
     id: row.id,
@@ -1087,6 +1376,7 @@ function introRequestFromRow(row: typeof dbSchema.introRequests.$inferSelect): I
     spaceId: row.spaceId ?? undefined,
     requesterMembershipId: row.requesterMembershipId,
     receiverMembershipId: row.receiverMembershipId,
+    kind: row.kind,
     sourceType: row.sourceType,
     sourceId: row.sourceId,
     introPurpose: row.introPurpose,
@@ -1110,6 +1400,8 @@ function notificationFromRow(row: typeof dbSchema.notifications.$inferSelect): N
     title: row.title,
     body: row.body,
     link: row.link,
+    sourcePostId: row.sourcePostId ?? undefined,
+    sourceCommentId: row.sourceCommentId ?? undefined,
     readAt: maybeIso(row.readAt),
     createdAt: requiredIso(row.createdAt),
   };
@@ -1128,9 +1420,24 @@ function membershipInsert(membership: Membership): typeof dbSchema.memberships.$
   return {
     ...membership,
     clerkInvitationUpdatedAt: maybeDate(membership.clerkInvitationUpdatedAt),
+    mentorReviewedAt: maybeDate(membership.mentorReviewedAt),
     createdAt: new Date(membership.createdAt),
     updatedAt: new Date(membership.updatedAt),
     approvedAt: maybeDate(membership.approvedAt),
+  };
+}
+
+function membershipInvitationInsert(
+  invitation: MembershipInvitation,
+): typeof dbSchema.membershipInvitations.$inferInsert {
+  return {
+    ...invitation,
+    expiresAt: new Date(invitation.expiresAt),
+    sentAt: maybeDate(invitation.sentAt),
+    acceptedAt: maybeDate(invitation.acceptedAt),
+    revokedAt: maybeDate(invitation.revokedAt),
+    createdAt: new Date(invitation.createdAt),
+    updatedAt: new Date(invitation.updatedAt),
   };
 }
 
@@ -1228,6 +1535,55 @@ function postInsert(post: Post): typeof dbSchema.posts.$inferInsert {
   };
 }
 
+function postImageInsert(image: PostImage): typeof dbSchema.postImages.$inferInsert {
+  return {
+    ...image,
+    postId: image.postId,
+    width: image.width,
+    height: image.height,
+    alt: image.alt,
+    uploadError: image.uploadError,
+    moderatedByMembershipId: image.moderatedByMembershipId,
+    moderatedAt: maybeDate(image.moderatedAt),
+    createdAt: new Date(image.createdAt),
+    updatedAt: new Date(image.updatedAt),
+  };
+}
+
+function postLinkPreviewInsert(
+  preview: PostLinkPreview,
+): typeof dbSchema.postLinkPreviews.$inferInsert {
+  return {
+    ...preview,
+    postId: preview.postId,
+    title: preview.title,
+    description: preview.description,
+    siteName: preview.siteName,
+    thumbnailBlobPathname: preview.thumbnailBlobPathname,
+    thumbnailContentType: preview.thumbnailContentType,
+    thumbnailSizeBytes: preview.thumbnailSizeBytes,
+    thumbnailWidth: preview.thumbnailWidth,
+    thumbnailHeight: preview.thumbnailHeight,
+    fetchError: preview.fetchError,
+    moderatedByMembershipId: preview.moderatedByMembershipId,
+    moderatedAt: maybeDate(preview.moderatedAt),
+    createdAt: new Date(preview.createdAt),
+    updatedAt: new Date(preview.updatedAt),
+  };
+}
+
+function postMentionInsert(
+  mention: PostMention,
+): typeof dbSchema.postMentions.$inferInsert {
+  return { ...mention, createdAt: new Date(mention.createdAt) };
+}
+
+function commentMentionInsert(
+  mention: CommentMention,
+): typeof dbSchema.commentMentions.$inferInsert {
+  return { ...mention, createdAt: new Date(mention.createdAt) };
+}
+
 function postSaveInsert(save: PostSave): typeof dbSchema.postSaves.$inferInsert {
   return {
     ...save,
@@ -1237,7 +1593,11 @@ function postSaveInsert(save: PostSave): typeof dbSchema.postSaves.$inferInsert 
 
 function commentInsert(comment: Comment): typeof dbSchema.comments.$inferInsert {
   return {
-    ...comment,
+    id: comment.id,
+    postId: comment.postId,
+    authorMembershipId: comment.authorMembershipId,
+    body: comment.body,
+    status: comment.status,
     createdAt: new Date(comment.createdAt),
     updatedAt: new Date(comment.updatedAt),
   };
@@ -1302,6 +1662,8 @@ function introRequestInsert(intro: IntroRequest): typeof dbSchema.introRequests.
 function notificationInsert(notification: Notification): typeof dbSchema.notifications.$inferInsert {
   return {
     ...notification,
+    sourcePostId: notification.sourcePostId,
+    sourceCommentId: notification.sourceCommentId,
     createdAt: new Date(notification.createdAt),
     readAt: maybeDate(notification.readAt),
   };
@@ -1806,17 +2168,26 @@ export async function upsertSessionUser(
   const email = normalizeEmailAddress(input.email);
   const knownUser =
     options.existingUser &&
-    (options.existingUser.email.toLowerCase() === email ||
-      (input.clerkUserId && options.existingUser.clerkUserId === input.clerkUserId))
+    (input.clerkUserId
+      ? options.existingUser.clerkUserId === input.clerkUserId
+      : options.existingUser.email.toLowerCase() === email)
       ? options.existingUser
       : undefined;
   const existing =
     knownUser ??
-    (input.clerkUserId ? await getUserByClerkUserId(input.clerkUserId) : undefined) ??
-    (await getUserByEmail(email));
-  const platformRole = isBootstrapAdminEmail(email)
-    ? "platform_owner"
-    : existing?.platformRole ?? "standard";
+    (input.clerkUserId
+      ? await getUserByClerkUserId(input.clerkUserId)
+      : await getUserByEmail(email));
+
+  if (input.clerkUserId && !existing && (await getUserByEmail(email))) {
+    throw new Error(
+      "This email belongs to an unlinked local account; use invitation acceptance to bind it.",
+    );
+  }
+
+  const platformRole =
+    existing?.platformRole ??
+    (isBootstrapAdminEmail(email) ? "platform_owner" : "standard");
 
   if (existing) {
     const nextClerkUserId = input.clerkUserId ?? existing.clerkUserId;
@@ -1918,11 +2289,7 @@ export async function ensureMembership(
       : getMembershipByUserAndOrg(userId, orgId),
   ]);
   const clerkRole = options.clerkRole;
-  const roleFromClerk = clerkRole ? localRoleFromClerkRole(clerkRole) : undefined;
-  const adminBootstrap =
-    roleFromClerk === "org_admin" ||
-    isBootstrapAdminEmail(user?.email) ||
-    user?.platformRole === "platform_owner";
+  const adminBootstrap = user?.platformRole === "platform_owner";
   if (existing) {
     if (
       adminBootstrap &&
@@ -1970,16 +2337,13 @@ export async function ensureMembership(
     if (
       (options.clerkMembershipId && existing.clerkMembershipId !== options.clerkMembershipId) ||
       (options.clerkMembershipId && existing.accountStatus !== "connected") ||
-      (clerkRole && existing.clerkRole !== clerkRole) ||
-      (roleFromClerk && existing.role !== roleFromClerk)
+      (clerkRole && existing.clerkRole !== clerkRole)
     ) {
-      const nextRole = roleFromClerk ?? existing.role;
       const now = new Date().toISOString();
 
       if (!usesDatabase) {
         existing.clerkMembershipId = options.clerkMembershipId ?? existing.clerkMembershipId;
         existing.clerkRole = (clerkRole as ClerkOrgRole | undefined) ?? existing.clerkRole;
-        existing.role = nextRole;
         if (options.clerkMembershipId) existing.accountStatus = "connected";
         existing.updatedAt = now;
         return existing;
@@ -1990,7 +2354,6 @@ export async function ensureMembership(
         .set({
           clerkMembershipId: options.clerkMembershipId ?? existing.clerkMembershipId,
           clerkRole: clerkRole ?? existing.clerkRole,
-          role: nextRole,
           ...(options.clerkMembershipId ? { accountStatus: "connected" as const } : {}),
           updatedAt: new Date(now),
         })
@@ -2008,11 +2371,12 @@ export async function ensureMembership(
     clerkRole: clerkRole as ClerkOrgRole | undefined,
     orgId,
     userId,
-    role: roleFromClerk ?? (adminBootstrap ? "org_admin" : "member"),
+    role: adminBootstrap ? "org_admin" : "member",
+    mentorStatus: "not_mentor",
     accountStatus: options.clerkMembershipId || adminBootstrap ? "connected" : "invited",
     affiliationType: adminBootstrap ? "current participant" : "invited outsider",
     status: adminBootstrap ? "approved" : "pending",
-    archetypes: adminBootstrap ? ["mentor"] : ["invited_outsider"],
+    archetypes: adminBootstrap ? ["operator"] : ["invited_outsider"],
     programName: adminBootstrap ? "Wavesparks Admin" : "Guest Network",
     cohortNameOrYear: adminBootstrap ? "Core" : "Rolling",
     approvedAt: adminBootstrap ? now : undefined,
@@ -2042,6 +2406,8 @@ export async function createManagedAccount(input: {
   password?: string;
   createPasswordCredential?: boolean;
   role: MembershipRole;
+  mentorStatus?: MentorStatus;
+  mentorReviewedByMembershipId?: string;
   status: MembershipStatus;
   affiliationType?: AffiliationType;
   archetypes?: string[];
@@ -2063,6 +2429,13 @@ export async function createManagedAccount(input: {
     throw new Error("Password must be at least 8 characters.");
   }
 
+  if (input.mentorReviewedByMembershipId) {
+    await requireMentorReviewerForOrg(
+      input.orgId,
+      input.mentorReviewedByMembershipId,
+    );
+  }
+
   const clerkRole = input.clerkRole;
   const user = await upsertSessionUser({ clerkUserId: input.clerkUserId, email, name });
   if (createPasswordCredential) {
@@ -2072,6 +2445,20 @@ export async function createManagedAccount(input: {
   const existing = await getMembershipByUserAndOrg(user.id, input.orgId);
   const now = new Date().toISOString();
   const role = input.role;
+  const mentorStatus = input.mentorStatus ?? existing?.mentorStatus ?? "not_mentor";
+  const mentorReviewedByMembershipId =
+    mentorStatus === "needs_review"
+      ? undefined
+      : input.mentorReviewedByMembershipId ?? existing?.mentorReviewedByMembershipId;
+  let mentorReviewedAt = existing?.mentorReviewedAt;
+  if (mentorStatus === "needs_review") {
+    mentorReviewedAt = undefined;
+  } else if (
+    input.mentorReviewedByMembershipId ||
+    (mentorStatus === "approved" && !mentorReviewedAt)
+  ) {
+    mentorReviewedAt = now;
+  }
   const status = input.status;
   const affiliationType =
     input.affiliationType ?? (role === "org_admin" ? "current participant" : "invited outsider");
@@ -2095,6 +2482,9 @@ export async function createManagedAccount(input: {
     orgId: input.orgId,
     userId: user.id,
     role,
+    mentorStatus,
+    mentorReviewedAt,
+    mentorReviewedByMembershipId,
     accountStatus,
     affiliationType,
     status,
@@ -2133,6 +2523,9 @@ export async function createManagedAccount(input: {
         clerkInvitationError: managedMembership.clerkInvitationError,
         clerkInvitationUpdatedAt: maybeDate(managedMembership.clerkInvitationUpdatedAt),
         role: managedMembership.role,
+        mentorStatus: managedMembership.mentorStatus,
+        mentorReviewedAt: maybeDate(managedMembership.mentorReviewedAt),
+        mentorReviewedByMembershipId: managedMembership.mentorReviewedByMembershipId,
         accountStatus: managedMembership.accountStatus,
         affiliationType: managedMembership.affiliationType,
         status: managedMembership.status,
@@ -2170,6 +2563,24 @@ export async function getMembershipByUserAndOrg(userId: string, orgId: string) {
   return row ? membershipFromRow(row) : undefined;
 }
 
+export async function requireMentorReviewerForOrg(
+  orgId: string,
+  reviewerMembershipId: string,
+) {
+  const reviewer = await getMembershipById(reviewerMembershipId);
+  const reviewerUser = reviewer ? await getUserById(reviewer.userId) : undefined;
+  if (
+    !reviewer ||
+    !reviewerUser ||
+    reviewer.orgId !== orgId ||
+    (reviewer.role !== "org_admin" && reviewerUser.platformRole !== "platform_owner") ||
+    reviewer.accountStatus !== "connected"
+  ) {
+    throw new Error("An active organization administrator must review mentor designations.");
+  }
+  return reviewer;
+}
+
 export async function getMembershipByClerkMembershipId(clerkMembershipId: string) {
   if (!usesDatabase) {
     return getStore().memberships.find(
@@ -2198,6 +2609,514 @@ export async function getMembershipByClerkInvitationId(clerkInvitationId: string
     .where(eq(dbSchema.memberships.clerkInvitationId, clerkInvitationId))
     .limit(1);
   return row ? membershipFromRow(row) : undefined;
+}
+
+export interface CreateMembershipInvitationInput {
+  id?: string;
+  orgId: string;
+  membershipId: string;
+  email: string;
+  tokenHash: string;
+  expiresAt: string;
+  createdByMembershipId: string;
+  createdAt?: string;
+}
+
+export type AcceptMembershipInvitationFailureReason =
+  | "not_found"
+  | "not_pending"
+  | "expired"
+  | "email_mismatch"
+  | "identity_conflict"
+  | "membership_unavailable";
+
+export type AcceptMembershipInvitationResult =
+  | {
+      ok: true;
+      invitation: MembershipInvitation;
+      membership: Membership;
+      user: User;
+    }
+  | { ok: false; reason: AcceptMembershipInvitationFailureReason };
+
+function invitationInputValues(input: CreateMembershipInvitationInput) {
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  const email = normalizeEmailAddress(input.email);
+  const expiresAt = new Date(input.expiresAt);
+
+  if (!email.includes("@")) {
+    throw new Error("A valid invitation email is required.");
+  }
+  if (!/^[a-f\d]{64}$/i.test(input.tokenHash)) {
+    throw new Error("Invitation tokenHash must be a SHA-256 hex digest.");
+  }
+  if (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date(createdAt)) {
+    throw new Error("Invitation expiry must be later than its creation time.");
+  }
+
+  const invitation: MembershipInvitation = {
+    id: input.id ?? `minv_${nanoid(16)}`,
+    orgId: input.orgId,
+    membershipId: input.membershipId,
+    email,
+    tokenHash: input.tokenHash.toLowerCase(),
+    status: "pending",
+    expiresAt: expiresAt.toISOString(),
+    createdByMembershipId: input.createdByMembershipId,
+    createdAt: new Date(createdAt).toISOString(),
+    updatedAt: new Date(createdAt).toISOString(),
+  };
+  return invitation;
+}
+
+async function assertMembershipInvitationScope(invitation: MembershipInvitation) {
+  const [membership, creator] = await Promise.all([
+    getMembershipById(invitation.membershipId),
+    getMembershipById(invitation.createdByMembershipId),
+  ]);
+  if (!membership || membership.orgId !== invitation.orgId) {
+    throw new Error("Invitation membership does not belong to the organization.");
+  }
+  if (!creator || creator.orgId !== invitation.orgId) {
+    throw new Error("Invitation creator does not belong to the organization.");
+  }
+  if (creator.role !== "org_admin" || creator.accountStatus !== "connected") {
+    throw new Error("Only a connected organization admin can create invitations.");
+  }
+  if (
+    membership.accountStatus === "suspended" ||
+    membership.accountStatus === "deprovisioned"
+  ) {
+    throw new Error("Inactive memberships cannot be invited.");
+  }
+  const user = await getUserById(membership.userId);
+  if (!user || normalizeEmailAddress(user.email) !== invitation.email) {
+    throw new Error("Invitation email does not match the membership user.");
+  }
+}
+
+export async function createMembershipInvitation(
+  input: CreateMembershipInvitationInput,
+): Promise<MembershipInvitation> {
+  const invitation = invitationInputValues(input);
+  await assertMembershipInvitationScope(invitation);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    if (store.membershipInvitations.some((candidate) => candidate.id === invitation.id)) {
+      throw new Error("Invitation id already exists.");
+    }
+    if (
+      store.membershipInvitations.some(
+        (candidate) => candidate.tokenHash === invitation.tokenHash,
+      )
+    ) {
+      throw new Error("Invitation token hash already exists.");
+    }
+    if (
+      store.membershipInvitations.some(
+        (candidate) =>
+          candidate.membershipId === invitation.membershipId &&
+          candidate.status === "pending",
+      )
+    ) {
+      throw new Error("Membership already has a pending invitation.");
+    }
+    store.membershipInvitations.unshift(invitation);
+    return invitation;
+  }
+
+  const [row] = await getDb()
+    .insert(dbSchema.membershipInvitations)
+    .values(membershipInvitationInsert(invitation))
+    .returning();
+  return membershipInvitationFromRow(row);
+}
+
+export async function rotateMembershipInvitation(
+  input: CreateMembershipInvitationInput,
+): Promise<MembershipInvitation> {
+  const invitation = invitationInputValues(input);
+  await assertMembershipInvitationScope(invitation);
+  const revokedAt = invitation.createdAt;
+
+  if (!usesDatabase) {
+    const store = getStore();
+    if (
+      store.membershipInvitations.some(
+        (candidate) => candidate.tokenHash === invitation.tokenHash,
+      )
+    ) {
+      throw new Error("Invitation token hash already exists.");
+    }
+    for (const candidate of store.membershipInvitations) {
+      if (
+        candidate.orgId === invitation.orgId &&
+        candidate.membershipId === invitation.membershipId &&
+        candidate.status === "pending"
+      ) {
+        candidate.status = "revoked";
+        candidate.revokedAt = revokedAt;
+        candidate.updatedAt = revokedAt;
+      }
+    }
+    store.membershipInvitations.unshift(invitation);
+    return invitation;
+  }
+
+  const db = getDb();
+  const [, insertedRows] = await db.batch([
+    db
+      .update(dbSchema.membershipInvitations)
+      .set({ status: "revoked", revokedAt: new Date(revokedAt), updatedAt: new Date(revokedAt) })
+      .where(
+        and(
+          eq(dbSchema.membershipInvitations.orgId, invitation.orgId),
+          eq(dbSchema.membershipInvitations.membershipId, invitation.membershipId),
+          eq(dbSchema.membershipInvitations.status, "pending"),
+        ),
+      )
+      .returning(),
+    db
+      .insert(dbSchema.membershipInvitations)
+      .values(membershipInvitationInsert(invitation))
+      .returning(),
+  ]);
+  const row = insertedRows[0];
+  if (!row) throw new Error("Failed to rotate membership invitation.");
+  return membershipInvitationFromRow(row);
+}
+
+export async function getMembershipInvitationById(id: string) {
+  if (!usesDatabase) {
+    return getStore().membershipInvitations.find((invitation) => invitation.id === id);
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.membershipInvitations)
+    .where(eq(dbSchema.membershipInvitations.id, id))
+    .limit(1);
+  return row ? membershipInvitationFromRow(row) : undefined;
+}
+
+export async function getMembershipInvitationByTokenHash(tokenHash: string) {
+  const normalizedHash = tokenHash.toLowerCase();
+  if (!usesDatabase) {
+    return getStore().membershipInvitations.find(
+      (invitation) => invitation.tokenHash === normalizedHash,
+    );
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.membershipInvitations)
+    .where(eq(dbSchema.membershipInvitations.tokenHash, normalizedHash))
+    .limit(1);
+  return row ? membershipInvitationFromRow(row) : undefined;
+}
+
+export async function listMembershipInvitationsForMembership(
+  membershipId: string,
+  options: { orgId?: string } = {},
+) {
+  if (!usesDatabase) {
+    return getStore()
+      .membershipInvitations.filter(
+        (invitation) =>
+          invitation.membershipId === membershipId &&
+          (!options.orgId || invitation.orgId === options.orgId),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+  const conditions = [eq(dbSchema.membershipInvitations.membershipId, membershipId)];
+  if (options.orgId) {
+    conditions.push(eq(dbSchema.membershipInvitations.orgId, options.orgId));
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.membershipInvitations)
+    .where(and(...conditions))
+    .orderBy(desc(dbSchema.membershipInvitations.createdAt));
+  return rows.map(membershipInvitationFromRow);
+}
+
+export async function updateMembershipInvitationDelivery(
+  id: string,
+  input: {
+    sentAt?: string | null;
+    deliveryError?: string | null;
+    clerkIdentityInvitationId?: string | null;
+  },
+) {
+  const now = new Date().toISOString();
+  if (!usesDatabase) {
+    const invitation = getStore().membershipInvitations.find(
+      (candidate) => candidate.id === id && candidate.status === "pending",
+    );
+    if (!invitation) return null;
+    if ("sentAt" in input) invitation.sentAt = input.sentAt ?? undefined;
+    if ("deliveryError" in input) {
+      invitation.deliveryError = input.deliveryError?.trim() || undefined;
+    }
+    if ("clerkIdentityInvitationId" in input) {
+      invitation.clerkIdentityInvitationId =
+        input.clerkIdentityInvitationId?.trim() || undefined;
+    }
+    invitation.updatedAt = now;
+    return invitation;
+  }
+  const values: Partial<typeof dbSchema.membershipInvitations.$inferInsert> = {
+    updatedAt: new Date(now),
+  };
+  if ("sentAt" in input) values.sentAt = input.sentAt ? new Date(input.sentAt) : null;
+  if ("deliveryError" in input) values.deliveryError = input.deliveryError?.trim() || null;
+  if ("clerkIdentityInvitationId" in input) {
+    values.clerkIdentityInvitationId =
+      input.clerkIdentityInvitationId?.trim() || null;
+  }
+  const [row] = await getDb()
+    .update(dbSchema.membershipInvitations)
+    .set(values)
+    .where(
+      and(
+        eq(dbSchema.membershipInvitations.id, id),
+        eq(dbSchema.membershipInvitations.status, "pending"),
+      ),
+    )
+    .returning();
+  return row ? membershipInvitationFromRow(row) : null;
+}
+
+export async function revokeMembershipInvitation(
+  id: string,
+  options: { orgId?: string; revokedAt?: string } = {},
+) {
+  const revokedAt = options.revokedAt ?? new Date().toISOString();
+  if (!usesDatabase) {
+    const invitation = getStore().membershipInvitations.find(
+      (candidate) => candidate.id === id && (!options.orgId || candidate.orgId === options.orgId),
+    );
+    if (!invitation) return null;
+    if (invitation.status === "pending") {
+      invitation.status = "revoked";
+      invitation.revokedAt = revokedAt;
+      invitation.updatedAt = revokedAt;
+    }
+    return invitation;
+  }
+  const conditions = [
+    eq(dbSchema.membershipInvitations.id, id),
+    eq(dbSchema.membershipInvitations.status, "pending"),
+  ];
+  if (options.orgId) conditions.push(eq(dbSchema.membershipInvitations.orgId, options.orgId));
+  const [row] = await getDb()
+    .update(dbSchema.membershipInvitations)
+    .set({ status: "revoked", revokedAt: new Date(revokedAt), updatedAt: new Date(revokedAt) })
+    .where(and(...conditions))
+    .returning();
+  if (row) return membershipInvitationFromRow(row);
+  const existing = await getMembershipInvitationById(id);
+  return existing && (!options.orgId || existing.orgId === options.orgId)
+    ? existing
+    : null;
+}
+
+export async function expireMembershipInvitation(
+  id: string,
+  options: { orgId?: string; expiredAt?: string } = {},
+) {
+  const expiredAt = options.expiredAt ?? new Date().toISOString();
+  if (!usesDatabase) {
+    const invitation = getStore().membershipInvitations.find(
+      (candidate) => candidate.id === id && (!options.orgId || candidate.orgId === options.orgId),
+    );
+    if (!invitation) return null;
+    if (invitation.status === "pending" && invitation.expiresAt <= expiredAt) {
+      invitation.status = "expired";
+      invitation.updatedAt = expiredAt;
+    }
+    return invitation;
+  }
+  const conditions = [
+    eq(dbSchema.membershipInvitations.id, id),
+    eq(dbSchema.membershipInvitations.status, "pending"),
+    sql`${dbSchema.membershipInvitations.expiresAt} <= ${new Date(expiredAt)}`,
+  ];
+  if (options.orgId) conditions.push(eq(dbSchema.membershipInvitations.orgId, options.orgId));
+  const [row] = await getDb()
+    .update(dbSchema.membershipInvitations)
+    .set({ status: "expired", updatedAt: new Date(expiredAt) })
+    .where(and(...conditions))
+    .returning();
+  if (row) return membershipInvitationFromRow(row);
+  const existing = await getMembershipInvitationById(id);
+  return existing && (!options.orgId || existing.orgId === options.orgId)
+    ? existing
+    : null;
+}
+
+function databaseErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+export async function acceptMembershipInvitation(input: {
+  tokenHash: string;
+  clerkUserId: string;
+  verifiedEmail: string;
+  orgId?: string;
+  now?: string;
+}): Promise<AcceptMembershipInvitationResult> {
+  const now = new Date(input.now ?? Date.now()).toISOString();
+  const tokenHash = input.tokenHash.toLowerCase();
+  const verifiedEmail = normalizeEmailAddress(input.verifiedEmail);
+  const invitation = await getMembershipInvitationByTokenHash(tokenHash);
+  if (!invitation || (input.orgId && invitation.orgId !== input.orgId)) {
+    return { ok: false, reason: "not_found" };
+  }
+  if (invitation.status !== "pending") {
+    return { ok: false, reason: "not_pending" };
+  }
+  if (invitation.expiresAt <= now) {
+    await expireMembershipInvitation(invitation.id, { orgId: invitation.orgId, expiredAt: now });
+    return { ok: false, reason: "expired" };
+  }
+  if (invitation.email !== verifiedEmail) {
+    return { ok: false, reason: "email_mismatch" };
+  }
+
+  const membership = await getMembershipById(invitation.membershipId);
+  const user = membership ? await getUserById(membership.userId) : undefined;
+  if (
+    !membership ||
+    membership.orgId !== invitation.orgId ||
+    membership.accountStatus === "suspended" ||
+    membership.accountStatus === "deprovisioned" ||
+    !user
+  ) {
+    return { ok: false, reason: "membership_unavailable" };
+  }
+  if (normalizeEmailAddress(user.email) !== verifiedEmail) {
+    return { ok: false, reason: "email_mismatch" };
+  }
+  const clerkUser = await getUserByClerkUserId(input.clerkUserId);
+  if (
+    (user.clerkUserId && user.clerkUserId !== input.clerkUserId) ||
+    (clerkUser && clerkUser.id !== user.id)
+  ) {
+    return { ok: false, reason: "identity_conflict" };
+  }
+
+  if (!usesDatabase) {
+    if (invitation.status !== "pending" || invitation.expiresAt <= now) {
+      return { ok: false, reason: invitation.expiresAt <= now ? "expired" : "not_pending" };
+    }
+    user.clerkUserId = input.clerkUserId;
+    user.updatedAt = now;
+    membership.accountStatus = "connected";
+    membership.updatedAt = now;
+    invitation.status = "accepted";
+    invitation.acceptedByClerkUserId = input.clerkUserId;
+    invitation.acceptedAt = now;
+    invitation.updatedAt = now;
+    return { ok: true, invitation, membership, user };
+  }
+
+  const orgScope = input.orgId
+    ? sql`AND invitation.org_id = ${input.orgId}`
+    : sql``;
+  try {
+    const result = await getDb().execute<{
+      invitationId: string;
+      membershipId: string;
+      userId: string;
+    }>(sql`
+      WITH candidate AS (
+        SELECT
+          invitation.id AS invitation_id,
+          invitation.membership_id,
+          membership.user_id
+        FROM membership_invitations invitation
+        INNER JOIN memberships membership
+          ON membership.id = invitation.membership_id
+          AND membership.org_id = invitation.org_id
+        INNER JOIN users app_user ON app_user.id = membership.user_id
+        WHERE invitation.token_hash = ${tokenHash}
+          AND invitation.status = 'pending'
+          AND invitation.expires_at > ${new Date(now)}
+          AND invitation.email = ${verifiedEmail}
+          AND lower(app_user.email) = ${verifiedEmail}
+          AND membership.account_status NOT IN ('suspended', 'deprovisioned')
+          AND (app_user.clerk_user_id IS NULL OR app_user.clerk_user_id = ${input.clerkUserId})
+          AND NOT EXISTS (
+            SELECT 1 FROM users conflicting_user
+            WHERE conflicting_user.clerk_user_id = ${input.clerkUserId}
+              AND conflicting_user.id <> app_user.id
+          )
+          ${orgScope}
+        FOR UPDATE OF invitation, membership, app_user
+      ), accepted_invitation AS (
+        UPDATE membership_invitations invitation
+        SET
+          status = 'accepted',
+          accepted_by_clerk_user_id = ${input.clerkUserId},
+          accepted_at = ${new Date(now)},
+          updated_at = ${new Date(now)}
+        FROM candidate
+        WHERE invitation.id = candidate.invitation_id
+          AND invitation.status = 'pending'
+        RETURNING invitation.id, invitation.membership_id
+      ), linked_user AS (
+        UPDATE users app_user
+        SET clerk_user_id = ${input.clerkUserId}, updated_at = ${new Date(now)}
+        FROM candidate
+        INNER JOIN accepted_invitation
+          ON accepted_invitation.id = candidate.invitation_id
+        WHERE app_user.id = candidate.user_id
+          AND (app_user.clerk_user_id IS NULL OR app_user.clerk_user_id = ${input.clerkUserId})
+        RETURNING app_user.id
+      ), connected_membership AS (
+        UPDATE memberships membership
+        SET account_status = 'connected', updated_at = ${new Date(now)}
+        FROM candidate
+        INNER JOIN accepted_invitation
+          ON accepted_invitation.id = candidate.invitation_id
+        INNER JOIN linked_user ON linked_user.id = candidate.user_id
+        WHERE membership.id = candidate.membership_id
+          AND membership.org_id = ${invitation.orgId}
+          AND membership.account_status NOT IN ('suspended', 'deprovisioned')
+        RETURNING membership.id
+      )
+      SELECT
+        accepted_invitation.id AS "invitationId",
+        connected_membership.id AS "membershipId",
+        linked_user.id AS "userId"
+      FROM accepted_invitation
+      INNER JOIN connected_membership
+        ON connected_membership.id = accepted_invitation.membership_id
+      CROSS JOIN linked_user
+    `);
+    const accepted = result.rows[0];
+    if (!accepted) return { ok: false, reason: "not_pending" };
+    const [acceptedInvitation, acceptedMembership, acceptedUser] = await Promise.all([
+      getMembershipInvitationById(accepted.invitationId),
+      getMembershipById(accepted.membershipId),
+      getUserById(accepted.userId),
+    ]);
+    if (!acceptedInvitation || !acceptedMembership || !acceptedUser) {
+      return { ok: false, reason: "membership_unavailable" };
+    }
+    return {
+      ok: true,
+      invitation: acceptedInvitation,
+      membership: acceptedMembership,
+      user: acceptedUser,
+    };
+  } catch (error) {
+    if (databaseErrorCode(error) === "23505") {
+      return { ok: false, reason: "identity_conflict" };
+    }
+    throw error;
+  }
 }
 
 function anonymizedProfile(profile: Profile): Profile {
@@ -2342,12 +3261,18 @@ export async function anonymizeUserByClerkUserId(clerkUserId: string) {
         cohortNameOrYear: "",
         programName: "Former member",
         role: "member",
+        mentorStatus: "not_mentor",
+        mentorReviewedAt: undefined,
+        mentorReviewedByMembershipId: undefined,
         accountStatus: "deprovisioned",
         status: "suspended",
         updatedAt: now,
       } satisfies Partial<Membership>);
     }
     const membershipIdSet = new Set(membershipIds);
+    store.membershipInvitations = store.membershipInvitations.filter(
+      (invitation) => !membershipIdSet.has(invitation.membershipId),
+    );
     const profileIdSet = new Set(profileIds);
     store.passwordCredentials = store.passwordCredentials.filter(
       (credential) => credential.userId !== user.id,
@@ -2410,6 +3335,9 @@ export async function anonymizeUserByClerkUserId(clerkUserId: string) {
         .delete(dbSchema.notifications)
         .where(inArray(dbSchema.notifications.membershipId, membershipIds)),
       db
+        .delete(dbSchema.membershipInvitations)
+        .where(inArray(dbSchema.membershipInvitations.membershipId, membershipIds)),
+      db
         .update(dbSchema.introRequests)
         .set({ status: "expired", contactRevealedAt: null, updatedAt: new Date(now) })
         .where(
@@ -2436,6 +3364,9 @@ export async function anonymizeUserByClerkUserId(clerkUserId: string) {
           cohortNameOrYear: "",
           programName: "Former member",
           role: "member",
+          mentorStatus: "not_mentor",
+          mentorReviewedAt: null,
+          mentorReviewedByMembershipId: null,
           accountStatus: "deprovisioned",
           status: "suspended",
           updatedAt: new Date(now),
@@ -3439,6 +4370,151 @@ export async function listActiveSpaceMemberRecords(
   }));
 }
 
+export async function listAdminSpaceParticipantRecords(
+  spaceId: string,
+): Promise<AdminSpaceParticipantRecord[]> {
+  if (!usesDatabase) {
+    return (await listActiveSpaceMemberRecords(spaceId)).map(
+      ({ intent, membership, profile, spaceMembership, user }) => ({
+        spaceMembership: { id: spaceMembership.id },
+        membership: { id: membership.id, role: membership.role },
+        user: user ? { email: user.email, name: user.name } : undefined,
+        profile: profile
+          ? {
+              onboardingComplete: profile.onboardingComplete,
+              preferredName: profile.preferredName,
+            }
+          : undefined,
+        intent: intent
+          ? {
+              intentComplete: intent.intentComplete,
+              matchingOptIn: intent.matchingOptIn,
+            }
+          : undefined,
+      }),
+    );
+  }
+
+  const rows = await getDb()
+    .select({
+      spaceMembershipId: dbSchema.spaceMemberships.id,
+      membershipId: dbSchema.memberships.id,
+      membershipRole: dbSchema.memberships.role,
+      userId: dbSchema.users.id,
+      userEmail: dbSchema.users.email,
+      userName: dbSchema.users.name,
+      profileId: dbSchema.profiles.id,
+      profilePreferredName: dbSchema.profiles.preferredName,
+      profileOnboardingComplete: dbSchema.profiles.onboardingComplete,
+      intentId: dbSchema.spaceIntents.id,
+      intentComplete: dbSchema.spaceIntents.intentComplete,
+      intentMatchingOptIn: dbSchema.spaceIntents.matchingOptIn,
+    })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.id, dbSchema.spaceMemberships.membershipId),
+        eq(dbSchema.memberships.orgId, dbSchema.spaceMemberships.orgId),
+      ),
+    )
+    .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
+    .leftJoin(
+      dbSchema.spaceIntents,
+      and(
+        eq(dbSchema.spaceIntents.spaceId, dbSchema.spaceMemberships.spaceId),
+        eq(dbSchema.spaceIntents.membershipId, dbSchema.spaceMemberships.membershipId),
+      ),
+    )
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, spaceId),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+        eq(dbSchema.memberships.accountStatus, "connected"),
+      ),
+    );
+
+  return rows.map((row) => ({
+    spaceMembership: { id: row.spaceMembershipId },
+    membership: { id: row.membershipId, role: row.membershipRole },
+    user: row.userId
+      ? { email: row.userEmail!, name: row.userName! }
+      : undefined,
+    profile: row.profileId
+      ? {
+          onboardingComplete: row.profileOnboardingComplete!,
+          preferredName: row.profilePreferredName!,
+        }
+      : undefined,
+    intent: row.intentId
+      ? {
+          intentComplete: row.intentComplete!,
+          matchingOptIn: row.intentMatchingOptIn!,
+        }
+      : undefined,
+  }));
+}
+
+export async function countActiveSpaceMembersBySpaceIds(
+  orgId: string,
+  spaceIds: string[],
+) {
+  const uniqueSpaceIds = [...new Set(spaceIds.filter(Boolean))];
+  const counts = new Map(uniqueSpaceIds.map((spaceId) => [spaceId, 0]));
+  if (!uniqueSpaceIds.length) return counts;
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const connectedMembershipIds = new Set(
+      store.memberships
+        .filter(
+          (membership) =>
+            membership.orgId === orgId && membership.accountStatus === "connected",
+        )
+        .map((membership) => membership.id),
+    );
+    for (const spaceMembership of store.spaceMemberships) {
+      if (
+        spaceMembership.orgId === orgId &&
+        spaceMembership.accessStatus === "active" &&
+        counts.has(spaceMembership.spaceId) &&
+        connectedMembershipIds.has(spaceMembership.membershipId)
+      ) {
+        counts.set(spaceMembership.spaceId, (counts.get(spaceMembership.spaceId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }
+
+  const rows = await getDb()
+    .select({
+      spaceId: dbSchema.spaceMemberships.spaceId,
+      participantCount: sql<number>`count(*)::int`,
+    })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(
+      dbSchema.memberships,
+      and(
+        eq(dbSchema.memberships.id, dbSchema.spaceMemberships.membershipId),
+        eq(dbSchema.memberships.orgId, dbSchema.spaceMemberships.orgId),
+      ),
+    )
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.orgId, orgId),
+        inArray(dbSchema.spaceMemberships.spaceId, uniqueSpaceIds),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+        eq(dbSchema.memberships.accountStatus, "connected"),
+      ),
+    )
+    .groupBy(dbSchema.spaceMemberships.spaceId);
+  for (const row of rows) {
+    counts.set(row.spaceId, Number(row.participantCount));
+  }
+  return counts;
+}
+
 export async function getSpaceIntent(spaceId: string, membershipId: string) {
   if (!usesDatabase) {
     return getStore().spaceIntents.find(
@@ -3768,8 +4844,60 @@ export async function listMembershipsForOrg(orgId: string) {
   return rows.map(membershipFromRow);
 }
 
+function latestRelevantMembershipInvitation(
+  invitations: MembershipInvitationSummary[],
+) {
+  return invitations.map(membershipInvitationSummary).sort((left, right) => {
+    const pendingOrder = Number(right.status === "pending") - Number(left.status === "pending");
+    return pendingOrder || right.createdAt.localeCompare(left.createdAt);
+  })[0];
+}
+
+export async function listLatestMembershipInvitationsByMembershipIds(
+  membershipIds: string[],
+  options: { orgId?: string } = {},
+) {
+  const uniqueIds = [...new Set(membershipIds.filter(Boolean))];
+  const invitationsByMembershipId = new Map<string, MembershipInvitationSummary>();
+  if (!uniqueIds.length) return invitationsByMembershipId;
+
+  const invitations = !usesDatabase
+    ? getStore().membershipInvitations.filter(
+        (invitation) =>
+          (!options.orgId || invitation.orgId === options.orgId) &&
+          uniqueIds.includes(invitation.membershipId),
+      )
+    : (await getDb()
+        .select()
+        .from(dbSchema.membershipInvitations)
+        .where(
+          and(
+            options.orgId
+              ? eq(dbSchema.membershipInvitations.orgId, options.orgId)
+              : undefined,
+            inArray(dbSchema.membershipInvitations.membershipId, uniqueIds),
+          ),
+        )).map(membershipInvitationFromRow);
+
+  for (const invitation of invitations) {
+    const summary = membershipInvitationSummary(invitation);
+    const current = invitationsByMembershipId.get(invitation.membershipId);
+    if (
+      !current ||
+      latestRelevantMembershipInvitation([current, summary])?.id === invitation.id
+    ) {
+      invitationsByMembershipId.set(
+        invitation.membershipId,
+        summary,
+      );
+    }
+  }
+  return invitationsByMembershipId;
+}
+
 function matchesInvitationFilter(
   membership: Membership,
+  invitation: MembershipInvitationSummary | undefined,
   invitationStatus: MemberWorkspaceInvitationStatus | undefined,
 ) {
   if (!invitationStatus) {
@@ -3777,14 +4905,18 @@ function matchesInvitationFilter(
   }
 
   if (invitationStatus === "connected") {
-    return Boolean(membership.clerkMembershipId);
+    return membership.accountStatus === "connected";
   }
 
   if (invitationStatus === "not_invited") {
-    return !membership.clerkMembershipId && !membership.clerkInvitationStatus;
+    return membership.accountStatus !== "connected" && !invitation;
   }
 
-  return membership.clerkInvitationStatus === invitationStatus;
+  if (invitationStatus === "failed") {
+    return invitation?.status === "pending" && Boolean(invitation.deliveryError);
+  }
+
+  return invitation?.status === invitationStatus;
 }
 
 async function listCohortsByMembershipIds(
@@ -3926,6 +5058,12 @@ export async function listMemberWorkspaceForOrg(
 
   if (!usesDatabase) {
     const store = getStore();
+    const invitationsByMembershipId = await listLatestMembershipInvitationsByMembershipIds(
+      store.memberships
+        .filter((membership) => membership.orgId === orgId)
+        .map((membership) => membership.id),
+      { orgId },
+    );
     const spaceMembershipIds = requestedSpaceId
       ? new Set(
           store.spaceMemberships
@@ -3942,8 +5080,13 @@ export async function listMemberWorkspaceForOrg(
         if (
           membership.orgId !== orgId ||
           (options.accountStatus && membership.accountStatus !== options.accountStatus) ||
+          (options.mentorStatus && membership.mentorStatus !== options.mentorStatus) ||
           (options.status && membership.status !== options.status) ||
-          !matchesInvitationFilter(membership, options.invitationStatus) ||
+          !matchesInvitationFilter(
+            membership,
+            invitationsByMembershipId.get(membership.id),
+            options.invitationStatus,
+          ) ||
           (spaceMembershipIds && !spaceMembershipIds.has(membership.id))
         ) {
           return false;
@@ -3979,6 +5122,7 @@ export async function listMemberWorkspaceForOrg(
     return {
       records: pageMemberships.map((membership) => ({
         membership,
+        invitation: invitationsByMembershipId.get(membership.id),
         user: store.users.find((user) => user.id === membership.userId),
         profile: store.profiles.find((profile) => profile.membershipId === membership.id),
         spaces: spacesByMembershipId.get(membership.id) ?? [],
@@ -4002,18 +5146,38 @@ export async function listMemberWorkspaceForOrg(
           ),
         )
     : undefined;
+  const latestInvitationStatus = sql<string>`(
+    SELECT CASE
+      WHEN invitation.status = 'pending' AND invitation.expires_at <= now()
+        THEN 'expired'
+      WHEN invitation.status = 'pending' AND invitation.delivery_error IS NOT NULL
+        THEN 'failed'
+      ELSE invitation.status::text
+    END
+    FROM membership_invitations invitation
+    WHERE invitation.membership_id = ${dbSchema.memberships.id}
+      AND invitation.org_id = ${orgId}
+    ORDER BY (invitation.status = 'pending') DESC, invitation.created_at DESC
+    LIMIT 1
+  )`;
   const invitationCondition =
     options.invitationStatus === "connected"
-      ? sql`${dbSchema.memberships.clerkMembershipId} is not null`
+      ? eq(dbSchema.memberships.accountStatus, "connected")
       : options.invitationStatus === "not_invited"
-        ? sql`${dbSchema.memberships.clerkMembershipId} is null and ${dbSchema.memberships.clerkInvitationStatus} is null`
+        ? and(
+            sql`${dbSchema.memberships.accountStatus} <> 'connected'`,
+            sql`${latestInvitationStatus} IS NULL`,
+          )
         : options.invitationStatus
-          ? eq(dbSchema.memberships.clerkInvitationStatus, options.invitationStatus)
+          ? sql`${latestInvitationStatus} = ${options.invitationStatus}`
           : undefined;
   const filters = and(
     eq(dbSchema.memberships.orgId, orgId),
     options.accountStatus
       ? eq(dbSchema.memberships.accountStatus, options.accountStatus)
+      : undefined,
+    options.mentorStatus
+      ? eq(dbSchema.memberships.mentorStatus, options.mentorStatus)
       : undefined,
     options.status ? eq(dbSchema.memberships.status, options.status) : undefined,
     queryText
@@ -4048,7 +5212,7 @@ export async function listMemberWorkspaceForOrg(
     .orderBy(desc(dbSchema.memberships.createdAt))
     .limit(pageSize)
     .offset((page - 1) * pageSize);
-  const [cohortsByMembershipId, spacesByMembershipId] = await Promise.all([
+  const [cohortsByMembershipId, spacesByMembershipId, invitationsByMembershipId] = await Promise.all([
     listCohortsByMembershipIds(
       orgId,
       rows.map((row) => row.membership.id),
@@ -4057,11 +5221,16 @@ export async function listMemberWorkspaceForOrg(
       orgId,
       rows.map((row) => row.membership.id),
     ),
+    listLatestMembershipInvitationsByMembershipIds(
+      rows.map((row) => row.membership.id),
+      { orgId },
+    ),
   ]);
 
   return {
     records: rows.map((row) => ({
       membership: membershipFromRow(row.membership),
+      invitation: invitationsByMembershipId.get(row.membership.id),
       user: row.user ? userFromRow(row.user) : undefined,
       profile: row.profile ? profileFromRow(row.profile) : undefined,
       spaces: spacesByMembershipId.get(row.membership.id) ?? [],
@@ -4120,6 +5289,17 @@ export async function listMemberImportCandidatesForOrg(
             (candidate) => candidate.orgId === orgId && candidate.userId === user.id,
           )
         : undefined;
+      const latestInvitation = membership
+        ? latestRelevantMembershipInvitation(
+            store.membershipInvitations.filter(
+              (candidate) =>
+                candidate.orgId === orgId && candidate.membershipId === membership.id,
+            ),
+          )
+        : undefined;
+      const invitation = latestInvitation
+        ? membershipInvitationSummary(latestInvitation)
+        : undefined;
       const spaceMembership =
         destinationSpace && membership
           ? store.spaceMemberships.find(
@@ -4143,6 +5323,7 @@ export async function listMemberImportCandidatesForOrg(
         email,
         user,
         membership,
+        invitation,
         space: destinationSpace,
         spaceMembership,
         inSpace: Boolean(spaceMembership),
@@ -4186,6 +5367,16 @@ export async function listMemberImportCandidatesForOrg(
     });
     if (membership) {
       membershipIds.push(membership.id);
+    }
+  }
+
+  const invitationsByMembershipId = await listLatestMembershipInvitationsByMembershipIds(
+    membershipIds,
+    { orgId },
+  );
+  for (const record of recordsByEmail.values()) {
+    if (record.membership) {
+      record.invitation = invitationsByMembershipId.get(record.membership.id);
     }
   }
 
@@ -4247,6 +5438,7 @@ function cohortRecordFromMembers(
   cohort: Cohort,
   members: CohortMember[],
   membershipsById: Map<string, Membership>,
+  invitationsByMembershipId: Map<string, MembershipInvitationSummary>,
 ): CohortRecord {
   const cohortMembers = members.filter((member) => member.cohortId === cohort.id);
   const memberships = cohortMembers
@@ -4262,10 +5454,10 @@ function cohortRecordFromMembers(
     (membership) =>
       membership.status === "rejected" ||
       membership.status === "suspended" ||
-      membership.clerkInvitationStatus === "failed" ||
-      membership.clerkInvitationStatus === "expired" ||
-      membership.clerkInvitationStatus === "revoked" ||
-      Boolean(membership.clerkInvitationError),
+      membershipNeedsInvitation(
+        membership,
+        invitationsByMembershipId.get(membership.id),
+      ),
   ).length;
 
   return {
@@ -4350,10 +5542,16 @@ export async function getCohortRecordForOrg(
     listCohortMembersForOrg(orgId),
     listMembershipsForOrg(orgId),
   ]);
+  const invitationsByMembershipId =
+    await listLatestMembershipInvitationsByMembershipIds(
+      memberships.map((membership) => membership.id),
+      { orgId },
+    );
   return cohortRecordFromMembers(
     cohort,
     cohortMembers,
     new Map(memberships.map((membership) => [membership.id, membership])),
+    invitationsByMembershipId,
   );
 }
 
@@ -4369,8 +5567,18 @@ export async function listCohortRecordsForOrg(orgId: string): Promise<CohortReco
         .filter((membership) => membership.orgId === orgId)
         .map((membership) => [membership.id, membership]),
     );
+    const invitationsByMembershipId =
+      await listLatestMembershipInvitationsByMembershipIds(
+        [...membershipsById.keys()],
+        { orgId },
+      );
     return cohorts.map((cohort) =>
-      cohortRecordFromMembers(cohort, members, membershipsById),
+      cohortRecordFromMembers(
+        cohort,
+        members,
+        membershipsById,
+        invitationsByMembershipId,
+      ),
     );
   }
 
@@ -4396,8 +5604,18 @@ export async function listCohortRecordsForOrg(orgId: string): Promise<CohortReco
       return [membership.id, membership] as const;
     }),
   );
+  const invitationsByMembershipId =
+    await listLatestMembershipInvitationsByMembershipIds(
+      [...membershipsById.keys()],
+      { orgId },
+    );
   return cohortRows.map((row) =>
-    cohortRecordFromMembers(cohortFromRow(row), members, membershipsById),
+    cohortRecordFromMembers(
+      cohortFromRow(row),
+      members,
+      membershipsById,
+      invitationsByMembershipId,
+    ),
   );
 }
 
@@ -4647,6 +5865,7 @@ function importedMembershipForUser(input: {
     orgId: input.orgId,
     userId: input.user.id,
     role: "member",
+    mentorStatus: "not_mentor",
     accountStatus: input.user.clerkUserId ? "connected" : "invited",
     affiliationType: eventSpace ? "current participant" : "invited outsider",
     status: input.status,
@@ -4665,16 +5884,19 @@ function importedMembershipForUser(input: {
   };
 }
 
-function membershipNeedsInvitation(membership: Membership) {
-  if (membership.clerkMembershipId) {
+function membershipNeedsInvitation(
+  membership: Membership,
+  invitation?: MembershipInvitationSummary,
+) {
+  if (membership.accountStatus !== "invited") {
     return false;
   }
 
-  return (
-    !membership.clerkInvitationStatus ||
-    membership.clerkInvitationStatus === "failed" ||
-    membership.clerkInvitationStatus === "expired" ||
-    membership.clerkInvitationStatus === "revoked"
+  return !(
+    invitation?.status === "pending" &&
+    invitation.expiresAt > new Date().toISOString() &&
+    Boolean(invitation.sentAt) &&
+    !invitation.deliveryError
   );
 }
 
@@ -4903,7 +6125,9 @@ export async function bulkImportMembersForOrg(input: {
           ? "created" as const
           : "existing" as const,
       conflictReason,
-      shouldInvite: conflict ? false : membershipNeedsInvitation(membership),
+      shouldInvite: conflict
+        ? false
+        : membershipNeedsInvitation(membership, candidate.invitation),
     };
   });
 }
@@ -5491,6 +6715,372 @@ export async function listPostsForSpace(
   return listPostsForOrg(space.orgId, { ...options, spaceId });
 }
 
+export async function getPostImageById(imageId: string) {
+  if (!usesDatabase) {
+    return getStore().postImages.find((image) => image.id === imageId);
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.postImages)
+    .where(eq(dbSchema.postImages.id, imageId))
+    .limit(1);
+  return row ? postImageFromRow(row) : undefined;
+}
+
+export async function createStagedPostImage(image: PostImage) {
+  if (image.postId || image.uploadStatus !== "staged") {
+    throw new Error("A new post image must be staged before it can be claimed.");
+  }
+  if (!usesDatabase) {
+    const store = getStore();
+    if (store.postImages.some((candidate) => candidate.id === image.id)) {
+      throw new Error("This upload has already been staged.");
+    }
+    store.postImages.push(image);
+    return image;
+  }
+  const [row] = await getDb()
+    .insert(dbSchema.postImages)
+    .values(postImageInsert(image))
+    .returning();
+  return postImageFromRow(row);
+}
+
+export async function updatePostImageUpload(
+  imageId: string,
+  input: Partial<
+    Pick<
+      PostImage,
+      | "blobPathname"
+      | "contentType"
+      | "sizeBytes"
+      | "width"
+      | "height"
+      | "uploadStatus"
+      | "uploadError"
+    >
+  >,
+  expected: {
+    blobPathname?: string;
+    uploadStatus?: PostImage["uploadStatus"];
+  } = {},
+) {
+  const updatedAt = new Date().toISOString();
+  if (!usesDatabase) {
+    const image = getStore().postImages.find((candidate) => candidate.id === imageId);
+    if (
+      !image ||
+      image.postId ||
+      (expected.blobPathname !== undefined &&
+        image.blobPathname !== expected.blobPathname) ||
+      (expected.uploadStatus !== undefined &&
+        image.uploadStatus !== expected.uploadStatus)
+    ) {
+      return null;
+    }
+    Object.assign(image, input, { updatedAt });
+    return image;
+  }
+  const [row] = await getDb()
+    .update(dbSchema.postImages)
+    .set({
+      ...input,
+      width: input.width,
+      height: input.height,
+      uploadError: input.uploadError,
+      updatedAt: new Date(updatedAt),
+    })
+    .where(
+      and(
+        eq(dbSchema.postImages.id, imageId),
+        sql`${dbSchema.postImages.postId} is null`,
+        expected.blobPathname === undefined
+          ? undefined
+          : eq(dbSchema.postImages.blobPathname, expected.blobPathname),
+        expected.uploadStatus === undefined
+          ? undefined
+          : eq(dbSchema.postImages.uploadStatus, expected.uploadStatus),
+      ),
+    )
+    .returning();
+  return row ? postImageFromRow(row) : null;
+}
+
+export async function deleteStagedPostImageRecord(imageId: string) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const index = store.postImages.findIndex(
+      (image) => image.id === imageId && !image.postId,
+    );
+    if (index < 0) return false;
+    store.postImages.splice(index, 1);
+    return true;
+  }
+  const rows = await getDb()
+    .delete(dbSchema.postImages)
+    .where(and(eq(dbSchema.postImages.id, imageId), sql`${dbSchema.postImages.postId} is null`))
+    .returning({ id: dbSchema.postImages.id });
+  return rows.length > 0;
+}
+
+export async function listPostImagesForPostIds(
+  postIds: string[],
+  options: { includeRemoved?: boolean; includeUnready?: boolean } = {},
+) {
+  const uniqueIds = [...new Set(postIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    return getStore().postImages
+      .filter((image) => image.postId && uniqueIds.includes(image.postId))
+      .filter((image) => options.includeRemoved || image.moderationStatus === "visible")
+      .filter((image) => options.includeUnready || image.uploadStatus === "ready")
+      .sort((left, right) => left.position - right.position);
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.postImages)
+    .where(
+      and(
+        inArray(dbSchema.postImages.postId, uniqueIds),
+        options.includeRemoved
+          ? undefined
+          : eq(dbSchema.postImages.moderationStatus, "visible"),
+        options.includeUnready ? undefined : eq(dbSchema.postImages.uploadStatus, "ready"),
+      ),
+    )
+    .orderBy(asc(dbSchema.postImages.position));
+  return rows.map(postImageFromRow);
+}
+
+export async function getPostLinkPreviewById(previewId: string) {
+  if (!usesDatabase) {
+    return getStore().postLinkPreviews.find((preview) => preview.id === previewId);
+  }
+  const [row] = await getDb()
+    .select()
+    .from(dbSchema.postLinkPreviews)
+    .where(eq(dbSchema.postLinkPreviews.id, previewId))
+    .limit(1);
+  return row ? postLinkPreviewFromRow(row) : undefined;
+}
+
+export async function createStagedPostLinkPreview(preview: PostLinkPreview) {
+  if (preview.postId) throw new Error("A new link preview must be staged first.");
+  if (!usesDatabase) {
+    const store = getStore();
+    if (store.postLinkPreviews.some((candidate) => candidate.id === preview.id)) {
+      throw new Error("This link preview already exists.");
+    }
+    store.postLinkPreviews.push(preview);
+    return preview;
+  }
+  const [row] = await getDb()
+    .insert(dbSchema.postLinkPreviews)
+    .values(postLinkPreviewInsert(preview))
+    .returning();
+  return postLinkPreviewFromRow(row);
+}
+
+export async function deleteStagedPostLinkPreviewRecord(previewId: string) {
+  if (!usesDatabase) {
+    const store = getStore();
+    const index = store.postLinkPreviews.findIndex(
+      (preview) => preview.id === previewId && !preview.postId,
+    );
+    if (index < 0) return false;
+    store.postLinkPreviews.splice(index, 1);
+    return true;
+  }
+  const rows = await getDb()
+    .delete(dbSchema.postLinkPreviews)
+    .where(
+      and(
+        eq(dbSchema.postLinkPreviews.id, previewId),
+        sql`${dbSchema.postLinkPreviews.postId} is null`,
+      ),
+    )
+    .returning({ id: dbSchema.postLinkPreviews.id });
+  return rows.length > 0;
+}
+
+export async function listPostLinkPreviewsForPostIds(
+  postIds: string[],
+  options: { includeRemoved?: boolean; includeUnready?: boolean } = {},
+) {
+  const uniqueIds = [...new Set(postIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    return getStore().postLinkPreviews
+      .filter((preview) => preview.postId && uniqueIds.includes(preview.postId))
+      .filter((preview) => options.includeRemoved || preview.moderationStatus === "visible")
+      .filter((preview) => options.includeUnready || preview.fetchStatus === "ready");
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.postLinkPreviews)
+    .where(
+      and(
+        inArray(dbSchema.postLinkPreviews.postId, uniqueIds),
+        options.includeRemoved
+          ? undefined
+          : eq(dbSchema.postLinkPreviews.moderationStatus, "visible"),
+        options.includeUnready
+          ? undefined
+          : eq(dbSchema.postLinkPreviews.fetchStatus, "ready"),
+      ),
+    );
+  return rows.map(postLinkPreviewFromRow);
+}
+
+export async function listPostMentionsForPostIds(postIds: string[]) {
+  const uniqueIds = [...new Set(postIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    return getStore().postMentions
+      .filter((mention) => uniqueIds.includes(mention.postId))
+      .sort((left, right) => left.start - right.start);
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.postMentions)
+    .where(inArray(dbSchema.postMentions.postId, uniqueIds))
+    .orderBy(asc(dbSchema.postMentions.start));
+  return rows.map(postMentionFromRow);
+}
+
+export async function listCommentMentionsForCommentIds(commentIds: string[]) {
+  const uniqueIds = [...new Set(commentIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    return getStore().commentMentions
+      .filter((mention) => uniqueIds.includes(mention.commentId))
+      .sort((left, right) => left.start - right.start);
+  }
+  const rows = await getDb()
+    .select()
+    .from(dbSchema.commentMentions)
+    .where(inArray(dbSchema.commentMentions.commentId, uniqueIds))
+    .orderBy(asc(dbSchema.commentMentions.start));
+  return rows.map(commentMentionFromRow);
+}
+
+export async function listMentionableMembershipIdsForSpace(
+  spaceId: string,
+  membershipIds: string[],
+) {
+  const uniqueIds = [...new Set(membershipIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+  if (!usesDatabase) {
+    const store = getStore();
+    const profileMembershipIds = new Set(
+      store.profiles
+        .filter((profile) => profile.onboardingComplete)
+        .map((profile) => profile.membershipId),
+    );
+    const connectedIds = new Set(
+      store.memberships
+        .filter(
+          (membership) =>
+            uniqueIds.includes(membership.id) && membership.accountStatus === "connected",
+        )
+        .map((membership) => membership.id),
+    );
+    return store.spaceMemberships
+      .filter(
+        (membership) =>
+          membership.spaceId === spaceId &&
+          membership.accessStatus === "active" &&
+          connectedIds.has(membership.membershipId) &&
+          profileMembershipIds.has(membership.membershipId),
+      )
+      .map((membership) => membership.membershipId);
+  }
+  const rows = await getDb()
+    .select({ membershipId: dbSchema.spaceMemberships.membershipId })
+    .from(dbSchema.spaceMemberships)
+    .innerJoin(
+      dbSchema.memberships,
+      eq(dbSchema.memberships.id, dbSchema.spaceMemberships.membershipId),
+    )
+    .innerJoin(
+      dbSchema.profiles,
+      eq(dbSchema.profiles.membershipId, dbSchema.spaceMemberships.membershipId),
+    )
+    .where(
+      and(
+        eq(dbSchema.spaceMemberships.spaceId, spaceId),
+        eq(dbSchema.spaceMemberships.accessStatus, "active"),
+        eq(dbSchema.memberships.accountStatus, "connected"),
+        eq(dbSchema.profiles.onboardingComplete, true),
+        inArray(dbSchema.spaceMemberships.membershipId, uniqueIds),
+      ),
+    );
+  return rows.map((row) => row.membershipId);
+}
+
+export async function listOrphanedPostMedia(before: string) {
+  const cutoff = new Date(before);
+  if (!usesDatabase) {
+    const store = getStore();
+    return {
+      images: store.postImages.filter(
+        (image) => !image.postId && new Date(image.createdAt) < cutoff,
+      ),
+      previews: store.postLinkPreviews.filter(
+        (preview) => !preview.postId && new Date(preview.createdAt) < cutoff,
+      ),
+    };
+  }
+  const [imageRows, previewRows] = await Promise.all([
+    getDb()
+      .select()
+      .from(dbSchema.postImages)
+      .where(
+        and(
+          sql`${dbSchema.postImages.postId} is null`,
+          sql`${dbSchema.postImages.createdAt} < ${cutoff}`,
+        ),
+      ),
+    getDb()
+      .select()
+      .from(dbSchema.postLinkPreviews)
+      .where(
+        and(
+          sql`${dbSchema.postLinkPreviews.postId} is null`,
+          sql`${dbSchema.postLinkPreviews.createdAt} < ${cutoff}`,
+        ),
+      ),
+  ]);
+  return {
+    images: imageRows.map(postImageFromRow),
+    previews: previewRows.map(postLinkPreviewFromRow),
+  };
+}
+
+export async function listTrackedPostMediaPathnames() {
+  if (!usesDatabase) {
+    const store = getStore();
+    return [
+      ...store.postImages.map((image) => image.blobPathname),
+      ...store.postLinkPreviews.flatMap((preview) =>
+        preview.thumbnailBlobPathname ? [preview.thumbnailBlobPathname] : [],
+      ),
+    ];
+  }
+  const [images, previews] = await Promise.all([
+    getDb().select({ pathname: dbSchema.postImages.blobPathname }).from(dbSchema.postImages),
+    getDb()
+      .select({ pathname: dbSchema.postLinkPreviews.thumbnailBlobPathname })
+      .from(dbSchema.postLinkPreviews),
+  ]);
+  return [
+    ...images.map((image) => image.pathname),
+    ...previews.flatMap((preview) =>
+      preview.pathname ? [preview.pathname] : [],
+    ),
+  ];
+}
+
 /**
  * Admin audit totals for one Space. Every branch starts from the explicit
  * Space id; callers never load organization-wide resources and filter them in
@@ -5510,7 +7100,10 @@ export async function getSpaceAuditMetrics(
         .map((post) => post.id),
     );
     const matches = store.matches.filter(
-      (match) => match.orgId === space.orgId && match.spaceId === spaceId,
+      (match) =>
+        match.orgId === space.orgId &&
+        match.spaceId === spaceId &&
+        isCurrentMatchRecord(match),
     );
     const introRequests = store.introRequests.filter(
       (request) => request.orgId === space.orgId && request.spaceId === spaceId,
@@ -5624,6 +7217,7 @@ export async function getSpaceAuditMetrics(
         and(
           eq(dbSchema.matches.orgId, space.orgId),
           eq(dbSchema.matches.spaceId, spaceId),
+          eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
         ),
       ),
     getDb()
@@ -5633,6 +7227,7 @@ export async function getSpaceAuditMetrics(
         and(
           eq(dbSchema.matches.orgId, space.orgId),
           eq(dbSchema.matches.spaceId, spaceId),
+          eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
           eq(dbSchema.matches.hiddenByAdmin, false),
           eq(dbSchema.matches.dismissedBySource, false),
         ),
@@ -5790,6 +7385,7 @@ export async function getMemberActivationSignals(input: {
       hasVisibleMatch: store.matches.some(
         (match) =>
           match.sourceProfileId === input.profileId &&
+          isCurrentMatchRecord(match) &&
           !match.hiddenByAdmin &&
           !match.dismissedBySource,
       ),
@@ -5813,6 +7409,7 @@ export async function getMemberActivationSignals(input: {
       hasVisibleMatch: sql<boolean>`exists (
         select 1 from ${dbSchema.matches}
         where ${dbSchema.matches.sourceProfileId} = ${input.profileId}
+          and ${dbSchema.matches.algorithmVersion} = ${MATCHING_ALGORITHM_VERSION}
           and ${dbSchema.matches.hiddenByAdmin} = false
           and ${dbSchema.matches.dismissedBySource} = false
       )`,
@@ -6063,6 +7660,7 @@ async function getOrgAnalyticsInput(orgId: string) {
         .map((intro) => ({
           createdAt: intro.createdAt,
           introPurpose: intro.introPurpose,
+          kind: intro.kind,
           respondedAt: intro.respondedAt,
           status: intro.status,
         })),
@@ -6105,6 +7703,7 @@ async function getOrgAnalyticsInput(orgId: string) {
       .select({
         createdAt: dbSchema.introRequests.createdAt,
         introPurpose: dbSchema.introRequests.introPurpose,
+        kind: dbSchema.introRequests.kind,
         respondedAt: dbSchema.introRequests.respondedAt,
         status: dbSchema.introRequests.status,
       })
@@ -6129,6 +7728,7 @@ async function getOrgAnalyticsInput(orgId: string) {
     introRequests: introRequestRows.map((intro) => ({
       createdAt: requiredIso(intro.createdAt),
       introPurpose: intro.introPurpose,
+      kind: intro.kind,
       respondedAt: maybeIso(intro.respondedAt),
       status: intro.status,
     })),
@@ -6810,8 +8410,12 @@ export async function getPostThreadRecord(
         const membership = store.memberships.find(
           (candidate) => candidate.id === comment.authorMembershipId,
         );
+        const mentions = store.commentMentions
+          .filter((mention) => mention.commentId === comment.id)
+          .sort((left, right) => left.start - right.start)
+          .map(toRichTextMention);
         return {
-          comment,
+          comment: { ...comment, mentions },
           membership,
           profile: membership
             ? store.profiles.find((profile) => profile.membershipId === membership.id)
@@ -6819,6 +8423,21 @@ export async function getPostThreadRecord(
         };
       });
 
+    const images = store.postImages
+      .filter(
+        (image) =>
+          image.postId === post.id &&
+          image.uploadStatus === "ready" &&
+          image.moderationStatus === "visible",
+      )
+      .sort((left, right) => left.position - right.position)
+      .map(toPostImageView);
+    const preview = store.postLinkPreviews.find(
+      (candidate) =>
+        candidate.postId === post.id &&
+        candidate.fetchStatus === "ready" &&
+        candidate.moderationStatus === "visible",
+    );
     return {
       post,
       author: authorMembership
@@ -6830,6 +8449,12 @@ export async function getPostThreadRecord(
           }
         : undefined,
       comments,
+      images,
+      linkPreview: preview ? toPostLinkPreviewView(preview) : undefined,
+      mentions: store.postMentions
+        .filter((mention) => mention.postId === post.id)
+        .sort((left, right) => left.start - right.start)
+        .map(toRichTextMention),
     };
   }
 
@@ -6873,6 +8498,19 @@ export async function getPostThreadRecord(
     return undefined;
   }
 
+  const [images, previews, mentions, commentMentions] = await Promise.all([
+    listPostImagesForPostIds([postId]),
+    listPostLinkPreviewsForPostIds([postId]),
+    listPostMentionsForPostIds([postId]),
+    listCommentMentionsForCommentIds(commentRows.map((row) => row.comment.id)),
+  ]);
+  const mentionsByCommentId = new Map<string, RichTextMention[]>();
+  for (const mention of commentMentions) {
+    const existing = mentionsByCommentId.get(mention.commentId) ?? [];
+    existing.push(toRichTextMention(mention));
+    mentionsByCommentId.set(mention.commentId, existing);
+  }
+
   return {
     post: postFromRow(postRow.post),
     author: postRow.membership
@@ -6882,10 +8520,16 @@ export async function getPostThreadRecord(
         }
       : undefined,
     comments: commentRows.map((row) => ({
-      comment: commentFromRow(row.comment),
+      comment: {
+        ...commentFromRow(row.comment),
+        mentions: mentionsByCommentId.get(row.comment.id) ?? [],
+      },
       membership: row.membership ? membershipFromRow(row.membership) : undefined,
       profile: row.profile ? profileFromRow(row.profile) : undefined,
     })),
+    images: images.map(toPostImageView),
+    linkPreview: previews[0] ? toPostLinkPreviewView(previews[0]) : undefined,
+    mentions: mentions.map(toRichTextMention),
   };
 }
 
@@ -7049,6 +8693,7 @@ export async function recordMatchFeedback(input: {
       (candidate) =>
         candidate.id === input.matchId &&
         candidate.orgId === input.orgId &&
+        isCurrentMatchRecord(candidate) &&
         (!input.spaceId || candidate.spaceId === input.spaceId) &&
         candidate.sourceProfileId === input.sourceProfileId,
     );
@@ -7084,6 +8729,7 @@ export async function recordMatchFeedback(input: {
       and(
         eq(dbSchema.matches.id, input.matchId),
         eq(dbSchema.matches.orgId, input.orgId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
         input.spaceId ? eq(dbSchema.matches.spaceId, input.spaceId) : undefined,
         eq(dbSchema.matches.sourceProfileId, input.sourceProfileId),
       ),
@@ -7169,6 +8815,33 @@ export async function getMatchFeedbackSummaryForOrg(orgId: string) {
   return summarizeMatchFeedback(rows.map(matchFeedbackFromRow));
 }
 
+function availableMatchTargetRecord(
+  store: StoreState,
+  match: MatchRecord,
+) {
+  const targetProfile = store.profiles.find(
+    (profile) => profile.id === match.targetProfileId,
+  );
+  const targetMembership = targetProfile
+    ? store.memberships.find(
+        (membership) =>
+          membership.id === targetProfile.membershipId &&
+          membership.orgId === match.orgId,
+      )
+    : undefined;
+  if (
+    !targetProfile?.introOptIn ||
+    !targetMembership ||
+    (match.matchType === "mentor_match" &&
+      (targetMembership.mentorStatus !== "approved" ||
+        !targetProfile.offeringMatchTypes.includes("mentor_match")))
+  ) {
+    return undefined;
+  }
+
+  return { targetMembership, targetProfile };
+}
+
 function eligibleMatchTargetRecord(
   store: StoreState,
   match: MatchRecord,
@@ -7223,6 +8896,10 @@ function eligibleMatchTargetRecord(
   return { targetMembership, targetProfile };
 }
 
+function isCurrentMatchRecord(match: Pick<MatchRecord, "algorithmVersion">) {
+  return match.algorithmVersion === MATCHING_ALGORITHM_VERSION;
+}
+
 export async function listMatchesForProfile(
   profileId: string,
   options: { spaceId?: string; limit?: number } = {},
@@ -7234,6 +8911,7 @@ export async function listMatchesForProfile(
       .filter(
         (match) =>
           match.sourceProfileId === profileId &&
+          isCurrentMatchRecord(match) &&
           (!options.spaceId || match.spaceId === options.spaceId) &&
           (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
           !match.hiddenByAdmin &&
@@ -7285,6 +8963,7 @@ export async function listMatchesForProfile(
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -7341,6 +9020,8 @@ export async function listMatchTargetRecordsForProfile(
       .filter(
         (match) =>
           match.sourceProfileId === profileId &&
+          isCurrentMatchRecord(match) &&
+          Boolean(availableMatchTargetRecord(store, match)) &&
           (!options.spaceId || match.spaceId === options.spaceId) &&
           (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
           (!options.matchType || match.matchType === options.matchType) &&
@@ -7416,6 +9097,15 @@ export async function listMatchTargetRecordsForProfile(
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        eq(targetProfiles.introOptIn, true),
+        or(
+          sql`${dbSchema.matches.matchType} <> 'mentor_match'`,
+          and(
+            eq(targetMemberships.mentorStatus, "approved"),
+            sql`'mentor_match' = ANY(${targetProfiles.offeringMatchTypes})`,
+          ),
+        ),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -7460,6 +9150,8 @@ export async function listVisibleMatchTargetMembershipIdsForProfile(
       .filter(
         (match) =>
           match.sourceProfileId === profileId &&
+          isCurrentMatchRecord(match) &&
+          Boolean(availableMatchTargetRecord(store, match)) &&
           (!options.spaceId || match.spaceId === options.spaceId) &&
           (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
           !match.hiddenByAdmin &&
@@ -7513,6 +9205,15 @@ export async function listVisibleMatchTargetMembershipIdsForProfile(
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        eq(targetProfiles.introOptIn, true),
+        or(
+          sql`${dbSchema.matches.matchType} <> 'mentor_match'`,
+          and(
+            eq(targetMemberships.mentorStatus, "approved"),
+            sql`'mentor_match' = ANY(${targetProfiles.offeringMatchTypes})`,
+          ),
+        ),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -7590,6 +9291,15 @@ export async function listVisibleMatchTargetMembershipIdsForMembership(
     .where(
       and(
         eq(sourceProfiles.membershipId, membershipId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        eq(targetProfiles.introOptIn, true),
+        or(
+          sql`${dbSchema.matches.matchType} <> 'mentor_match'`,
+          and(
+            eq(targetMemberships.mentorStatus, "approved"),
+            sql`'mentor_match' = ANY(${targetProfiles.offeringMatchTypes})`,
+          ),
+        ),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -7620,6 +9330,8 @@ export async function hasVisibleMatchForProfile(
     return store.matches.some(
       (match) =>
         match.sourceProfileId === profileId &&
+        isCurrentMatchRecord(match) &&
+        Boolean(availableMatchTargetRecord(store, match)) &&
         (!options.spaceId || match.spaceId === options.spaceId) &&
         (!options.spaceId || Boolean(eligibleMatchTargetRecord(store, match))) &&
         !match.hiddenByAdmin &&
@@ -7669,6 +9381,15 @@ export async function hasVisibleMatchForProfile(
     .where(
       and(
         eq(dbSchema.matches.sourceProfileId, profileId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        eq(targetProfiles.introOptIn, true),
+        or(
+          sql`${dbSchema.matches.matchType} <> 'mentor_match'`,
+          and(
+            eq(targetMemberships.mentorStatus, "approved"),
+            sql`'mentor_match' = ANY(${targetProfiles.offeringMatchTypes})`,
+          ),
+        ),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.spaceId
           ? and(
@@ -7743,6 +9464,7 @@ export async function listIntroRequestsForMembership(
       .filter(
         (request) =>
           (!options.spaceId || request.spaceId === options.spaceId) &&
+          (!options.kind || request.kind === options.kind) &&
           (options.direction === "incoming"
             ? request.receiverMembershipId === membershipId
             : options.direction === "outgoing"
@@ -7768,6 +9490,7 @@ export async function listIntroRequestsForMembership(
           options.spaceId
             ? eq(dbSchema.introRequests.spaceId, options.spaceId)
             : undefined,
+          options.kind ? eq(dbSchema.introRequests.kind, options.kind) : undefined,
           options.direction === "incoming"
             ? eq(dbSchema.introRequests.receiverMembershipId, membershipId)
             : options.direction === "outgoing"
@@ -7791,6 +9514,7 @@ export async function listIntroRequestsForMembership(
         options.spaceId
           ? eq(dbSchema.introRequests.spaceId, options.spaceId)
           : undefined,
+        options.kind ? eq(dbSchema.introRequests.kind, options.kind) : undefined,
         options.direction === "incoming"
           ? eq(dbSchema.introRequests.receiverMembershipId, membershipId)
           : options.direction === "outgoing"
@@ -7845,6 +9569,7 @@ export async function listIntroRequestsForMembershipWithSpaceAccess(
         (request) =>
           directionMatches(request) &&
           canRetain(request) &&
+          (!options.kind || request.kind === options.kind) &&
           (!options.status || request.status === options.status),
       )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -7869,6 +9594,7 @@ export async function listIntroRequestsForMembershipWithSpaceAccess(
   const where = and(
     participantCondition,
     accessCondition,
+    options.kind ? eq(dbSchema.introRequests.kind, options.kind) : undefined,
     options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
   );
   const query = getDb()
@@ -7991,7 +9717,7 @@ export async function listActiveIntroRequestStatusesForRequester(
         (request) =>
           request.requesterMembershipId === requesterMembershipId &&
           (!receiverIds || receiverIds.has(request.receiverMembershipId)) &&
-          request.status !== "expired",
+          request.status === "pending",
       )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 
@@ -8015,7 +9741,7 @@ export async function listActiveIntroRequestStatusesForRequester(
         uniqueReceiverIds
           ? inArray(dbSchema.introRequests.receiverMembershipId, uniqueReceiverIds)
           : undefined,
-        sql`${dbSchema.introRequests.status} <> 'expired'`,
+        eq(dbSchema.introRequests.status, "pending"),
       ),
     )
     .orderBy(desc(dbSchema.introRequests.createdAt));
@@ -8029,7 +9755,7 @@ export async function listActiveIntroRequestStatusesForRequester(
 }
 
 export async function listActiveIntroRequestStatusesForRequesterInSpace(
-  spaceId: string,
+  _spaceId: string,
   requesterMembershipId: string,
   receiverMembershipIds?: string[],
 ) {
@@ -8054,8 +9780,7 @@ export async function listActiveIntroRequestStatusesForRequesterInSpace(
           return Boolean(
             otherMembershipId &&
               (!receiverIds || receiverIds.has(otherMembershipId)) &&
-              request.status !== "expired" &&
-              (request.spaceId === spaceId || request.status === "pending"),
+              request.status === "pending",
           );
         },
       )
@@ -8096,12 +9821,8 @@ export async function listActiveIntroRequestStatusesForRequesterInSpace(
     .from(dbSchema.introRequests)
     .where(
       and(
-        or(
-          eq(dbSchema.introRequests.spaceId, spaceId),
-          eq(dbSchema.introRequests.status, "pending"),
-        ),
         participantCondition,
-        sql`${dbSchema.introRequests.status} <> 'expired'`,
+        eq(dbSchema.introRequests.status, "pending"),
       ),
     )
     .orderBy(desc(dbSchema.introRequests.createdAt));
@@ -8115,6 +9836,86 @@ export async function listActiveIntroRequestStatusesForRequesterInSpace(
     }
     return statuses;
   }, new Map<string, IntroStatus>());
+}
+
+async function filterVisibleContentNotifications(notifications: Notification[]) {
+  const postIds = [
+    ...new Set(
+      notifications.flatMap((notification) =>
+        notification.sourcePostId ? [notification.sourcePostId] : [],
+      ),
+    ),
+  ];
+  const commentIds = [
+    ...new Set(
+      notifications.flatMap((notification) =>
+        notification.sourceCommentId ? [notification.sourceCommentId] : [],
+      ),
+    ),
+  ];
+  if (!postIds.length && !commentIds.length) return notifications;
+
+  let visiblePostIds: Set<string>;
+  let visibleCommentIds: Set<string>;
+  if (!usesDatabase) {
+    const store = getStore();
+    visiblePostIds = new Set(
+      store.posts
+        .filter((post) => postIds.includes(post.id) && !post.hidden)
+        .map((post) => post.id),
+    );
+    visibleCommentIds = new Set(
+      store.comments
+        .filter(
+          (comment) =>
+            commentIds.includes(comment.id) &&
+            comment.status === "visible" &&
+            visiblePostIds.has(comment.postId),
+        )
+        .map((comment) => comment.id),
+    );
+  } else {
+    const [postRows, commentRows] = await Promise.all([
+      postIds.length
+        ? getDb()
+            .select({ id: dbSchema.posts.id })
+            .from(dbSchema.posts)
+            .where(and(inArray(dbSchema.posts.id, postIds), eq(dbSchema.posts.hidden, false)))
+        : Promise.resolve([]),
+      commentIds.length
+        ? getDb()
+            .select({ id: dbSchema.comments.id, postId: dbSchema.comments.postId })
+            .from(dbSchema.comments)
+            .innerJoin(dbSchema.posts, eq(dbSchema.posts.id, dbSchema.comments.postId))
+            .where(
+              and(
+                inArray(dbSchema.comments.id, commentIds),
+                eq(dbSchema.comments.status, "visible"),
+                eq(dbSchema.posts.hidden, false),
+              ),
+            )
+        : Promise.resolve([]),
+    ]);
+    visiblePostIds = new Set(postRows.map((row) => row.id));
+    visibleCommentIds = new Set(commentRows.map((row) => row.id));
+  }
+
+  return notifications.filter((notification) => {
+    if (notification.type === "post_mentioned") {
+      return Boolean(
+        notification.sourcePostId && visiblePostIds.has(notification.sourcePostId),
+      );
+    }
+    if (notification.type === "comment_mentioned") {
+      return Boolean(
+        notification.sourcePostId &&
+          visiblePostIds.has(notification.sourcePostId) &&
+          notification.sourceCommentId &&
+          visibleCommentIds.has(notification.sourceCommentId),
+      );
+    }
+    return true;
+  });
 }
 
 export async function listNotificationsForMembership(
@@ -8169,7 +9970,8 @@ export async function listNotificationsForMembershipInSpace(
           notification.spaceId === spaceId,
       )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return limit ? notifications.slice(0, limit) : notifications;
+    const visible = await filterVisibleContentNotifications(notifications);
+    return limit ? visible.slice(0, limit) : visible;
   }
 
   const query = getDb()
@@ -8182,8 +9984,9 @@ export async function listNotificationsForMembershipInSpace(
       ),
     )
     .orderBy(desc(dbSchema.notifications.createdAt));
-  const rows = await (limit ? query.limit(limit) : query);
-  return rows.map(notificationFromRow);
+  const rows = await query;
+  const visible = await filterVisibleContentNotifications(rows.map(notificationFromRow));
+  return limit ? visible.slice(0, limit) : visible;
 }
 
 /** Account Inbox query: account-level records plus records from Spaces the caller
@@ -8208,7 +10011,8 @@ export async function listNotificationsForMembershipWithSpaceAccess(
           (!notification.spaceId || idSet.has(notification.spaceId)),
       )
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return limit ? notifications.slice(0, limit) : notifications;
+    const visible = await filterVisibleContentNotifications(notifications);
+    return limit ? visible.slice(0, limit) : visible;
   }
 
   const query = getDb()
@@ -8226,8 +10030,9 @@ export async function listNotificationsForMembershipWithSpaceAccess(
       ),
     )
     .orderBy(desc(dbSchema.notifications.createdAt));
-  const rows = await (limit ? query.limit(limit) : query);
-  return rows.map(notificationFromRow);
+  const rows = await query;
+  const visible = await filterVisibleContentNotifications(rows.map(notificationFromRow));
+  return limit ? visible.slice(0, limit) : visible;
 }
 
 export async function hasUnreadNotificationsForMembershipWithSpaceAccess(
@@ -8239,33 +10044,11 @@ export async function hasUnreadNotificationsForMembershipWithSpaceAccess(
     accessibleSpaceIds,
   );
   if (!ids) return false;
-  if (!usesDatabase) {
-    const idSet = new Set(ids);
-    return getStore().notifications.some(
-      (notification) =>
-        notification.membershipId === membershipId &&
-        !notification.readAt &&
-        (!notification.spaceId || idSet.has(notification.spaceId)),
-    );
-  }
-
-  const [row] = await getDb()
-    .select({ id: dbSchema.notifications.id })
-    .from(dbSchema.notifications)
-    .where(
-      and(
-        eq(dbSchema.notifications.membershipId, membershipId),
-        sql`${dbSchema.notifications.readAt} is null`,
-        ids.length
-          ? or(
-              sql`${dbSchema.notifications.spaceId} is null`,
-              inArray(dbSchema.notifications.spaceId, ids),
-            )
-          : sql`${dbSchema.notifications.spaceId} is null`,
-      ),
-    )
-    .limit(1);
-  return Boolean(row);
+  const notifications = await listNotificationsForMembershipWithSpaceAccess(
+    membershipId,
+    ids,
+  );
+  return notifications.some((notification) => !notification.readAt);
 }
 
 export async function markNotificationsReadForMembershipWithSpaceAccess(
@@ -8355,6 +10138,7 @@ export async function listIntroRequestsForOrg(
       (request) =>
         request.orgId === orgId &&
         (!options.spaceId || request.spaceId === options.spaceId) &&
+        (!options.kind || request.kind === options.kind) &&
         (!options.status || request.status === options.status) &&
         (!options.sourceType || request.sourceType === options.sourceType),
     );
@@ -8376,6 +10160,7 @@ export async function listIntroRequestsForOrg(
           options.spaceId
             ? eq(dbSchema.introRequests.spaceId, options.spaceId)
             : undefined,
+          options.kind ? eq(dbSchema.introRequests.kind, options.kind) : undefined,
           options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
           options.sourceType
             ? eq(dbSchema.introRequests.sourceType, options.sourceType)
@@ -8395,6 +10180,7 @@ export async function listIntroRequestsForOrg(
         options.spaceId
           ? eq(dbSchema.introRequests.spaceId, options.spaceId)
           : undefined,
+        options.kind ? eq(dbSchema.introRequests.kind, options.kind) : undefined,
         options.status ? eq(dbSchema.introRequests.status, options.status) : undefined,
         options.sourceType ? eq(dbSchema.introRequests.sourceType, options.sourceType) : undefined,
       ),
@@ -8426,6 +10212,7 @@ export async function listMatchesForOrg(
       .filter(
         (match) =>
           match.orgId === orgId &&
+          isCurrentMatchRecord(match) &&
           (!options.spaceId || match.spaceId === options.spaceId),
       )
       .sort((left, right) => right.score - left.score);
@@ -8439,6 +10226,7 @@ export async function listMatchesForOrg(
     .where(
       and(
         eq(dbSchema.matches.orgId, orgId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
       ),
     )
@@ -8461,6 +10249,7 @@ export async function listMatchProfileRecordsForOrg(
       .filter(
         (match) =>
           match.orgId === orgId &&
+          isCurrentMatchRecord(match) &&
           (!options.spaceId || match.spaceId === options.spaceId) &&
           (!options.matchType || match.matchType === options.matchType) &&
           (!options.scoreBand || match.scoreBand === options.scoreBand),
@@ -8489,6 +10278,7 @@ export async function listMatchProfileRecordsForOrg(
     .where(
       and(
         eq(dbSchema.matches.orgId, orgId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
         options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
         options.matchType ? eq(dbSchema.matches.matchType, options.matchType) : undefined,
         options.scoreBand ? eq(dbSchema.matches.scoreBand, options.scoreBand) : undefined,
@@ -8513,12 +10303,167 @@ export async function listMatchProfileRecordsForSpace(
   return listMatchProfileRecordsForOrg(space.orgId, { ...options, spaceId });
 }
 
+export async function listAdminMatchCardRecordsForOrg(
+  orgId: string,
+  options: MatchProfileRecordListOptions = {},
+): Promise<AdminMatchCardRecord[]> {
+  const limit = positiveIntegerLimit(options.limit);
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const profileById = new Map(store.profiles.map((profile) => [profile.id, profile]));
+    const matches = store.matches
+      .filter(
+        (match) =>
+          match.orgId === orgId &&
+          isCurrentMatchRecord(match) &&
+          (!options.spaceId || match.spaceId === options.spaceId) &&
+          (!options.matchType || match.matchType === options.matchType) &&
+          (!options.scoreBand || match.scoreBand === options.scoreBand),
+      )
+      .sort((left, right) => right.score - left.score);
+    const visibleMatches = limit ? matches.slice(0, limit) : matches;
+
+    return visibleMatches.map((match) => ({
+      match: {
+        dismissedBySource: match.dismissedBySource,
+        explanationText: match.explanationText,
+        hiddenByAdmin: match.hiddenByAdmin,
+        id: match.id,
+        matchType: match.matchType,
+        scoreBand: match.scoreBand,
+        spaceId: match.spaceId,
+      },
+      sourceProfile: profileById.has(match.sourceProfileId)
+        ? { preferredName: profileById.get(match.sourceProfileId)!.preferredName }
+        : undefined,
+      targetProfile: profileById.has(match.targetProfileId)
+        ? { preferredName: profileById.get(match.targetProfileId)!.preferredName }
+        : undefined,
+    }));
+  }
+
+  const sourceProfiles = alias(dbSchema.profiles, "admin_match_source_profiles");
+  const targetProfiles = alias(dbSchema.profiles, "admin_match_target_profiles");
+  const query = getDb()
+    .select({
+      matchId: dbSchema.matches.id,
+      matchSpaceId: dbSchema.matches.spaceId,
+      matchType: dbSchema.matches.matchType,
+      matchScoreBand: dbSchema.matches.scoreBand,
+      matchExplanationText: dbSchema.matches.explanationText,
+      matchDismissedBySource: dbSchema.matches.dismissedBySource,
+      matchHiddenByAdmin: dbSchema.matches.hiddenByAdmin,
+      sourceProfileId: sourceProfiles.id,
+      sourcePreferredName: sourceProfiles.preferredName,
+      targetProfileId: targetProfiles.id,
+      targetPreferredName: targetProfiles.preferredName,
+    })
+    .from(dbSchema.matches)
+    .leftJoin(sourceProfiles, eq(sourceProfiles.id, dbSchema.matches.sourceProfileId))
+    .leftJoin(targetProfiles, eq(targetProfiles.id, dbSchema.matches.targetProfileId))
+    .where(
+      and(
+        eq(dbSchema.matches.orgId, orgId),
+        eq(dbSchema.matches.algorithmVersion, MATCHING_ALGORITHM_VERSION),
+        options.spaceId ? eq(dbSchema.matches.spaceId, options.spaceId) : undefined,
+        options.matchType ? eq(dbSchema.matches.matchType, options.matchType) : undefined,
+        options.scoreBand ? eq(dbSchema.matches.scoreBand, options.scoreBand) : undefined,
+      ),
+    )
+    .orderBy(desc(dbSchema.matches.score));
+  const rows = await (limit ? query.limit(limit) : query);
+
+  return rows.map((row) => ({
+    match: {
+      dismissedBySource: row.matchDismissedBySource,
+      explanationText: row.matchExplanationText,
+      hiddenByAdmin: row.matchHiddenByAdmin,
+      id: row.matchId,
+      matchType: row.matchType as MatchType,
+      scoreBand: row.matchScoreBand as MatchRecord["scoreBand"],
+      spaceId: row.matchSpaceId ?? undefined,
+    },
+    sourceProfile: row.sourceProfileId
+      ? { preferredName: row.sourcePreferredName! }
+      : undefined,
+    targetProfile: row.targetProfileId
+      ? { preferredName: row.targetPreferredName! }
+      : undefined,
+  }));
+}
+
+export async function listAdminMatchCardRecordsForSpace(
+  spaceId: string,
+  options: Omit<MatchProfileRecordListOptions, "spaceId"> = {},
+): Promise<AdminMatchCardRecord[]> {
+  const space = await getSpaceById(spaceId);
+  if (!space) return [];
+  return listAdminMatchCardRecordsForOrg(space.orgId, { ...options, spaceId });
+}
+
 export async function addNotification(notification: Notification) {
   if (
     spaceScopedNotificationTypes.has(notification.type) &&
     !notification.spaceId
   ) {
     throw new Error("Content notifications must belong to a Space.");
+  }
+  if (notification.type === "post_mentioned") {
+    if (!notification.sourcePostId || notification.sourceCommentId) {
+      throw new Error("Post mention notifications require a Post source.");
+    }
+    const post = await getPostById(notification.sourcePostId);
+    if (
+      !post ||
+      post.orgId !== notification.orgId ||
+      post.spaceId !== notification.spaceId ||
+      post.hidden ||
+      post.authorMembershipId === notification.membershipId
+    ) {
+      throw new Error("The mention notification source is unavailable.");
+    }
+    const mentions = await listPostMentionsForPostIds([notification.sourcePostId]);
+    if (
+      !mentions.some(
+        (mention) =>
+          mention.postId === notification.sourcePostId &&
+          mention.mentionedMembershipId === notification.membershipId,
+      )
+    ) {
+      throw new Error("The mention notification source is unavailable.");
+    }
+  } else if (notification.type === "comment_mentioned") {
+    if (!notification.sourcePostId || !notification.sourceCommentId) {
+      throw new Error("Comment mention notifications require Post and Comment sources.");
+    }
+    const record = await getCommentRecordById(notification.sourceCommentId);
+    if (
+      !record?.post ||
+      record.comment.postId !== notification.sourcePostId ||
+      record.post.orgId !== notification.orgId ||
+      record.post.spaceId !== notification.spaceId ||
+      record.post.hidden ||
+      record.comment.status !== "visible" ||
+      record.comment.authorMembershipId === notification.membershipId
+    ) {
+      throw new Error("The mention notification source is unavailable.");
+    }
+    const mentions = await listCommentMentionsForCommentIds([
+      notification.sourceCommentId,
+    ]);
+    if (
+      !mentions.some(
+        (mention) =>
+          mention.commentId === notification.sourceCommentId &&
+          mention.postId === notification.sourcePostId &&
+          mention.mentionedMembershipId === notification.membershipId,
+      )
+    ) {
+      throw new Error("The mention notification source is unavailable.");
+    }
+  } else if (notification.sourcePostId || notification.sourceCommentId) {
+    throw new Error("Only mention notifications can include content sources.");
   }
   const membership = await getMembershipById(notification.membershipId);
   const isAccessNotification = notification.type === "membership_approved";
@@ -8548,11 +10493,37 @@ export async function addNotification(notification: Notification) {
     }
     const linkPath = notification.link.split(/[?#]/, 1)[0];
     const spacePath = `/s/${space.slug}`;
+    let canLinkToMentoringWorkspace = false;
     if (
-      !linkPath.startsWith("/org/") ||
-      (linkPath !== spacePath &&
-        !linkPath.endsWith(spacePath) &&
-        !linkPath.includes(`${spacePath}/`))
+      notification.type === "intro_requested" &&
+      membership.mentorStatus === "approved" &&
+      /^\/org\/[^/]+\/mentoring$/.test(linkPath)
+    ) {
+      const [organization, pendingMentoringRequests] = await Promise.all([
+        getOrganizationById(notification.orgId),
+        listIntroRequestsForMembershipInSpace(
+          space.id,
+          membership.id,
+          {
+            direction: "incoming",
+            kind: "mentoring",
+            limit: 1,
+            status: "pending",
+          },
+        ),
+      ]);
+      canLinkToMentoringWorkspace = Boolean(
+        organization &&
+          linkPath === `/org/${organization.slug}/mentoring` &&
+          pendingMentoringRequests.length,
+      );
+    }
+    if (
+      !canLinkToMentoringWorkspace &&
+      (!linkPath.startsWith("/org/") ||
+        (linkPath !== spacePath &&
+          !linkPath.endsWith(spacePath) &&
+          !linkPath.includes(`${spacePath}/`)))
     ) {
       throw new Error("Space notification link must target its owning Space.");
     }
@@ -8561,11 +10532,24 @@ export async function addNotification(notification: Notification) {
     }
   }
   if (!usesDatabase) {
-    getStore().notifications.unshift(notification);
+    const store = getStore();
+    const duplicate = store.notifications.some(
+      (candidate) =>
+        candidate.membershipId === notification.membershipId &&
+        candidate.type === notification.type &&
+        ((notification.type === "post_mentioned" &&
+          candidate.sourcePostId === notification.sourcePostId) ||
+          (notification.type === "comment_mentioned" &&
+            candidate.sourceCommentId === notification.sourceCommentId)),
+    );
+    if (!duplicate) store.notifications.unshift(notification);
     return;
   }
 
-  await getDb().insert(dbSchema.notifications).values(notificationInsert(notification));
+  await getDb()
+    .insert(dbSchema.notifications)
+    .values(notificationInsert(notification))
+    .onConflictDoNothing();
 }
 
 export async function addAnalyticsEvent(event: AnalyticsEvent) {
@@ -8622,6 +10606,265 @@ export async function createPostInSpace(
   return createPost({ ...input, visibility: "space_only" }, options);
 }
 
+export interface RichPostImageClaim {
+  id: string;
+  alt?: string;
+  position: number;
+}
+
+export interface RichMentionInput {
+  membershipId: string;
+  label: string;
+  start: number;
+  end: number;
+}
+
+async function assertMentionLabelsMatchProfiles(
+  orgId: string,
+  mentions: RichMentionInput[],
+) {
+  const membershipIds = [
+    ...new Set(mentions.map((mention) => mention.membershipId)),
+  ];
+  if (!membershipIds.length) return;
+  const records = await listMembershipProfileRecordsByIds(membershipIds, {
+    orgId,
+  });
+  const profileByMembershipId = new Map(
+    records.flatMap((record) =>
+      record.profile
+        ? ([[record.membership.id, record.profile]] as const)
+        : [],
+    ),
+  );
+  if (
+    mentions.some((mention) => {
+      const profile = profileByMembershipId.get(mention.membershipId);
+      return !profile || mention.label !== mentionLabelForProfile(profile);
+    })
+  ) {
+    throw new Error("One or more mention labels do not match the selected member.");
+  }
+}
+
+export async function createRichPostInSpace(
+  input: Omit<Post, "id" | "createdAt" | "updatedAt" | "visibility"> & {
+    spaceId: string;
+    visibility?: "space_only";
+  },
+  richContent: {
+    images: RichPostImageClaim[];
+    linkPreviewId?: string;
+    mentions: RichMentionInput[];
+  },
+) {
+  if (richContent.images.length > 4) throw new Error("Attach no more than four images.");
+  if (
+    new Set(richContent.images.map((image) => image.id)).size !==
+      richContent.images.length ||
+    new Set(richContent.images.map((image) => image.position)).size !==
+      richContent.images.length
+  ) {
+    throw new Error("Attached images must be unique and have unique positions.");
+  }
+  if (
+    richContent.images.some(
+      (image) =>
+        image.position < 0 ||
+        image.position >= richContent.images.length ||
+        (image.alt?.length ?? 0) > 300,
+    )
+  ) {
+    throw new Error("Attached image metadata is invalid.");
+  }
+  const validatedMentions = validateMentionRanges(input.body, richContent.mentions);
+  if (!validatedMentions.success) {
+    throw new Error(validatedMentions.issues[0] ?? "Mentions are invalid.");
+  }
+  const mentionedMembershipIds = [
+    ...new Set(validatedMentions.mentions.map((mention) => mention.membershipId)),
+  ];
+  if (mentionedMembershipIds.includes(input.authorMembershipId)) {
+    throw new Error("You cannot mention yourself.");
+  }
+  const space = await requireActiveMembershipsInSpace(input.spaceId, [
+    input.authorMembershipId,
+    ...mentionedMembershipIds,
+  ]);
+  if (space.orgId !== input.orgId) throw new Error("Space not found.");
+  const mentionableMembershipIds = new Set(
+    await listMentionableMembershipIdsForSpace(
+      input.spaceId,
+      mentionedMembershipIds,
+    ),
+  );
+  if (
+    mentionedMembershipIds.some(
+      (membershipId) => !mentionableMembershipIds.has(membershipId),
+    )
+  ) {
+    throw new Error("One or more mentioned members are unavailable.");
+  }
+  await assertMentionLabelsMatchProfiles(
+    input.orgId,
+    validatedMentions.mentions,
+  );
+
+  const now = new Date().toISOString();
+  const post: Post = {
+    id: `pst_${nanoid(8)}`,
+    ...input,
+    visibility: "space_only",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const mentionRows: PostMention[] = validatedMentions.mentions.map((mention) => ({
+    id: `pmn_${nanoid(10)}`,
+    orgId: input.orgId,
+    spaceId: input.spaceId,
+    postId: post.id,
+    mentionedMembershipId: mention.membershipId,
+    label: mention.label,
+    start: mention.start,
+    end: mention.end,
+    createdAt: now,
+  }));
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const imageById = new Map(store.postImages.map((image) => [image.id, image]));
+    const claimedImages = richContent.images.map((claim) => imageById.get(claim.id));
+    if (
+      claimedImages.some(
+        (image) =>
+          !image ||
+          image.orgId !== input.orgId ||
+          image.spaceId !== input.spaceId ||
+          image.uploaderMembershipId !== input.authorMembershipId ||
+          image.postId ||
+          image.uploadStatus !== "ready" ||
+          image.moderationStatus !== "visible",
+      )
+    ) {
+      throw new Error("One or more attached images are unavailable.");
+    }
+    const preview = richContent.linkPreviewId
+      ? store.postLinkPreviews.find((candidate) => candidate.id === richContent.linkPreviewId)
+      : undefined;
+    if (
+      richContent.linkPreviewId &&
+      (!preview ||
+        preview.orgId !== input.orgId ||
+        preview.spaceId !== input.spaceId ||
+        preview.uploaderMembershipId !== input.authorMembershipId ||
+        preview.postId ||
+        preview.fetchStatus !== "ready" ||
+        preview.moderationStatus !== "visible")
+    ) {
+      throw new Error("The link preview is unavailable.");
+    }
+
+    store.posts.unshift(post);
+    richContent.images.forEach((claim) => {
+      const image = imageById.get(claim.id)!;
+      image.postId = post.id;
+      image.alt = claim.alt?.trim() || undefined;
+      image.position = claim.position;
+      image.updatedAt = now;
+    });
+    if (preview) {
+      preview.postId = post.id;
+      preview.updatedAt = now;
+    }
+    store.postMentions.push(...mentionRows);
+    return post;
+  }
+
+  await getTransactionDb().transaction(async (tx) => {
+    const imageIds = richContent.images.map((image) => image.id);
+    const imageRows = imageIds.length
+      ? await tx
+          .select()
+          .from(dbSchema.postImages)
+          .where(
+            and(
+              inArray(dbSchema.postImages.id, imageIds),
+              eq(dbSchema.postImages.orgId, input.orgId),
+              eq(dbSchema.postImages.spaceId, input.spaceId),
+              eq(dbSchema.postImages.uploaderMembershipId, input.authorMembershipId),
+              eq(dbSchema.postImages.uploadStatus, "ready"),
+              eq(dbSchema.postImages.moderationStatus, "visible"),
+              sql`${dbSchema.postImages.postId} is null`,
+            ),
+          )
+      : [];
+    if (imageRows.length !== imageIds.length) {
+      throw new Error("One or more attached images are unavailable.");
+    }
+
+    const previewRows = richContent.linkPreviewId
+      ? await tx
+          .select()
+          .from(dbSchema.postLinkPreviews)
+          .where(
+            and(
+              eq(dbSchema.postLinkPreviews.id, richContent.linkPreviewId),
+              eq(dbSchema.postLinkPreviews.orgId, input.orgId),
+              eq(dbSchema.postLinkPreviews.spaceId, input.spaceId),
+              eq(
+                dbSchema.postLinkPreviews.uploaderMembershipId,
+                input.authorMembershipId,
+              ),
+              eq(dbSchema.postLinkPreviews.fetchStatus, "ready"),
+              eq(dbSchema.postLinkPreviews.moderationStatus, "visible"),
+              sql`${dbSchema.postLinkPreviews.postId} is null`,
+            ),
+          )
+      : [];
+    if (richContent.linkPreviewId && previewRows.length !== 1) {
+      throw new Error("The link preview is unavailable.");
+    }
+
+    await tx.insert(dbSchema.posts).values(postInsert(post));
+    for (const claim of richContent.images) {
+      const rows = await tx
+        .update(dbSchema.postImages)
+        .set({
+          postId: post.id,
+          alt: claim.alt?.trim() || null,
+          position: claim.position,
+          updatedAt: new Date(now),
+        })
+        .where(
+          and(
+            eq(dbSchema.postImages.id, claim.id),
+            sql`${dbSchema.postImages.postId} is null`,
+          ),
+        )
+        .returning({ id: dbSchema.postImages.id });
+      if (rows.length !== 1) throw new Error("An attached image was claimed elsewhere.");
+    }
+    if (richContent.linkPreviewId) {
+      const rows = await tx
+        .update(dbSchema.postLinkPreviews)
+        .set({ postId: post.id, updatedAt: new Date(now) })
+        .where(
+          and(
+            eq(dbSchema.postLinkPreviews.id, richContent.linkPreviewId),
+            sql`${dbSchema.postLinkPreviews.postId} is null`,
+          ),
+        )
+        .returning({ id: dbSchema.postLinkPreviews.id });
+      if (rows.length !== 1) throw new Error("The link preview was claimed elsewhere.");
+    }
+    if (mentionRows.length) {
+      await tx.insert(dbSchema.postMentions).values(mentionRows.map(postMentionInsert));
+    }
+  });
+
+  return post;
+}
+
 export async function createComment(
   input: Omit<Comment, "id" | "createdAt" | "updatedAt" | "status">,
   options: { orgId?: string; recordAnalytics?: boolean } = {},
@@ -8671,6 +10914,84 @@ export async function createCommentInSpace(
     orgId: space.orgId,
     recordAnalytics: options.recordAnalytics,
   });
+}
+
+export async function createRichCommentInSpace(
+  spaceId: string,
+  input: Omit<Comment, "id" | "createdAt" | "updatedAt" | "status" | "mentions">,
+  mentions: RichMentionInput[],
+) {
+  const validatedMentions = validateMentionRanges(input.body, mentions);
+  if (!validatedMentions.success) {
+    throw new Error(validatedMentions.issues[0] ?? "Mentions are invalid.");
+  }
+  const mentionedMembershipIds = [
+    ...new Set(validatedMentions.mentions.map((mention) => mention.membershipId)),
+  ];
+  if (mentionedMembershipIds.includes(input.authorMembershipId)) {
+    throw new Error("You cannot mention yourself.");
+  }
+  const [space, post] = await Promise.all([
+    requireActiveMembershipsInSpace(spaceId, [
+      input.authorMembershipId,
+      ...mentionedMembershipIds,
+    ]),
+    getPostByIdInSpace(spaceId, input.postId),
+  ]);
+  if (!post || post.orgId !== space.orgId) {
+    throw new Error("Post not found in this community or event.");
+  }
+  const mentionableMembershipIds = new Set(
+    await listMentionableMembershipIdsForSpace(spaceId, mentionedMembershipIds),
+  );
+  if (
+    mentionedMembershipIds.some(
+      (membershipId) => !mentionableMembershipIds.has(membershipId),
+    )
+  ) {
+    throw new Error("One or more mentioned members are unavailable.");
+  }
+  await assertMentionLabelsMatchProfiles(
+    space.orgId,
+    validatedMentions.mentions,
+  );
+  const now = new Date().toISOString();
+  const comment: Comment = {
+    id: `cmt_${nanoid(8)}`,
+    status: "visible",
+    ...input,
+    mentions: validatedMentions.mentions,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const mentionRows: CommentMention[] = validatedMentions.mentions.map((mention) => ({
+    id: `cmn_${nanoid(10)}`,
+    orgId: space.orgId,
+    spaceId,
+    postId: post.id,
+    commentId: comment.id,
+    mentionedMembershipId: mention.membershipId,
+    label: mention.label,
+    start: mention.start,
+    end: mention.end,
+    createdAt: now,
+  }));
+
+  if (!usesDatabase) {
+    const store = getStore();
+    store.comments.unshift(comment);
+    store.commentMentions.push(...mentionRows);
+    return comment;
+  }
+  await getTransactionDb().transaction(async (tx) => {
+    await tx.insert(dbSchema.comments).values(commentInsert(comment));
+    if (mentionRows.length) {
+      await tx
+        .insert(dbSchema.commentMentions)
+        .values(mentionRows.map(commentMentionInsert));
+    }
+  });
+  return comment;
 }
 
 export async function upsertProfile(
@@ -8741,12 +11062,13 @@ export async function upsertProfile(
 }
 
 export async function createIntroRequest(
-  input: Omit<IntroRequest, "id" | "createdAt" | "updatedAt">,
+  input: CreateIntroRequestInput,
   options: { recordAnalytics?: boolean } = {},
 ) {
   const intro: IntroRequest = {
     id: `intro_${nanoid(8)}`,
     ...input,
+    kind: input.kind ?? "general",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -8764,7 +11086,11 @@ export async function createIntroRequest(
       spaceId: input.spaceId,
       membershipId: input.requesterMembershipId,
       eventName: "intro_requested",
-      payload: { receiverMembershipId: input.receiverMembershipId, sourceType: input.sourceType },
+      payload: {
+        receiverMembershipId: input.receiverMembershipId,
+        sourceType: input.sourceType,
+        kind: intro.kind,
+      },
       createdAt: new Date().toISOString(),
     });
   }
@@ -8772,7 +11098,7 @@ export async function createIntroRequest(
 }
 
 export async function createIntroRequestInSpace(
-  input: Omit<IntroRequest, "id" | "createdAt" | "updatedAt"> & {
+  input: CreateIntroRequestInput & {
     spaceId: string;
   },
   options: { recordAnalytics?: boolean } = {},
@@ -8784,26 +11110,153 @@ export async function createIntroRequestInSpace(
   if (space.orgId !== input.orgId) {
     throw new Error("The selected community or event could not be found.");
   }
-  const pending = await getPendingIntroRequestBetweenMembershipsInOrg(
-    input.orgId,
-    input.requesterMembershipId,
-    input.receiverMembershipId,
-  );
-  if (pending) {
-    throw new Error("These two people already have a pending introduction request here.");
+  if (!usesDatabase) {
+    const pending = await getPendingIntroRequestBetweenMembershipsInOrg(
+      input.orgId,
+      input.requesterMembershipId,
+      input.receiverMembershipId,
+    );
+    if (pending) {
+      throw new Error("These two people already have a pending introduction request here.");
+    }
+    const store = getStore();
+    const receiver = store.memberships.find(
+      (membership) => membership.id === input.receiverMembershipId,
+    );
+    const receiverProfile = store.profiles.find(
+      (profile) => profile.membershipId === input.receiverMembershipId,
+    );
+    if (!receiverProfile?.introOptIn) {
+      throw new Error("This member is not available for introductions.");
+    }
+    if (input.kind === "mentoring") {
+      if (
+        receiver?.mentorStatus !== "approved" ||
+        !receiverProfile.offeringMatchTypes.includes("mentor_match")
+      ) {
+        throw new Error("This mentor is no longer accepting mentoring requests.");
+      }
+    }
+    return createIntroRequest(input, options);
   }
-  return createIntroRequest(input, options);
+
+  return getTransactionDb().transaction(async (tx) => {
+    const [receiverRow] = await tx
+      .select()
+      .from(dbSchema.memberships)
+      .where(
+        and(
+          eq(dbSchema.memberships.id, input.receiverMembershipId),
+          eq(dbSchema.memberships.orgId, input.orgId),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!receiverRow || receiverRow.accountStatus !== "connected") {
+      throw new Error("Both people need active access to this community or event.");
+    }
+
+    const [receiverProfileRow] = await tx
+      .select({
+        introOptIn: dbSchema.profiles.introOptIn,
+        offeringMatchTypes: dbSchema.profiles.offeringMatchTypes,
+      })
+      .from(dbSchema.profiles)
+      .where(eq(dbSchema.profiles.membershipId, input.receiverMembershipId))
+      .limit(1);
+    if (!receiverProfileRow?.introOptIn) {
+      throw new Error("This member is not available for introductions.");
+    }
+
+    if (input.kind === "mentoring") {
+      if (
+        receiverRow.mentorStatus !== "approved" ||
+        !receiverProfileRow.offeringMatchTypes.includes("mentor_match")
+      ) {
+        throw new Error("This mentor is no longer accepting mentoring requests.");
+      }
+    }
+
+    const [pendingRow] = await tx
+      .select({ id: dbSchema.introRequests.id })
+      .from(dbSchema.introRequests)
+      .where(
+        and(
+          eq(dbSchema.introRequests.orgId, input.orgId),
+          eq(dbSchema.introRequests.status, "pending"),
+          or(
+            and(
+              eq(
+                dbSchema.introRequests.requesterMembershipId,
+                input.requesterMembershipId,
+              ),
+              eq(
+                dbSchema.introRequests.receiverMembershipId,
+                input.receiverMembershipId,
+              ),
+            ),
+            and(
+              eq(
+                dbSchema.introRequests.requesterMembershipId,
+                input.receiverMembershipId,
+              ),
+              eq(
+                dbSchema.introRequests.receiverMembershipId,
+                input.requesterMembershipId,
+              ),
+            ),
+          ),
+        ),
+      )
+      .limit(1);
+    if (pendingRow) {
+      throw new Error("These two people already have a pending introduction request here.");
+    }
+
+    const now = new Date().toISOString();
+    const intro: IntroRequest = {
+      id: `intro_${nanoid(8)}`,
+      ...input,
+      kind: input.kind ?? "general",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await tx.insert(dbSchema.introRequests).values(introRequestInsert(intro));
+    if (options.recordAnalytics !== false) {
+      await tx.insert(dbSchema.analyticsEvents).values(
+        analyticsEventInsert({
+          id: `evt_${nanoid(8)}`,
+          orgId: input.orgId,
+          spaceId: input.spaceId,
+          membershipId: input.requesterMembershipId,
+          eventName: "intro_requested",
+          payload: {
+            receiverMembershipId: input.receiverMembershipId,
+            sourceType: input.sourceType,
+            kind: intro.kind,
+          },
+          createdAt: now,
+        }),
+      );
+    }
+    return intro;
+  });
 }
 
 export async function respondToIntroRequest(
   introRequestId: string,
   status: "accepted" | "declined",
-  options: { recordAnalytics?: boolean } = {},
+  options: { recordAnalytics?: boolean; spaceId?: string } = {},
 ) {
   const now = new Date().toISOString();
 
   if (!usesDatabase) {
-    const intro = getStore().introRequests.find((request) => request.id === introRequestId);
+    const intro = getStore().introRequests.find(
+      (request) =>
+        request.id === introRequestId &&
+        request.status === "pending" &&
+        (!options.spaceId || request.spaceId === options.spaceId),
+    );
     if (!intro) {
       return null;
     }
@@ -8838,7 +11291,15 @@ export async function respondToIntroRequest(
       updatedAt: new Date(now),
       contactRevealedAt: status === "accepted" ? new Date(now) : undefined,
     })
-    .where(eq(dbSchema.introRequests.id, introRequestId))
+    .where(
+      and(
+        eq(dbSchema.introRequests.id, introRequestId),
+        eq(dbSchema.introRequests.status, "pending"),
+        options.spaceId
+          ? eq(dbSchema.introRequests.spaceId, options.spaceId)
+          : undefined,
+      ),
+    )
     .returning();
 
   if (!row) {
@@ -8866,8 +11327,10 @@ export async function respondToIntroRequestInSpace(
   status: "accepted" | "declined",
   options: { recordAnalytics?: boolean } = {},
 ) {
-  if (!(await getIntroRequestByIdInSpace(spaceId, introRequestId))) return null;
-  return respondToIntroRequest(introRequestId, status, options);
+  return respondToIntroRequest(introRequestId, status, {
+    ...options,
+    spaceId,
+  });
 }
 
 export async function updateMembershipStatus(
@@ -8913,6 +11376,97 @@ export async function updateMembershipStatus(
 
   if (shouldRecomputeMatches) {
     await recomputeMatchesForMembership(row.orgId, row.id);
+  }
+  return updatedMembership;
+}
+
+export async function updateMembershipMentorStatus(
+  membershipId: string,
+  mentorStatus: MentorStatus,
+  options: {
+    reviewedByMembershipId: string;
+    existingMembership?: Membership;
+    recomputeMatches?: boolean;
+  },
+) {
+  if (!["not_mentor", "needs_review", "approved"].includes(mentorStatus)) {
+    throw new Error("A valid mentor designation is required.");
+  }
+
+  const membership = options.existingMembership ?? (await getMembershipById(membershipId));
+  if (!membership) return null;
+
+  const reviewer = await requireMentorReviewerForOrg(
+    membership.orgId,
+    options.reviewedByMembershipId,
+  );
+
+  const now = new Date().toISOString();
+  const mentorReviewedAt = mentorStatus === "needs_review" ? undefined : now;
+  const mentorReviewedByMembershipId =
+    mentorStatus === "needs_review" ? undefined : reviewer.id;
+  const shouldExpirePendingMentoring = mentorStatus !== "approved";
+  const shouldRecomputeMatches = options.recomputeMatches ?? true;
+
+  let updatedMembership: Membership;
+  if (!usesDatabase) {
+    membership.mentorStatus = mentorStatus;
+    membership.mentorReviewedAt = mentorReviewedAt;
+    membership.mentorReviewedByMembershipId = mentorReviewedByMembershipId;
+    membership.updatedAt = now;
+    if (shouldExpirePendingMentoring) {
+      for (const request of getStore().introRequests) {
+        if (
+          request.receiverMembershipId === membership.id &&
+          request.kind === "mentoring" &&
+          request.status === "pending"
+        ) {
+          request.status = "expired";
+          request.respondedAt = now;
+          request.updatedAt = now;
+        }
+      }
+    }
+    updatedMembership = membership;
+  } else {
+    updatedMembership = await getTransactionDb().transaction(async (tx) => {
+      const [row] = await tx
+        .update(dbSchema.memberships)
+        .set({
+          mentorStatus,
+          mentorReviewedAt: maybeDate(mentorReviewedAt) ?? null,
+          mentorReviewedByMembershipId: mentorReviewedByMembershipId ?? null,
+          updatedAt: new Date(now),
+        })
+        .where(eq(dbSchema.memberships.id, membership.id))
+        .returning();
+      if (!row) {
+        throw new Error("The member could not be found.");
+      }
+
+      if (shouldExpirePendingMentoring) {
+        await tx
+          .update(dbSchema.introRequests)
+          .set({
+            status: "expired",
+            respondedAt: new Date(now),
+            updatedAt: new Date(now),
+          })
+          .where(
+            and(
+              eq(dbSchema.introRequests.receiverMembershipId, membership.id),
+              eq(dbSchema.introRequests.kind, "mentoring"),
+              eq(dbSchema.introRequests.status, "pending"),
+            ),
+          );
+      }
+
+      return membershipFromRow(row);
+    });
+  }
+
+  if (shouldRecomputeMatches) {
+    await recomputeMatchesForMembership(membership.orgId, membership.id);
   }
   return updatedMembership;
 }
@@ -9098,6 +11652,115 @@ export async function updatePostModeration(
   return row ? postFromRow(row) : null;
 }
 
+export async function updatePostImageModeration(
+  imageId: string,
+  status: PostImage["moderationStatus"],
+  moderatorMembershipId: string,
+) {
+  const moderatedAt = new Date().toISOString();
+  if (!usesDatabase) {
+    const store = getStore();
+    const image = store.postImages.find((candidate) => candidate.id === imageId);
+    if (!image?.postId) return null;
+    image.moderationStatus = status;
+    image.moderatedByMembershipId = moderatorMembershipId;
+    image.moderatedAt = moderatedAt;
+    image.updatedAt = moderatedAt;
+    let postHidden = false;
+    if (status === "removed") {
+      const post = store.posts.find((candidate) => candidate.id === image.postId);
+      const hasVisibleImage = store.postImages.some(
+        (candidate) =>
+          candidate.postId === image.postId &&
+          candidate.uploadStatus === "ready" &&
+          candidate.moderationStatus === "visible",
+      );
+      if (post && !post.body.trim() && !hasVisibleImage) {
+        post.hidden = true;
+        post.updatedAt = moderatedAt;
+        postHidden = true;
+      }
+    }
+    return { image, postHidden };
+  }
+
+  return getTransactionDb().transaction(async (tx) => {
+    const [row] = await tx
+      .update(dbSchema.postImages)
+      .set({
+        moderationStatus: status,
+        moderatedByMembershipId: moderatorMembershipId,
+        moderatedAt: new Date(moderatedAt),
+        updatedAt: new Date(moderatedAt),
+      })
+      .where(and(eq(dbSchema.postImages.id, imageId), sql`${dbSchema.postImages.postId} is not null`))
+      .returning();
+    if (!row) return null;
+    let postHidden = false;
+    if (status === "removed" && row.postId) {
+      const [postRow] = await tx
+        .select()
+        .from(dbSchema.posts)
+        .where(eq(dbSchema.posts.id, row.postId))
+        .limit(1)
+        .for("update");
+      const [visibleRow] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(dbSchema.postImages)
+        .where(
+          and(
+            eq(dbSchema.postImages.postId, row.postId),
+            eq(dbSchema.postImages.uploadStatus, "ready"),
+            eq(dbSchema.postImages.moderationStatus, "visible"),
+          ),
+        );
+      if (postRow && !postRow.body.trim() && (visibleRow?.count ?? 0) === 0) {
+        await tx
+          .update(dbSchema.posts)
+          .set({ hidden: true, updatedAt: new Date(moderatedAt) })
+          .where(eq(dbSchema.posts.id, row.postId));
+        postHidden = true;
+      }
+    }
+    return { image: postImageFromRow(row), postHidden };
+  });
+}
+
+export async function updatePostLinkPreviewModeration(
+  previewId: string,
+  status: PostLinkPreview["moderationStatus"],
+  moderatorMembershipId: string,
+) {
+  const moderatedAt = new Date().toISOString();
+  if (!usesDatabase) {
+    const preview = getStore().postLinkPreviews.find(
+      (candidate) => candidate.id === previewId && Boolean(candidate.postId),
+    );
+    if (!preview) return null;
+    preview.moderationStatus = status;
+    preview.moderatedByMembershipId = moderatorMembershipId;
+    preview.moderatedAt = moderatedAt;
+    preview.updatedAt = moderatedAt;
+    return preview;
+  }
+  const [row] = await getDb()
+    .update(dbSchema.postLinkPreviews)
+    .set({
+      moderationStatus: status,
+      moderatedByMembershipId: moderatorMembershipId,
+      moderatedAt: new Date(moderatedAt),
+      updatedAt: new Date(moderatedAt),
+    })
+    .where(
+      and(
+        eq(dbSchema.postLinkPreviews.id, previewId),
+        sql`${dbSchema.postLinkPreviews.postId} is not null`,
+      ),
+    )
+    .returning();
+  return row ? postLinkPreviewFromRow(row) : null;
+}
+
 export async function updateCommentStatus(
   commentId: string,
   status: Comment["status"],
@@ -9200,7 +11863,7 @@ export async function updateOrganizationSettings(
   return row ? organizationFromRow(row) : null;
 }
 
-async function getOrganizationById(orgId: string) {
+export async function getOrganizationById(orgId: string) {
   if (!usesDatabase) {
     return getStore().organizations.find((candidate) => candidate.id === orgId);
   }
@@ -9615,7 +12278,7 @@ async function replaceMatchesForSpace(space: Space, matches: MatchRecord[]) {
   }
 }
 
-export async function recomputeMatchesForSpace(spaceId: string) {
+async function recomputeMatchesForSpaceUnlocked(spaceId: string) {
   const input = await getSpaceMatchRecomputeInput(spaceId);
   if (!input) return [];
   const run = await beginMatchRun(input.organization.id, input.space.id);
@@ -9632,14 +12295,17 @@ export async function recomputeMatchesForSpace(spaceId: string) {
       return [];
     }
 
-    const profileResult = await prepareProfileEmbeddings(
-      input.records.map((record) => record.profile),
+    const eligibleRecords = input.records.filter((record) =>
+      isSpaceMatchingMemberEligible(input.space, record),
     );
-    const intentResult = await prepareSpaceIntentEmbeddings(input.records, input.posts);
+    const profileResult = await prepareProfileEmbeddings(
+      eligibleRecords.map((record) => record.profile),
+    );
+    const intentResult = await prepareSpaceIntentEmbeddings(eligibleRecords, input.posts);
     const matches = recomputeMatchesForSpaceMembers(
       input.organization,
       input.space,
-      input.records,
+      eligibleRecords,
       input.configs,
       { runId: run.id },
     );
@@ -9647,10 +12313,10 @@ export async function recomputeMatchesForSpace(spaceId: string) {
 
     const degradedReason = profileResult.degradedReason ?? intentResult.degradedReason;
     await finishMatchRun(run, "completed", {
-      algorithmVersion: matches[0]?.algorithmVersion ?? "hybrid-v2",
+      algorithmVersion: matches[0]?.algorithmVersion ?? MATCHING_ALGORITHM_VERSION,
       spaceId: input.space.id,
       activeTypes: input.configs.filter((config) => config.active).length,
-      eligibleProfiles: input.records.length,
+      eligibleProfiles: eligibleRecords.length,
       matches: matches.length,
       profileEmbeddingsRefreshed: profileResult.refreshed,
       intentEmbeddingsRefreshed: intentResult.refreshed,
@@ -9668,6 +12334,10 @@ export async function recomputeMatchesForSpace(spaceId: string) {
   }
 }
 
+export async function recomputeMatchesForSpace(spaceId: string) {
+  return withSpaceRecomputeLock(spaceId, () => recomputeMatchesForSpaceUnlocked(spaceId));
+}
+
 export async function recomputeMatchesForOrg(orgId: string) {
   const spaces = (await listSpacesForOrg(orgId)).filter(spaceAllowsMatching);
   const matches: MatchRecord[] = [];
@@ -9675,6 +12345,65 @@ export async function recomputeMatchesForOrg(orgId: string) {
     matches.push(...(await recomputeMatchesForSpace(space.id)));
   }
   return matches;
+}
+
+export async function recomputeMatchesForAllOrganizations(
+  options: {
+    recomputeSpace?: (spaceId: string) => Promise<MatchRecord[]>;
+  } = {},
+) {
+  const organizations = usesDatabase
+    ? (await getDb().select().from(dbSchema.organizations)).map(organizationFromRow)
+    : [...getStore().organizations];
+  const recomputeSpace = options.recomputeSpace ?? recomputeMatchesForSpace;
+  const results: Array<{
+    orgId: string;
+    slug: string;
+    matchCount: number;
+    spaceCount: number;
+    successfulSpaceCount: number;
+    failures: Array<{ spaceId: string; error: string }>;
+  }> = [];
+
+  for (const organization of organizations) {
+    const spaces = (await listSpacesForOrg(organization.id)).filter(spaceAllowsMatching);
+    const matches: MatchRecord[] = [];
+    const failures: Array<{ spaceId: string; error: string }> = [];
+    for (const space of spaces) {
+      try {
+        matches.push(...(await recomputeSpace(space.id)));
+      } catch (error) {
+        console.error("[wavesparks] Scheduled match refresh failed", {
+          orgId: organization.id,
+          spaceId: space.id,
+          error,
+        });
+        failures.push({
+          spaceId: space.id,
+          error: "Matches could not be refreshed for this community or event.",
+        });
+      }
+    }
+    results.push({
+      orgId: organization.id,
+      slug: organization.slug,
+      matchCount: matches.length,
+      spaceCount: spaces.length,
+      successfulSpaceCount: spaces.length - failures.length,
+      failures,
+    });
+  }
+
+  const failedSpaceCount = results.reduce(
+    (sum, result) => sum + result.failures.length,
+    0,
+  );
+  return {
+    organizationCount: results.length,
+    matchCount: results.reduce((sum, result) => sum + result.matchCount, 0),
+    failedSpaceCount,
+    organizations: results,
+  };
 }
 
 export async function getAnalyticsSnapshot(orgId: string) {
@@ -9774,7 +12503,7 @@ async function getAnalyticsSnapshotFromDatabase(orgId: string): Promise<OrgAnaly
         and(
           eq(dbSchema.introRequests.orgId, orgId),
           eq(dbSchema.introRequests.status, "accepted"),
-          eq(dbSchema.introRequests.introPurpose, "mentor guidance"),
+          eq(dbSchema.introRequests.kind, "mentoring"),
         ),
       ),
     getDb()

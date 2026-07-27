@@ -4,12 +4,13 @@ This guide explains how invitations, My Spaces, Main Community, Events, profiles
 
 ## The model in one sentence
 
-Your Clerk account connects you to Wavesparks, and a separate invitation controls access to each Main Community or Event Space.
+Clerk signs you in; Wavesparks verifies your personal invitation and controls access to each Main Community or Event Space.
 
 | Area | Scope |
 | --- | --- |
 | Sign-in, password, primary email, session | Clerk account |
-| Global role and safety status | Wavesparks organization account |
+| Account permissions and safety status | Wavesparks organization account |
+| Mentor designation | Wavesparks organization account; independent of permissions and Space access |
 | Main Community access | Main Community only |
 | Event access | That Event only |
 | Core profile | Shared across every Space |
@@ -34,11 +35,11 @@ flowchart LR
 
 Wavesparks has no public registration or shared invitation code.
 
-An Admin assigns your email to Main Community, an Event, or both. If the email is new to Clerk, Clerk sends a private, expiring account invitation. If you already have a Clerk account, Wavesparks connects it directly and sends a sign-in notification.
+An Admin assigns your email to Main Community, an Event, or both. Clerk sends the identity-invitation email, and Wavesparks places a separate private, expiring, single-use authorization token in that link. The same link works whether you already have a Clerk account or need to create one; it never enrolls you in a Clerk Organization.
 
 Open the newest invitation with the exact invited email. A forwarded, revoked, expired, or already-used ticket may not work. If no email arrives, check spam and ask the Admin to inspect the row-level invitation status or resend it.
 
-You accept the Clerk organization invitation once. After the account is connected, every active Space entitlement already assigned to you becomes available independently.
+After you sign in, Wavesparks checks that Clerk has verified the exact invited email and consumes the invitation once. After the account is connected, every active Space entitlement already assigned to you becomes available independently.
 
 ## 2. Start at My Spaces
 
@@ -60,7 +61,7 @@ There is no anonymous community feed. Signing in without an active entitlement d
 
 Effective access requires all of the following:
 
-1. Your Clerk organization account is connected.
+1. Your verified Clerk user is connected to the invited Wavesparks account.
 2. Your account is not globally suspended or deprovisioned.
 3. Your entitlement for this exact Space is active.
 4. The Space lifecycle permits member access.
@@ -113,6 +114,14 @@ Core profile information includes your identity, professional context, venture i
 
 Private email and WhatsApp details are never used as public directory fields or embedding input.
 
+### Mentor designation and services
+
+An `Approved mentor` badge means an Admin has verified the account's organization-level mentor designation. Participant, Alumni, Guest, Member, and Administrator are separate identities or permissions and may coexist with that badge. Profile labels, archetypes, or affiliation text alone do not make someone an approved mentor.
+
+Approved mentors can publish their mentor service details, offer mentor matching, publish Mentor opportunities, and use `/org/:orgSlug/mentoring` for their own mentoring requests. They still need active access to each source Space, cannot see Admin tools or cross-Space data, and receive contact details only after an introduction is accepted.
+
+Availability and preferred mentee count are informational and may influence ordering; they do not automatically reject a request. Turn off the mentor-matching offering to pause new mentor matches and direct mentoring requests. If approval is revoked, the service profile is retained privately for a future reapproval while new discovery, requests and matching stop.
+
 ## 6. Set intent separately in each Space
 
 The Matches page stores a separate Space intent containing:
@@ -143,6 +152,8 @@ The same global profile may appear in multiple Spaces, but the local intent and 
 
 An introduction starts from a match, member profile, post, or Admin-curated connection and retains its source Space. If the same two people share several Spaces, they can still have only one unresolved request at a time.
 
+Ordinary introductions stay in **Introductions**. A request becomes a mentoring request only when it comes from a canonical mentor match or the approved mentor's **Request mentoring** profile entry point; the server determines that kind and routes it to the mentor's private Mentoring workspace. A client cannot turn a general request into mentoring by changing form data.
+
 Before acceptance:
 
 - Private contact details remain hidden.
@@ -159,7 +170,7 @@ Opening a notification rechecks your current account status, Space entitlement, 
 
 ## 10. Main Community invitations after an Event
 
-An Admin may use **Add to Main Community** after an Event. This creates a separate active Main entitlement immediately; you do not accept a second Clerk organization invitation.
+An Admin may use **Add to Main Community** after an Event. This creates a separate active Main entitlement immediately; a connected account does not need another identity or account invitation.
 
 Your Event remains unchanged and available according to its own lifecycle. Main starts as a new community boundary with its own feed, people, follows, intent, and matches.
 

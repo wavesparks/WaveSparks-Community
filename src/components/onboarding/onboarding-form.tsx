@@ -68,6 +68,8 @@ export function OnboardingForm({
   profile,
   links,
   matchTypeConfigs,
+  canMentor = false,
+  openMentoringDetails = false,
   initialStep = 0,
   returnTo,
 }: {
@@ -75,6 +77,8 @@ export function OnboardingForm({
   profile: Profile;
   links: ProfileLink[];
   matchTypeConfigs: MatchTypeConfig[];
+  canMentor?: boolean;
+  openMentoringDetails?: boolean;
   initialStep?: number;
   returnTo?: string;
 }) {
@@ -547,7 +551,9 @@ export function OnboardingForm({
             </div>
             <div className="space-y-3">
               <p className="text-sm font-semibold text-[var(--ink)]">I can offer</p>
-              {matchTypeConfigs.map((config) => (
+              {matchTypeConfigs
+                .filter((config) => config.slug !== "mentor_match" || canMentor)
+                .map((config) => (
                 <label
                   className="flex min-h-11 items-start gap-3 border-b border-[var(--line)] py-2 text-sm text-[var(--ink)]"
                   key={`offering-${config.slug}`}
@@ -568,7 +574,7 @@ export function OnboardingForm({
                     </span>
                   </span>
                 </label>
-              ))}
+                ))}
             </div>
           </div>
         </fieldset>
@@ -690,15 +696,19 @@ export function OnboardingForm({
             placeholder="Async messages, direct feedback, regular calls…"
           />
         </div>
-        <details
-          className="rounded-lg border border-[var(--line)] p-4 md:col-span-2"
-          id="mentoring_details"
-        >
+        {canMentor ? (
+          <details
+            className="rounded-lg border border-[var(--line)] p-4 md:col-span-2"
+            open={openMentoringDetails || undefined}
+            id="mentoring_details"
+          >
           <summary className="cursor-pointer text-sm font-semibold text-[var(--ink)]">
             Mentoring details (optional)
           </summary>
           <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
-            Open this only if you want to offer structured mentoring.
+            These details appear on your Approved Mentor profile. Preferred capacity is
+            informational; turn off the mentor offering when you want to pause new matches
+            and direct mentoring requests.
           </p>
           <div className="mt-4 grid gap-5 md:grid-cols-2">
             <div>
@@ -718,15 +728,36 @@ export function OnboardingForm({
               />
             </div>
             <div>
+              <Label htmlFor="mentor_functional_strengths">Functional strengths</Label>
+              <Input
+                defaultValue={profile.mentorFunctionalStrengths.join(", ")}
+                id="mentor_functional_strengths"
+                name="mentor_functional_strengths"
+              />
+            </div>
+            <div>
+              <Label htmlFor="mentor_offers">Mentoring formats or offers</Label>
+              <Input
+                defaultValue={profile.mentorOffers.join(", ")}
+                id="mentor_offers"
+                name="mentor_offers"
+              />
+            </div>
+            <div>
               <Label htmlFor="mentor_availability">Mentor availability</Label>
               <Input
                 defaultValue={profile.mentorAvailability}
                 id="mentor_availability"
                 name="mentor_availability"
+                placeholder="For example: occasionally, monthly, or weekly"
               />
+              <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
+                Availability and capacity guide ranking only. To pause new mentor matches
+                and direct mentoring requests, turn off Mentor in the matching offers above.
+              </p>
             </div>
             <div>
-              <Label htmlFor="max_mentees">Maximum number of mentees</Label>
+              <Label htmlFor="max_mentees">Preferred number of mentees</Label>
               <Input
                 defaultValue={profile.maxMentees ?? ""}
                 id="max_mentees"
@@ -745,7 +776,8 @@ export function OnboardingForm({
               />
             </div>
           </div>
-        </details>
+          </details>
+        ) : null}
         <div>
           <Label htmlFor="email_for_intro">
             Email for accepted introductions
@@ -777,6 +809,7 @@ export function OnboardingForm({
             <label className="flex items-center gap-3" key={item.name}>
               <input
                 defaultChecked={item.checked}
+                id={item.name}
                 name={item.name}
                 type="checkbox"
                 value="true"

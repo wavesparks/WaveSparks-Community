@@ -7,6 +7,7 @@ import {
 } from "@/lib/activation";
 import type { Membership, Profile, User } from "@/lib/domain";
 import { emptyProfileForMember } from "@/lib/profile-form";
+import { MATCHING_ALGORITHM_VERSION } from "@/server/matching";
 import {
   createIntroRequest,
   createPost,
@@ -31,9 +32,10 @@ const activationMembership: Membership = {
   id: "mem_activation",
   orgId: "org_wavespark",
   userId: activationUser.id,
-      role: "member",
-      accountStatus: "connected",
-      affiliationType: "current participant",
+  role: "member",
+  mentorStatus: "not_mentor",
+  accountStatus: "connected",
+  affiliationType: "current participant",
   status: "approved",
   archetypes: ["founder"],
   programName: "Activation Program",
@@ -156,7 +158,7 @@ describe("member activation state", () => {
       overlapTags: ["product"],
       scoreBand: "high",
       confidence: "high",
-      algorithmVersion: "hybrid-v2",
+      algorithmVersion: MATCHING_ALGORITHM_VERSION,
       surfacedAt: "2026-01-01T00:00:00.000Z",
       dismissedBySource: false,
       hiddenByAdmin: false,
@@ -250,6 +252,10 @@ describe("status banners", () => {
     expect(getStatusBannerCopy("intro_existing")).toMatchObject({
       title: "Introduction already requested",
     });
+    expect(getStatusBannerCopy("mentoring_requested")).toMatchObject({
+      title: "Mentoring request sent",
+      body: expect.stringContaining("mentor’s response"),
+    });
     expect(getStatusBannerCopy("intro_declined")).toMatchObject({
       title: "Introduction declined",
     });
@@ -263,7 +269,7 @@ describe("status banners", () => {
       title: "Notifications marked read",
     });
     expect(getStatusBannerCopy("member_invited")).toMatchObject({
-      title: "Invitation created",
+      title: "Invitation sent",
     });
     expect(getStatusBannerCopy("member_saved")).toMatchObject({
       title: "Member saved",

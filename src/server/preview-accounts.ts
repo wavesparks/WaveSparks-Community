@@ -2,6 +2,7 @@ import { seedOrganization, seedProfiles } from "@/data/seed-data";
 import type {
   AffiliationType,
   MembershipRole,
+  MentorStatus,
   Profile,
 } from "@/lib/domain";
 import { legacySeekingMatchTypes } from "@/lib/match-config";
@@ -11,11 +12,12 @@ import {
   createManagedAccount,
   grantSpaceMembership,
   listSpacesForOrg,
+  requireMentorReviewerForOrg,
   updateMembershipAccountStatus,
   upsertProfile,
 } from "@/server/store";
 
-export type PreviewAccountKind = "admin" | "mentor" | "founder";
+export type PreviewAccountKind = "admin" | "admin_mentor" | "mentor" | "founder";
 
 export interface PreviewAccountSpec {
   kind: PreviewAccountKind;
@@ -23,6 +25,7 @@ export interface PreviewAccountSpec {
   email: string;
   name: string;
   role: MembershipRole;
+  mentorStatus: MentorStatus;
   affiliationType: AffiliationType;
   archetypes: string[];
   programName: string;
@@ -39,13 +42,29 @@ export const previewAccountSpecs = [
     email: "preview.admin@wavesparks.co",
     name: "Preview Admin",
     role: "org_admin",
+    mentorStatus: "not_mentor",
+    affiliationType: "current participant",
+    archetypes: ["operator"],
+    programName: "Wavesparks Preview",
+    cohortNameOrYear: "Admin",
+    profileTemplateId: "pro_maya",
+    headline: "Preview admin with full member and admin access",
+    shortBio: "Use this account to review member approval, moderation, and admin analytics surfaces.",
+  },
+  {
+    kind: "admin_mentor",
+    label: "Admin + Mentor preview",
+    email: "preview.admin-mentor@wavesparks.co",
+    name: "Preview Admin Mentor",
+    role: "org_admin",
+    mentorStatus: "approved",
     affiliationType: "current participant",
     archetypes: ["operator", "mentor"],
     programName: "Wavesparks Preview",
-    cohortNameOrYear: "Admin",
+    cohortNameOrYear: "Admin + Mentor",
     profileTemplateId: "pro_avery",
-    headline: "Preview admin with full member and admin access",
-    shortBio: "Use this account to review member approval, moderation, and admin analytics surfaces.",
+    headline: "Preview administrator who is also an Approved Mentor",
+    shortBio: "Use this account to verify that administrator permissions and mentor services coexist independently.",
   },
   {
     kind: "mentor",
@@ -53,6 +72,7 @@ export const previewAccountSpecs = [
     email: "preview.mentor@wavesparks.co",
     name: "Preview Mentor",
     role: "member",
+    mentorStatus: "approved",
     affiliationType: "mentor",
     archetypes: ["mentor"],
     programName: "Wavesparks Preview",
@@ -67,6 +87,7 @@ export const previewAccountSpecs = [
     email: "preview.founder@wavesparks.co",
     name: "Preview Founder",
     role: "member",
+    mentorStatus: "not_mentor",
     affiliationType: "current participant",
     archetypes: ["founder", "cofounder_seeker", "mentee"],
     programName: "Wavesparks Preview",
@@ -156,10 +177,13 @@ function buildPreviewProfile(spec: PreviewAccountSpec, membershipId: string) {
 
 export async function provisionPreviewAccounts({
   orgId = seedOrganization.id,
+  reviewedByMembershipId,
 }: {
   orgId?: string;
+  reviewedByMembershipId: string;
 }) {
   const provisioned = [];
+  const reviewer = await requireMentorReviewerForOrg(orgId, reviewedByMembershipId);
   const mainSpace = (await listSpacesForOrg(orgId)).find((space) => space.kind === "main");
   if (!mainSpace) {
     throw new Error("Wavesparks Community is not configured.");
@@ -172,6 +196,9 @@ export async function provisionPreviewAccounts({
       name: spec.name,
       createPasswordCredential: false,
       role: spec.role,
+      mentorStatus: spec.mentorStatus,
+      mentorReviewedByMembershipId:
+        spec.mentorStatus === "approved" ? reviewer.id : undefined,
       status: "approved",
       affiliationType: spec.affiliationType,
       archetypes: [...spec.archetypes],

@@ -41,6 +41,22 @@ async function signInAdmin(page: Page) {
   });
 }
 
+async function signInApprovedMentor(page: Page) {
+  await signInWithLocalAuth(page, {
+    email: "marcus@example.com",
+    name: "Marcus Vale",
+    orgRole: "org:member",
+  });
+}
+
+async function signInAdminWithoutMentor(page: Page) {
+  await signInWithLocalAuth(page, {
+    email: "maya@wavesparks.co",
+    name: "Maya Chen",
+    orgRole: "org:admin",
+  });
+}
+
 async function signInWithoutMainAccess(page: Page) {
   await signInWithLocalAuth(page, {
     email: "priya@example.com",
@@ -92,7 +108,9 @@ async function createEvent(
   }
   await dialog.getByRole("button", { name: "Create Event" }).click();
 
-  await expect(page.getByRole("heading", { name: input.name })).toBeVisible();
+  await expect(page.getByRole("heading", { name: input.name })).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(page.getByRole("status").getByText("Event created")).toBeVisible();
   await expect(
     page.locator("#settings").getByText("Active Event", { exact: true }),
@@ -124,11 +142,11 @@ async function invitePastedListToCurrentEvent(
   await dialog.getByRole("button", { name: "Invite 1 person" }).click();
 
   await expect(
-    dialog.getByRole("status").getByText("Invitation created"),
+    dialog.getByRole("status").getByText("Invitation sent"),
   ).toBeVisible();
-  await expect(dialog.getByText("Invitation created", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Invitation sent", { exact: true })).toBeVisible();
   await expect(dialog.getByText(input.email, { exact: true })).toBeVisible();
-  await expect(dialog.getByText(/^Invitation created\. Access to .+ added\.$/)).toBeVisible();
+  await expect(dialog.getByText(/^Invitation sent\. Access to .+ added\.$/)).toBeVisible();
 }
 
 test.describe("authenticated member Space flows", () => {
@@ -142,6 +160,32 @@ test.describe("authenticated member Space flows", () => {
     await expect(
       page.getByRole("heading", { name: "Updates from Wavesparks Community" }),
     ).toBeVisible();
+    const spaceSwitcher = page.locator("header details").first();
+    await spaceSwitcher.locator("summary").click();
+    const switcherMenu = spaceSwitcher.locator(":scope > div").first();
+    await expect(switcherMenu).toBeVisible();
+    const switcherWinsHitTesting = await switcherMenu.evaluate((menu) => {
+      const bounds = menu.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        bounds.left + bounds.width / 2,
+        bounds.top + bounds.height / 2,
+      );
+      return Boolean(hit && menu.contains(hit));
+    });
+    expect(switcherWinsHitTesting).toBe(true);
+    const switcherBounds = await switcherMenu.boundingBox();
+    expect(switcherBounds).not.toBeNull();
+    expect(switcherBounds!.x).toBeGreaterThanOrEqual(0);
+    expect(switcherBounds!.x + switcherBounds!.width).toBeLessThanOrEqual(
+      page.viewportSize()!.width,
+    );
+    await page.keyboard.press("Escape");
+    await expect(switcherMenu).toBeHidden();
+    await expect(spaceSwitcher.locator("summary")).toBeFocused();
+    await spaceSwitcher.locator("summary").click();
+    await page.getByRole("heading", { name: "Updates from Wavesparks Community" }).click();
+    await expect(switcherMenu).toBeHidden();
+    await expect(page.getByRole("link", { name: "Profile" })).toBeVisible();
     await expect(page.getByText(privatePostTitle, { exact: true })).toBeVisible();
     const privatePostHref = await page
       .getByRole("link", { name: privatePostTitle })
@@ -169,6 +213,20 @@ test.describe("authenticated member Space flows", () => {
     await expect(
       page.getByText("Only members in Wavesparks Community", { exact: true }),
     ).toBeVisible();
+    const firstMatchScore = page.getByRole("meter", { name: "Match score" }).first();
+    await expect(firstMatchScore).toBeVisible();
+    await expect(firstMatchScore).toHaveText(/^\d{1,3}\/100 match$/);
+    const displayedScore = Number((await firstMatchScore.textContent())?.split("/")[0]);
+    expect(displayedScore).toBeGreaterThanOrEqual(1);
+    expect(displayedScore).toBeLessThanOrEqual(100);
+    await expect(firstMatchScore).toHaveAttribute("aria-valuemin", "1");
+    await expect(firstMatchScore).toHaveAttribute("aria-valuemax", "100");
+    await expect(firstMatchScore).toHaveAttribute("aria-valuenow", String(displayedScore));
+    await expect(firstMatchScore).toHaveAttribute(
+      "aria-valuetext",
+      `${displayedScore} out of 100`,
+    );
+    await expect(page.getByText("Possible match", { exact: true })).toHaveCount(0);
 
     await page.goto(sectionHref(mainFeedHref, "opportunities"));
     await expect(
@@ -225,6 +283,72 @@ test.describe("authenticated member Space flows", () => {
 test.describe("authenticated admin Space flows", () => {
   test.skip(!canUseLocalAuth, "This suite uses Playwright local auth.");
 
+  test("mobile Space header stays compact and follows visual keyboard order", async (
+    { page },
+    testInfo,
+  ) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await signInAdmin(page);
+    const mainFeedHref = await openMySpacesAndDiscoverMainFeed(page);
+    await page.goto(mainFeedHref);
+
+    const header = page.locator("header").first();
+    await expect(header).toBeVisible();
+    expect(await header.evaluate((element) => getComputedStyle(element).position)).toBe(
+      "relative",
+    );
+    const headerBounds = await header.boundingBox();
+    expect(headerBounds).not.toBeNull();
+    expect(headerBounds!.height).toBeLessThan(240);
+
+    const home = header.getByRole("link", { name: "Home", exact: true }).first();
+    const switcher = header.locator("details summary");
+    await switcher.click();
+    const switcherMenu = header.locator("details > div").first();
+    await expect(switcherMenu).toBeVisible();
+    const switcherBounds = await switcherMenu.boundingBox();
+    expect(switcherBounds).not.toBeNull();
+    expect(switcherBounds!.x).toBeGreaterThanOrEqual(0);
+    expect(switcherBounds!.x + switcherBounds!.width).toBeLessThanOrEqual(320);
+    await page.keyboard.press("Escape");
+    await expect(switcherMenu).toBeHidden();
+
+    const visibleFocusOrder = await header
+      .locator("a[href]:visible, summary:visible")
+      .evaluateAll((elements) =>
+        elements.slice(0, 6).map(
+          (element) =>
+            element.getAttribute("aria-label") ??
+            element.textContent?.replace(/\s+/g, " ").trim() ??
+            "",
+        ),
+      );
+    expect(visibleFocusOrder).toEqual([
+      "Home",
+      "Wavesparks Community",
+      "Mentoring",
+      "Admin",
+      "Inbox",
+      "Profile",
+    ]);
+
+    // Touch-only device emulation intentionally skips links during synthetic Tab navigation.
+    // The desktop project still exercises a real keyboard at this same 320px viewport.
+    if (testInfo.project.name !== "local-chromium") return;
+
+    await home.focus();
+    await page.keyboard.press("Tab");
+    await expect(switcher).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(header.getByRole("link", { name: "Mentoring" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(header.getByRole("link", { name: "Admin" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(header.getByRole("link", { name: "Inbox" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(header.getByRole("link", { name: "Profile" })).toBeFocused();
+  });
+
   test("admin reaches Community & Events and member management", async ({ page }) => {
     await signInAdmin(page);
     const mainFeedHref = await openMySpacesAndDiscoverMainFeed(page);
@@ -232,6 +356,8 @@ test.describe("authenticated admin Space flows", () => {
     await expect(
       page.getByRole("heading", { name: "Updates from Wavesparks Community" }),
     ).toBeVisible();
+    await expect(page.getByRole("link", { name: "Admin" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Profile" })).toBeVisible();
 
     await page.goto("/org/wavesparks/admin");
     await expect(page.getByRole("heading", { name: "Community overview" })).toBeVisible();
@@ -287,4 +413,46 @@ test.describe("authenticated admin Space flows", () => {
     "accepting a new Event-only invitation and later adding it to Main requires the Clerk E2E fixture",
     async () => {},
   );
+});
+
+test.describe("account permissions and mentor designation combinations", () => {
+  test.skip(!canUseLocalAuth, "This suite uses Playwright local auth.");
+
+  test("Member has neither Admin nor Mentoring access", async ({ page }) => {
+    await signInMember(page);
+    await page.goto("/org/wavesparks/mentoring");
+    await expect(page).toHaveURL(/\/org\/wavesparks\/?$/);
+    await page.goto("/org/wavesparks/admin");
+    await expect(page).toHaveURL(/\/org\/wavesparks\/?$/);
+  });
+
+  test("Approved Mentor has Mentoring but no Admin access", async ({ page }) => {
+    await signInApprovedMentor(page);
+    const mainFeedHref = await openMySpacesAndDiscoverMainFeed(page);
+    await expect(page.getByRole("link", { name: "Mentoring" })).toBeVisible();
+    await page.goto(mainFeedHref);
+    await expect(page.getByRole("link", { name: "Mentoring" })).toBeVisible();
+    await page.goto("/org/wavesparks/mentoring");
+    await expect(page.getByRole("heading", { name: "Mentoring", exact: true })).toBeVisible();
+    await page.goto("/org/wavesparks/admin");
+    await expect(page).toHaveURL(/\/org\/wavesparks\/?$/);
+  });
+
+  test("Administrator without mentor approval has Admin but no Mentoring access", async ({
+    page,
+  }) => {
+    await signInAdminWithoutMentor(page);
+    await page.goto("/org/wavesparks/admin");
+    await expect(page.getByRole("heading", { name: "Community overview" })).toBeVisible();
+    await page.goto("/org/wavesparks/mentoring");
+    await expect(page).toHaveURL(/\/org\/wavesparks\/?$/);
+  });
+
+  test("Administrator plus Approved Mentor has both access paths", async ({ page }) => {
+    await signInAdmin(page);
+    await page.goto("/org/wavesparks/admin");
+    await expect(page.getByRole("heading", { name: "Community overview" })).toBeVisible();
+    await page.goto("/org/wavesparks/mentoring");
+    await expect(page.getByRole("heading", { name: "Mentoring", exact: true })).toBeVisible();
+  });
 });

@@ -30,6 +30,7 @@ export async function POST(request: Request) {
 
   const provisioned = await provisionPreviewAccounts({
     orgId: viewerRecord.org.id,
+    reviewedByMembershipId: viewerRecord.membership.id,
   });
 
   return Response.json({

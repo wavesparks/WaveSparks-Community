@@ -4,13 +4,14 @@ This guide describes the operational model for accounts, invitations, Main Commu
 
 ## Operating model
 
-The Admin console is the daily management surface. Clerk manages identity and the organization account connection; Wavesparks manages every community entitlement.
+The Admin console is the daily management surface. Clerk manages user identity and sessions. Wavesparks stores organization accounts, invitations, roles, and every community entitlement in Neon.
 
 | Concern | Authority |
 | --- | --- |
 | Identity, primary email, credentials, sessions | Clerk |
-| Invitation creation and acceptance | Clerk, initiated and tracked by Wavesparks |
-| Global role | `memberships.role` in Wavesparks, synchronized to Clerk |
+| Invitation creation and acceptance | Wavesparks owns authorization; a Clerk application invitation bootstraps identity only |
+| Account permissions | `memberships.role` in Wavesparks (`member` or `org_admin`) |
+| Mentor designation | `memberships.mentor_status` in Wavesparks (`not_mentor`, `needs_review`, or `approved`) |
 | Account connection and global safety | `memberships.account_status` |
 | Main Community or Event access | `space_memberships.access_status` |
 | Core profile | One account-level Wavesparks profile |
@@ -18,6 +19,8 @@ The Admin console is the daily management surface. Clerk manages identity and th
 | Content, social activity, and matching | The explicit current Space |
 
 Legacy `memberships.status` and Cohort records remain during migration compatibility. They are not the authority for Main Community or Event access.
+
+Account permissions, mentor designation, and Space access are independent dimensions. An account may be `Member + Approved mentor` or `Administrator + Approved mentor`, but mentor designation never grants Admin access and neither dimension grants access to a Space.
 
 ## Access model
 
@@ -45,8 +48,9 @@ Open `/org/wavesparks/admin/members` to search and filter account records, inspe
 
 Members owns:
 
-- Name, primary email, and Clerk connection
-- Global `Member` or `Admin` role
+- Name, primary email, and Clerk user connection
+- Account permissions: `Member` or `Administrator`
+- Mentor designation and its review metadata
 - Account status and invitation status
 - Space access across Main Community and Events
 - Invitation errors, retries, and administrative notes
@@ -58,11 +62,11 @@ Do not interpret a connected Clerk account as community access. A connected acco
 | State | Meaning | Effect |
 | --- | --- | --- |
 | `invited` | An account invitation exists or connection is incomplete. | No Space can be entered yet. |
-| `connected` | The Clerk organization account is connected. | Active Space entitlements may become effective. |
+| `connected` | A verified Clerk user is linked to the Wavesparks account. | Active Space entitlements may become effective. |
 | `suspended` | A reversible global safety block. | Overrides access to every Space without rewriting each roster. |
 | `deprovisioned` | The organization account is no longer provisioned. | Blocks every Space until explicitly restored. |
 
-Clerk webhooks may update this account relationship. They must never create a Main Community or Event entitlement.
+Clerk user webhooks may refresh or anonymize an already-linked identity. They never create an organization membership, role, invitation, Main Community entitlement, or Event entitlement.
 
 ### Global Admin role
 
@@ -70,30 +74,39 @@ An Admin can audit and manage every Space. That authority does not make the Admi
 
 When inviting an Admin, the UI confirms the elevated global permission. Selecting no destination Space is valid and prevents the Admin from appearing in participant rosters or matching pools.
 
+### Mentor designation
+
+`Approved mentor` is an organization-level service designation, not an account permission. It enables the verified badge, mentor service profile, mentor matching, mentor opportunities, and the account-level Mentoring workspace. It never enables member management, moderation, Admin routes, private Admin notes, cross-Space data, or early contact details.
+
+An approved mentor must still have active access to the relevant Space and satisfy the same profile, lifecycle, privacy, and matching gates as every other participant. Descriptive profile fields such as affiliation, archetypes, or current status never grant mentor capabilities.
+
+Use `Needs review` for legacy or unverified mentor signals, then choose the explicit **Approve** or **Reject** action. Revoking approval preserves the private mentor profile for a future reapproval, removes the person from new mentor discovery and matching, and expires only their still-pending mentoring requests. Accepted introductions and ordinary introductions remain intact.
+
 ## 2. Invite one person
 
 Choose **Invite people**, then **One person**.
 
 1. Enter the exact email and optional name.
-2. Choose `Member` or `Admin`.
-3. For a Member, choose the destination Main Community or Event and the initial Space access.
-4. For an Admin, confirm the global permission and choose a destination only if the Admin should also participate socially.
-5. Create the invitation and review the result.
+2. Choose `Member` or `Administrator` under **Account permissions**.
+3. Independently choose `Not a mentor` or `Approved mentor` under **Mentor designation**. Invitation creation cannot manufacture a pending review.
+4. For a Member, choose the destination Main Community or Event and the initial Space access.
+5. For an Administrator, confirm the global permission and choose a destination only if the Administrator should also participate socially.
+6. Create the invitation and review the result.
 
-For an existing Clerk user, Wavesparks connects the organization account and the selected active entitlement can take effect immediately. For a new user, Wavesparks creates a targeted Clerk invitation. The person accepts that account invitation once; all already-assigned Space entitlements then become available according to their own status and lifecycle.
+For every unconnected account, Wavesparks creates a private, single-use local invitation, then asks Clerk to send an application-level identity invitation. The Clerk invitation creates or signs in the identity only; it never creates a Clerk Organization, role, membership, or paid organization seat. Wavesparks verifies the signed-in Clerk email against the invited email before atomically connecting the local account. All already-assigned Space entitlements then become available according to their own status and lifecycle.
 
-The success message is **Invitation created**, not **Email delivered**. Delivery cannot be guaranteed by the application.
+The success message means Clerk accepted the identity invitation email. It does not guarantee inbox placement; use the row-level delivery state and resend action when needed.
 
 ### Invitation states
 
 | State | Meaning | Typical action |
 | --- | --- | --- |
 | Empty | No current invitation is tracked. | Create one if appropriate. |
-| `pending` | Clerk accepted a usable invitation. | Wait, resend, or revoke. |
+| `pending` | A usable Wavesparks invitation was sent and awaits acceptance. | Wait, resend, or revoke. |
 | `accepted` | The account connection completed. | Manage Space access separately. |
 | `revoked` | The ticket can no longer be used. | Create a new invitation if needed. |
 | `expired` | The ticket expired. | Retry with a new ticket. |
-| `failed` | Clerk did not confirm the operation. | Review the row error and retry. |
+| `failed` | Clerk did not accept identity-invitation delivery or the local send failed. | Review the row error and retry. |
 
 ## 3. Import a list into one destination Space
 
@@ -108,7 +121,7 @@ The workflow is deliberately review-first:
 5. Confirm **Invite N people**.
 6. Review row-level results and retry only failed invitations.
 
-Selecting a file never sends invitations. Files are parsed in memory and are not retained. Limits are 2 MB, the first worksheet, 20 columns, and 100 non-empty data rows. Bulk import always creates ordinary Members; it cannot grant Admin.
+Selecting a file never sends invitations. Files are parsed in memory and are not retained. Limits are 2 MB, the first worksheet, 20 columns, and 100 non-empty data rows. Bulk import always creates `Member + Not a mentor`; it cannot grant Administrator permissions or mentor approval.
 
 Preview distinguishes new invitations, retryable invitations, existing accounts, existing Space access, duplicates, invalid rows, and rejected/suspended conflicts. The first occurrence of a duplicate email wins. Invalid rows do not block valid rows.
 
@@ -201,20 +214,26 @@ Matching candidates must have all of the following in the same Space:
 
 An ended Event continues matching. An archived Event stops matching and hides its results. Roster, intent, or Space-post changes recompute only the affected Space; results are replaced atomically for that Space rather than deleting organization-wide matches.
 
+`mentor_match` has three additional server-side gates: the candidate must have canonical `Approved mentor` designation, must explicitly offer mentor matching, and both people must have effective access and existing matching eligibility in that Space. Availability and preferred mentee capacity affect display, reminders, and ordering only; they do not create an automatic hard limit. A mentor pauses new matching by turning off the mentor-matching offering.
+
+Changing mentor designation queues a recomputation for every Space in which that account has an entitlement. It never changes account status or any Space membership.
+
 See [AI matching engine](ai-matching-engine.md) for scoring and embedding details.
 
-## 9. Reconcile Clerk without granting access
+## 9. Operate app-owned invitations safely
 
-Reconciliation is dry-run by default and requires an explicit environment:
+Wavesparks no longer creates or reconciles Clerk Organizations, Organization memberships, Organization roles, or Organization invitations. Clerk remains the identity provider and sends application-level identity invitations; Neon remains the organization and authorization authority.
+
+The one-time legacy invitation migration is dry-run by default and requires an explicit environment:
 
 ```bash
-pnpm clerk:reconcile -- --environment=development
-pnpm clerk:reconcile -- --environment=development --apply
-pnpm clerk:reconcile -- --environment=production
-pnpm clerk:reconcile -- --environment=production --apply --confirm-production
+pnpm invitations:migrate -- --environment=development
+pnpm invitations:migrate -- --environment=development --apply
+pnpm invitations:migrate -- --environment=production
+pnpm invitations:migrate -- --environment=production --apply --confirm-production
 ```
 
-Review account connections, invitation state, global roles, stale invitations, and untracked Clerk organization memberships. Reconciliation repairs Clerk drift; it does not infer or create Space entitlements.
+The migration creates a local replacement invitation only when a usable one has not already been delivered, then revokes the legacy Clerk invitation. It never infers or creates Space entitlements. Regular invitation operations happen through the Members and Event admin pages.
 
 Production database writes also require both write flags:
 
@@ -243,10 +262,15 @@ Space migrations stop on duplicates, orphans, cross-organization references, or 
 ## Release verification checklist
 
 - [ ] Event-only, Main-only, multi-Event, Main-plus-Event, Admin, removed, archived, and globally suspended access are verified.
+- [ ] Member, Approved mentor, Administrator, and Administrator + Approved mentor permissions are verified independently.
+- [ ] Mentor designation cannot open Admin routes/actions, bypass Space access, reveal Admin notes, or unlock contact details before acceptance.
+- [ ] Legacy mentor profile signals migrate to `Needs review`; no record is automatically approved.
+- [ ] Revocation expires pending mentoring requests and removes new mentor discovery/matching while preserving accepted and ordinary introduction history.
 - [ ] Feed, post links, People, Knowledge, saved posts, notifications, follows, intros, and matching cannot leak across Spaces.
 - [ ] CSV/XLSX import requires and reports one destination Space.
 - [ ] Add to Main is idempotent and preserves Event access.
 - [ ] Ended Events remain interactive; archived Events are hidden from members.
 - [ ] Global Admin audit access does not create social participation.
-- [ ] Clerk webhooks and reconciliation never create Space access.
+- [ ] Clerk user webhooks never create memberships, roles, invitations, or Space access.
+- [ ] Local invitation acceptance verifies the Clerk user’s verified email and consumes the token once.
 - [ ] `pnpm typecheck`, `pnpm lint`, `pnpm test`, and `pnpm build` pass.

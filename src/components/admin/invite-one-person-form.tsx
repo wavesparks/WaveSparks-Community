@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { SubmitButton } from "@/components/ui/submit-button";
-import type { MembershipRole } from "@/lib/domain";
+import type { MembershipRole, MentorStatus } from "@/lib/domain";
 import type { MemberImportAccessStatus } from "@/lib/member-import";
 
 export interface InviteOnePersonFormProps {
@@ -35,6 +35,9 @@ export function InviteOnePersonForm({
   slug,
 }: InviteOnePersonFormProps) {
   const [role, setRole] = useState<MembershipRole>("member");
+  const [mentorStatus, setMentorStatus] = useState<
+    Extract<MentorStatus, "not_mentor" | "approved">
+  >("not_mentor");
   const [accessStatus, setAccessStatus] = useState(defaultAccessStatus);
   const [destinationSpaceId, setDestinationSpaceId] = useState(
     defaultDestinationSpaceId ?? spaces[0]?.id ?? "",
@@ -70,7 +73,7 @@ export function InviteOnePersonForm({
         />
       </div>
       <div>
-        <Label htmlFor="invite-person-role">Role</Label>
+        <Label htmlFor="invite-person-role">Account permissions</Label>
         <Select
           id="invite-person-role"
           name="role"
@@ -88,6 +91,26 @@ export function InviteOnePersonForm({
           <option value="member">Member</option>
           <option value="org_admin">Administrator</option>
         </Select>
+      </div>
+      <div>
+        <Label htmlFor="invite-person-mentor-status">Mentor designation</Label>
+        <Select
+          id="invite-person-mentor-status"
+          name="mentor_status"
+          onChange={(event) =>
+            setMentorStatus(
+              event.target.value as Extract<MentorStatus, "not_mentor" | "approved">,
+            )
+          }
+          value={mentorStatus}
+        >
+          <option value="not_mentor">Not a mentor</option>
+          <option value="approved">Approved mentor</option>
+        </Select>
+        <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
+          Mentor designation is independent from account permissions and community or Event access.
+          Existing accounts keep their current designation; change it from member details.
+        </p>
       </div>
       <div>
         <Label htmlFor="invite-person-status">When can they join?</Label>
@@ -151,6 +174,16 @@ export function InviteOnePersonForm({
               </label>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {mentorStatus === "approved" ? (
+        <div className="rounded-lg border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-4 sm:col-span-2">
+          <p className="text-sm font-semibold text-[var(--ink)]">Approved mentor</p>
+          <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
+            This person can publish mentor details, offer mentor matching, and receive mentoring
+            requests after they also have active access to the relevant community or Event.
+          </p>
         </div>
       ) : null}
 

@@ -36,7 +36,6 @@ describe("auth completion route", () => {
 
   it("passes Clerk bearer tokens into the auth completion context", async () => {
     getAuthCompletionViewerContextMock.mockResolvedValue({
-      clerkOrgId: "org_clerk_wavespark",
       state: "ready",
       status: "authenticated",
       viewer: {
@@ -54,7 +53,6 @@ describe("auth completion route", () => {
     );
 
     await expect(response.json()).resolves.toEqual({
-      clerkOrgId: "org_clerk_wavespark",
       state: "ready",
       target: "/org/wavesparks",
     });

@@ -5,6 +5,7 @@ import {
   createCommentInSpace,
   createIntroRequestInSpace,
   createPostInSpace,
+  getIntroRequestById,
   getMembershipById,
   getSpaceMembership,
   listCommentsForPost,
@@ -89,5 +90,52 @@ describe("member flows", () => {
     expect(intro.spaceId).toBe(mainSpace.id);
     expect(accepted.status).toBe("accepted");
     expect(canViewContactDetails("mem_jules", accepted)).toBe(true);
+  });
+
+  it("atomically allows only one pending intro response in the owning Space", async () => {
+    const spaces = await listSpacesForOrg("org_wavespark");
+    const mainSpace = spaces.find((space) => space.kind === "main")!;
+    const intro = await createIntroRequestInSpace({
+      orgId: "org_wavespark",
+      spaceId: mainSpace.id,
+      requesterMembershipId: "mem_jules",
+      receiverMembershipId: "mem_kai",
+      sourceType: "profile",
+      sourceId: "pro_kai",
+      introPurpose: "atomic response",
+      note: "Only the first response should win.",
+      status: "pending",
+      suggestedFirstMessage: "Hello Kai.",
+    });
+
+    await expect(
+      respondToIntroRequestInSpace("spc_wrong_space", intro.id, "accepted", {
+        recordAnalytics: false,
+      }),
+    ).resolves.toBeNull();
+    await expect(getIntroRequestById(intro.id)).resolves.toMatchObject({
+      status: "pending",
+    });
+
+    const [accepted, declined] = await Promise.all([
+      respondToIntroRequestInSpace(mainSpace.id, intro.id, "accepted", {
+        recordAnalytics: false,
+      }),
+      respondToIntroRequestInSpace(mainSpace.id, intro.id, "declined", {
+        recordAnalytics: false,
+      }),
+    ]);
+
+    expect(accepted).toMatchObject({ status: "accepted" });
+    expect(declined).toBeNull();
+    await expect(getIntroRequestById(intro.id)).resolves.toMatchObject({
+      status: "accepted",
+      contactRevealedAt: expect.any(String),
+    });
+    await expect(
+      respondToIntroRequestInSpace(mainSpace.id, intro.id, "declined", {
+        recordAnalytics: false,
+      }),
+    ).resolves.toBeNull();
   });
 });

@@ -10,6 +10,8 @@ async function main() {
   loadScriptEnv(target.environment);
   const { getSqlClient } = await import("@/db/client");
   const { env } = await import("@/lib/env");
+  const { seedOrganization } = await import("@/data/seed-data");
+  const { listMembershipsForOrg } = await import("@/server/store");
   const { previewAccountSpecs, provisionPreviewAccounts } = await import(
     "@/server/preview-accounts"
   );
@@ -25,7 +27,19 @@ async function main() {
     return;
   }
 
-  const provisioned = await provisionPreviewAccounts({});
+  const reviewer = (await listMembershipsForOrg(seedOrganization.id))
+    .filter(
+      (membership) =>
+        membership.role === "org_admin" && membership.accountStatus === "connected",
+    )
+    .sort((left, right) => left.id.localeCompare(right.id))[0];
+  if (!reviewer) {
+    throw new Error("A connected organization administrator is required to provision previews.");
+  }
+  const provisioned = await provisionPreviewAccounts({
+    orgId: seedOrganization.id,
+    reviewedByMembershipId: reviewer.id,
+  });
   const accountLines = provisioned.map(({ spec, membership }) =>
     [
       `${spec.label}`,

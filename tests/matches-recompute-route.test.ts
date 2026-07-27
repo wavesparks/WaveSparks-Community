@@ -49,6 +49,25 @@ describe("match recompute internal route", () => {
     expect(getCurrentAuthIdentityMock).not.toHaveBeenCalled();
   });
 
+  it("refreshes every organization when the scheduled GET has no scope", async () => {
+    const response = await GET(
+      new Request("http://localhost/api/internal/matches/recompute", {
+        headers: { authorization: "Bearer test-cron-secret" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      failedSpaceCount: 0,
+      ok: true,
+      organizationCount: 1,
+      organizations: [
+        expect.objectContaining({ orgId: "org_wavespark", slug: "wavesparks" }),
+      ],
+    });
+    expect(getCurrentAuthIdentityMock).not.toHaveBeenCalled();
+  });
+
   it("keeps connected admin sessions on POST", async () => {
     getCurrentAuthIdentityMock.mockResolvedValue({
       email: "avery@wavesparks.co",

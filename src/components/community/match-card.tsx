@@ -4,10 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { MatchCardView } from "@/lib/domain";
 
-function matchStrengthLabel(scoreBand: MatchCardView["scoreBand"]) {
-  if (scoreBand === "high") return "Strong match";
-  if (scoreBand === "good") return "Good match";
-  return "Possible match";
+function matchScoreVariant(scoreBand: MatchCardView["scoreBand"]) {
+  if (scoreBand === "high") return "accent";
+  if (scoreBand === "good") return "default";
+  return "muted";
 }
 
 function matchExplanationForPeople(explanation: string) {
@@ -50,7 +50,18 @@ export function MatchCard({
             </p>
           </div>
         </div>
-        <Badge variant="accent">{matchStrengthLabel(match.scoreBand)}</Badge>
+        <Badge
+          aria-label="Match score"
+          aria-valuemax={100}
+          aria-valuemin={1}
+          aria-valuenow={match.score}
+          aria-valuetext={`${match.score} out of 100`}
+          className="shrink-0 self-start whitespace-nowrap tabular-nums text-[var(--ink)]"
+          role="meter"
+          variant={matchScoreVariant(match.scoreBand)}
+        >
+          {match.score}/100 match
+        </Badge>
       </div>
       <div className="border-t border-[var(--line)] pt-4">
         <p className="text-xs font-semibold uppercase text-[var(--accent)]">

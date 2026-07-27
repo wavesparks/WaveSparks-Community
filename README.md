@@ -5,7 +5,7 @@ Private, invitation-only founder community software for Wavesparks and future cl
 ## What’s in this MVP
 
 - Multi-tenant organization routing under `/org/[slug]`
-- Clerk-backed invitation-only account creation and sign-in
+- Clerk-backed sign-in with application-owned, invitation-only membership
 - A `My Spaces` home that separates the permanent **Main Community** from independent **Event** spaces
 - Space-scoped feeds, People, Knowledge, Opportunities, saved posts, follows, introductions, notifications, and AI matching
 - One global core profile plus a separate goal, needs, offers, and matching opt-in for each Space
@@ -55,19 +55,21 @@ Open [http://localhost:3000](http://localhost:3000), then head to [http://localh
 - Authentication is handled by Clerk. The Vercel Clerk integration auto-provisions `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`.
 - `CLERK_JWT_KEY` is optional but recommended so the OAuth handoff API can verify client session tokens directly during preview-domain sign-in flows.
 - If Clerk keys are missing, authenticated app areas are unavailable until `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` are configured.
-- `memberships.account_status` represents the Clerk organization account relationship (`invited`, `connected`, `suspended`, or `deprovisioned`). It does not grant community access.
+- `memberships.account_status` represents the application-owned account relationship (`invited`, `connected`, `suspended`, or `deprovisioned`). It does not grant community access.
+- `memberships.role` controls only account permissions (`member` or `org_admin`), while `memberships.mentor_status` independently records mentor designation (`not_mentor`, `needs_review`, or `approved`). `Approved mentor` never implies Admin.
 - `space_memberships.access_status` is the authority for Main Community or Event access. Main and Event entitlements are independent, and one person may belong to any combination of Spaces.
 - Effective access requires a connected, non-suspended account, an active entitlement for the requested Space, and a lifecycle that permits member access.
-- Clerk webhooks synchronize account connection only. They never create Main Community or Event access.
+- Clerk webhooks synchronize user identity only. They never create memberships, roles, Main Community access, or Event access.
 - `/org/wavesparks` is the authenticated `My Spaces` home. Canonical community routes include the Space explicitly: `/org/wavesparks/s/[spaceSlug]/...`.
 - Main Community is invitation-only and has no anonymous or locked-content preview. An Event-only participant sees a locked Main card, not Main posts, people, or counts.
 - `/org/wavesparks/admin/members` manages accounts and invitations. `/org/wavesparks/admin/spaces` manages the permanent Main Community and independent Events.
 - Admins can upload or paste up to 100 CSV/XLSX rows, map fields, preview classifications, choose one destination Space, confirm, inspect row-level results, and retry failed invitations.
 - A global Admin can audit every Space but must explicitly join a Space before appearing in its participant roster, posting, using People, or entering its matching pool.
-- Wavesparks reports an invitation as created only after Clerk accepts the operation; this does not guarantee email delivery. Clerk failures are stored per member for retry.
-- Public registration and shared invitation codes are disabled. New accounts start at `/org/wavesparks/accept-invitation` from a personal Clerk ticket.
-- Do not use Clerk Dashboard as the daily invitation surface. Dashboard invitations cannot establish the complete Wavesparks review workflow.
-- Clerk owns identity, primary email, credentials, sessions, and the organization account connection. Wavesparks owns global roles, Space entitlements, profiles, content, and matching.
+- An Approved mentor must likewise have active access to the current Space. Only the canonical local designation enables mentor badges, service fields, mentor matching, Mentor opportunity sources, and the account-level Mentoring workspace; descriptive affiliation and archetype fields grant nothing.
+- Wavesparks reports an invitation as sent only after Clerk accepts the application-level identity invitation. Clerk sends the email, while the Wavesparks one-time authorization token is stored only as a hash in Neon; delivery failures are stored on the local invitation for retry.
+- Public registration and shared invitation codes are disabled. New accounts start at `/org/wavesparks/accept-invitation` from a personal, expiring Wavesparks link and complete identity verification with Clerk.
+- Wavesparks Admin is the membership and authorization surface. Clerk application invitations only bootstrap identity; Clerk Organizations are intentionally unused.
+- Clerk owns identity, verified email, credentials, and sessions. Wavesparks/Neon owns organizations, memberships, roles, invitation state, Space entitlements, profiles, content, and matching.
 - `letsbuild@wavesparks.co` is a default bootstrap admin. Add more comma-separated admin emails with `WAVESPARK_ADMIN_EMAILS`.
 
 ## Space behavior
@@ -112,25 +114,10 @@ Provision production-style preview accounts for role testing:
 pnpm db:preview-accounts -- --environment=development --apply
 ```
 
-This creates or updates one connected admin, mentor, and founder account with explicit
-Main Community access. Set up matching Clerk users or invitations for the printed emails to sign in. The
+This creates or updates connected Member, Approved Mentor, Administrator, and
+Administrator + Approved Mentor accounts with explicit Main Community access. Set up matching
+Clerk users for the printed emails to sign in. The
 script writes a summary to `/tmp/wavesparks-preview-accounts.txt`.
-
-Preview or reconcile Clerk Organizations:
-
-```bash
-pnpm clerk:reconcile -- --environment=development
-pnpm clerk:reconcile -- --environment=development --apply
-pnpm clerk:reconcile -- --environment=production
-pnpm clerk:reconcile -- --environment=production --apply --confirm-production
-```
-
-Reconciliation is dry-run by default and writes an environment-specific report under
-`/tmp`. Production writes require both `--apply` and `--confirm-production`; the apply
-path refuses untracked memberships and will delete an extra organization only after all
-of its members are present in the canonical Wavesparks organization and it has no pending
-invitations. `organizationCapacityConstraint` is informational: Clerk plans that fix the
-organization limit cannot be changed through reconciliation and must be upgraded in Clerk.
 
 ## Useful scripts
 
@@ -144,7 +131,6 @@ pnpm test:e2e:clerk
 pnpm build
 pnpm cron:matches -- --environment=development
 pnpm readiness:prod
-pnpm clerk:reconcile -- --environment=development
 pnpm env:audit
 ```
 
@@ -162,7 +148,7 @@ OPENAI_API_KEY=<production-embedding-key>
 CRON_SECRET=<long-random-secret>
 WAVESPARK_ADMIN_EMAILS=letsbuild@wavesparks.co
 BLOB_READ_WRITE_TOKEN=<vercel-blob-read-write-token>
-# Optional custom notification email delivery:
+# Optional for ordinary product notifications; membership invitations use Clerk:
 RESEND_API_KEY=<resend-key>
 RESEND_FROM_EMAIL=Wavesparks <notification@wavesparks.co>
 ```
@@ -171,9 +157,14 @@ The Vercel Clerk integration should supply `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` a
 `CLERK_SECRET_KEY`. Clerk production domains also need the DNS records shown in the
 Clerk Dashboard, including the Frontend API CNAME:
 
+Before promotion, set Clerk `force_organization_selection` to `false` and read the setting
+back from the production instance. Restricted sign-up may remain enabled because Clerk
+application invitations bootstrap invited identities. Wavesparks users must never be required
+to select or join a Clerk Organization.
+
 For preview-domain OAuth handoff, also add Clerk's JWT verification key as
 `CLERK_JWT_KEY` when available from the Clerk Dashboard. Keep `CLERK_SECRET_KEY`
-configured too; the app still uses it for Clerk backend operations.
+configured too; the app uses it for Clerk user identity operations.
 
 ```bash
 clerk.wavesparks.co CNAME frontend-api.clerk.services
@@ -200,8 +191,9 @@ NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL=/org/wavesparks
 ```
 
 Keep the Clerk application home URL and custom sign-in routes pointed at the community app
-domain, not the marketing site. Create invitations from Wavesparks Admin so they use the
-dedicated `/org/wavesparks/accept-invitation` redirect.
+domain, not the marketing site. Create invitations from Wavesparks Admin: Wavesparks creates
+the local authorization invitation, then Clerk sends an application-level identity invitation
+back to `/api/internal/membership-invitations/accept`.
 
 2. Run the production checks and database setup:
 
@@ -209,22 +201,29 @@ dedicated `/org/wavesparks/accept-invitation` redirect.
 pnpm readiness:prod -- --env-only
 pnpm db:migrate -- --environment=production
 pnpm db:migrate -- --environment=production --apply --confirm-production
+pnpm cron:matches -- --environment=production
+pnpm cron:matches -- --environment=production --apply --confirm-production
+pnpm invitations:migrate -- --environment=production
+pnpm invitations:migrate -- --environment=production --apply --confirm-production
 pnpm readiness:prod
-pnpm clerk:reconcile -- --environment=production
-pnpm clerk:reconcile -- --environment=production --apply --confirm-production
 ```
 
-Production database and Clerk writes require both `--apply` and
-`--confirm-production`. Always review the dry-run report before applying it and run a new
-dry-run afterward to confirm that no actionable differences remain.
+Production database writes require both `--apply` and `--confirm-production`. Always review
+the dry-run report before applying it and run a new dry-run afterward to confirm that no
+actionable differences remain.
+
+The invitation migration is also dry-run by default. It finds accounts that still have a
+pending legacy Clerk Organization invitation, prints only membership IDs and counts, then
+creates a new local one-time invitation and a Clerk application-level identity invitation when
+explicitly applied. After successful delivery it revokes the superseded Organization invitation. Re-running the command
+skips an already delivered local invitation, and it never prints an email address or raw token.
 
 The `--env-only` pass validates configuration before any write. The full
 `pnpm readiness:prod` pass runs after migrations and also performs a read-only Space audit:
 every organization must have one active Main Community, Space relationships must remain
 organization-safe, and posts, follows, matching rows, intros, and content notifications
-must not have a null `space_id`. Missing Resend configuration is a warning because Clerk
-organization invitations still send through Clerk, but custom product notification emails
-will be skipped.
+must not have a null `space_id`. Resend is optional for ordinary product notifications and is
+not part of the membership-invitation critical path.
 
 3. Confirm DNS points the app domain to Vercel. `app.wavesparks.co` should resolve to Vercel before it becomes the member-facing URL.
 

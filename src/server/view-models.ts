@@ -28,6 +28,10 @@ import {
   listNotificationsForMembership,
   listNotificationsForMembershipInSpace,
   listNotificationsForMembershipWithSpaceAccess,
+  listMentionableMembershipIdsForSpace,
+  listPostImagesForPostIds,
+  listPostLinkPreviewsForPostIds,
+  listPostMentionsForPostIds,
   listPostsForOrg,
   listPostsForSpace,
   listPublicFeedPostRecordsForOrg,
@@ -161,6 +165,22 @@ export interface AdminPostModerationPostView {
   commentsLocked: boolean;
   status: Post["status"];
   authorName: string;
+  images: Array<{
+    id: string;
+    url: string;
+    width: number;
+    height: number;
+    alt: string;
+    moderationStatus: "visible" | "removed";
+  }>;
+  linkPreview?: {
+    id: string;
+    url: string;
+    domain: string;
+    title?: string;
+    moderationStatus: "visible" | "removed";
+  };
+  mentions: Array<{ id: string; label: string; memberName: string }>;
 }
 
 export interface AdminCommentModerationRowView {
@@ -187,7 +207,17 @@ export interface PostThreadIntroContext {
 export interface IntroRequestViewOptions {
   limit?: number;
   direction?: "incoming" | "outgoing";
+  kind?: IntroRequestView["kind"];
   status?: IntroStatus;
+}
+
+function acceptedContactDetails(profile: Profile) {
+  return {
+    email: profile.emailForIntro,
+    ...(profile.whatsappVisibleAfterAccept && profile.whatsappNumber
+      ? { whatsapp: profile.whatsappNumber }
+      : {}),
+  } satisfies NonNullable<IntroRequestView["contactDetails"]>;
 }
 
 interface FeedEntry {
@@ -195,6 +225,77 @@ interface FeedEntry {
   membership: Membership;
   profile: Profile;
   post: Post;
+}
+
+async function loadPostRichViews(posts: Post[]) {
+  const postIds = posts.map((post) => post.id);
+  const [images, previews, mentions] = await Promise.all([
+    listPostImagesForPostIds(postIds),
+    listPostLinkPreviewsForPostIds(postIds),
+    listPostMentionsForPostIds(postIds),
+  ]);
+  const membershipIdsBySpace = new Map<string, Set<string>>();
+  for (const mention of mentions) {
+    const ids = membershipIdsBySpace.get(mention.spaceId) ?? new Set<string>();
+    ids.add(mention.mentionedMembershipId);
+    membershipIdsBySpace.set(mention.spaceId, ids);
+  }
+  const activeMembershipsBySpace = new Map<string, Set<string>>();
+  await Promise.all(
+    [...membershipIdsBySpace.entries()].map(async ([spaceId, ids]) => {
+      activeMembershipsBySpace.set(
+        spaceId,
+        new Set(await listMentionableMembershipIdsForSpace(spaceId, [...ids])),
+      );
+    }),
+  );
+  const result = new Map<string, Pick<FeedPostView, "images" | "linkPreview" | "mentions">>();
+  for (const post of posts) {
+    const postImages = images
+      .filter((image) => image.postId === post.id)
+      .map((image) => ({
+        id: image.id,
+        url: `/api/post-images/${image.id}`,
+        width: image.width ?? 1,
+        height: image.height ?? 1,
+        alt: image.alt?.trim() || "Post image",
+        position: image.position,
+      }));
+    const preview = previews.find((candidate) => candidate.postId === post.id);
+    const postMentions = mentions
+      .filter(
+        (mention) =>
+          mention.postId === post.id &&
+          activeMembershipsBySpace
+            .get(mention.spaceId)
+            ?.has(mention.mentionedMembershipId),
+      )
+      .map((mention) => ({
+        membershipId: mention.mentionedMembershipId,
+        label: mention.label,
+        start: mention.start,
+        end: mention.end,
+      }));
+    result.set(post.id, {
+      images: postImages,
+      linkPreview: preview
+        ? {
+            id: preview.id,
+            url: preview.originalUrl,
+            title: preview.title,
+            description: preview.description,
+            siteName: preview.siteName,
+            thumbnailUrl: preview.thumbnailBlobPathname
+              ? `/api/post-link-previews/${preview.id}/thumbnail`
+              : undefined,
+            thumbnailWidth: preview.thumbnailWidth,
+            thumbnailHeight: preview.thumbnailHeight,
+          }
+        : undefined,
+      mentions: postMentions,
+    });
+  }
+  return result;
 }
 
 function normalized(value?: string) {
@@ -258,6 +359,14 @@ function displayName(profile: Profile) {
   return profile.preferredName || profile.fullName;
 }
 
+function publicAffiliationLabel(membership: Membership) {
+  return getAffiliationLabel(
+    membership.affiliationType === "mentor"
+      ? "current participant"
+      : membership.affiliationType,
+  );
+}
+
 export function toLimitedProfileCard(profile: Profile, membership: Membership): LimitedProfileCard {
   return {
     membershipId: membership.id,
@@ -269,7 +378,7 @@ export function toLimitedProfileCard(profile: Profile, membership: Membership): 
     whatTheyAreBuilding: profile.currentFocus || profile.startupOneLiner,
     whatTheyNeed: profile.lookingForTypes,
     keyTags: [...profile.industryTags, ...profile.skillTags].slice(0, 5),
-    affiliationLabel: getAffiliationLabel(membership.affiliationType),
+    affiliationLabel: publicAffiliationLabel(membership),
     location: [profile.city, profile.country].filter(Boolean).join(", "),
   };
 }
@@ -277,6 +386,7 @@ export function toLimitedProfileCard(profile: Profile, membership: Membership): 
 export function toFullAdminProfile(profile: Profile, membership: Membership): FullAdminProfile {
   return {
     ...toLimitedProfileCard(profile, membership),
+    affiliationLabel: getAffiliationLabel(membership.affiliationType),
     ...getProfileVisibilityForMember(profile, membership),
     emailForIntro: profile.emailForIntro,
     whatsappNumber: profile.whatsappNumber,
@@ -286,9 +396,55 @@ export function toFullAdminProfile(profile: Profile, membership: Membership): Fu
     technicalExperienceLevel: profile.technicalExperienceLevel,
     technicalExperience: profile.technicalExperience,
     longBio: profile.bio || profile.longBio || profile.shortBio,
+    schoolOrCompany: profile.schoolOrCompany,
+    timezone: profile.timezone,
+    startupName: profile.startupName,
+    startupOneLiner: profile.startupOneLiner,
     startupDescription: profile.startupDescription,
+    stage: profile.stage,
+    industryTags: profile.industryTags,
+    problemSpaceTags: profile.problemSpaceTags,
+    businessModelTags: profile.businessModelTags,
+    currentProgress: profile.currentProgress,
+    tractionSummary: profile.tractionSummary,
+    regionFocus: profile.regionFocus,
+    lookingForTypes: profile.lookingForTypes,
+    seekingMatchTypes: profile.seekingMatchTypes,
+    offeringMatchTypes: profile.offeringMatchTypes,
     desiredRoles: profile.desiredRoles,
+    helpNeededTags: profile.helpNeededTags,
+    idealMatchDescription: profile.idealMatchDescription,
+    skillTags: profile.skillTags,
+    yearsOfExperience: profile.yearsOfExperience,
+    topStrengths: profile.topStrengths,
+    canContribute: profile.canContribute,
+    priorProjects: profile.priorProjects,
+    notableWins: profile.notableWins,
+    timeCommitment: profile.timeCommitment,
+    availabilityStart: profile.availabilityStart,
+    remotePreference: profile.remotePreference,
+    preferredGeographies: profile.preferredGeographies,
+    meetingFrequencyPreference: profile.meetingFrequencyPreference,
+    ambitionLevel: profile.ambitionLevel,
+    riskTolerance: profile.riskTolerance,
+    speedPreference: profile.speedPreference,
+    decisionStyle: profile.decisionStyle,
+    workStyle: profile.workStyle,
+    communicationStyle: profile.communicationStyle,
+    conflictStyle: profile.conflictStyle,
+    commitmentHorizon: profile.commitmentHorizon,
+    missionVsMarketOrientation: profile.missionVsMarketOrientation,
+    structureVsChaos: profile.structureVsChaos,
+    mentorExpertiseTags: profile.mentorExpertiseTags,
+    mentorStageExperience: profile.mentorStageExperience,
+    mentorFunctionalStrengths: profile.mentorFunctionalStrengths,
+    mentorAvailability: profile.mentorAvailability,
     mentorOffers: profile.mentorOffers,
+    maxMentees: profile.maxMentees,
+    mentorshipPreferences: profile.mentorshipPreferences,
+    introOptIn: profile.introOptIn,
+    profileVisibleInMatching: profile.profileVisibleInMatching,
+    onboardingComplete: profile.onboardingComplete,
     featured: profile.featured,
     stale: profile.stale,
   };
@@ -317,7 +473,9 @@ function feedEntryMatchesFilters(
 
   if (
     filters.authorAffiliation &&
-    membership.affiliationType !== filters.authorAffiliation
+    (filters.authorAffiliation === "mentor"
+      ? membership.mentorStatus !== "approved"
+      : membership.affiliationType !== filters.authorAffiliation)
   ) {
     return false;
   }
@@ -347,7 +505,8 @@ function feedEntryMatchesFilters(
       profile.preferredName,
       profile.headline,
       profile.industryTags.join(" "),
-      membership.affiliationType,
+      publicAffiliationLabel(membership),
+      membership.mentorStatus === "approved" ? "approved mentor" : "",
     ]
       .join(" ")
       .toLowerCase();
@@ -365,8 +524,14 @@ function toMemberDirectoryProfileView(input: {
   following: boolean;
   introStatus?: IntroStatus;
 }): MemberDirectoryProfileView {
+  const isApprovedMentor = input.membership.mentorStatus === "approved";
+  const acceptingMentoringRequests =
+    isApprovedMentor && input.profile.offeringMatchTypes.includes("mentor_match");
   return {
     ...toLimitedProfileCard(input.profile, input.membership),
+    isApprovedMentor,
+    acceptingMentoringRequests,
+    openToIntroductions: input.profile.introOptIn,
     bio: input.profile.bio || input.profile.longBio || input.profile.shortBio,
     problemInterest: input.profile.problemInterest,
     currentFocus: input.profile.currentFocus,
@@ -381,7 +546,17 @@ function toMemberDirectoryProfileView(input: {
     problemSpaceTags: input.profile.problemSpaceTags,
     skillTags: input.profile.skillTags,
     desiredRoles: input.profile.desiredRoles,
-    mentorOffers: input.profile.mentorOffers,
+    mentorExpertiseTags: isApprovedMentor ? input.profile.mentorExpertiseTags : [],
+    mentorStageExperience: isApprovedMentor ? input.profile.mentorStageExperience : [],
+    mentorFunctionalStrengths: isApprovedMentor
+      ? input.profile.mentorFunctionalStrengths
+      : [],
+    mentorAvailability: isApprovedMentor ? input.profile.mentorAvailability : "",
+    mentorOffers: isApprovedMentor ? input.profile.mentorOffers : [],
+    maxMentees: isApprovedMentor ? input.profile.maxMentees : null,
+    mentorshipPreferences: isApprovedMentor
+      ? input.profile.mentorshipPreferences
+      : "",
     profileLinks: input.profileLinks,
     isFollowing: input.following,
     ...(input.introStatus ? { introStatus: input.introStatus } : {}),
@@ -393,7 +568,16 @@ function directoryProfileMatchesFilters(
   membership: Membership,
   filters: MemberDirectoryFilters,
 ) {
-  if (filters.affiliation && membership.affiliationType !== filters.affiliation) {
+  if (filters.mentorStatus && membership.mentorStatus !== filters.mentorStatus) {
+    return false;
+  }
+
+  if (
+    filters.affiliation &&
+    (filters.affiliation === "mentor"
+      ? membership.mentorStatus !== "approved"
+      : membership.affiliationType !== filters.affiliation)
+  ) {
     return false;
   }
 
@@ -411,7 +595,7 @@ function directoryProfileMatchesFilters(
         ...profile.lookingForTypes,
         ...profile.desiredRoles,
         ...profile.helpNeededTags,
-        ...profile.mentorOffers,
+        ...(membership.mentorStatus === "approved" ? profile.mentorOffers : []),
       ],
       filters.need,
     )
@@ -445,7 +629,17 @@ function directoryProfileMatchesFilters(
     profile.skillTags.join(" "),
     profile.lookingForTypes.join(" "),
     profile.desiredRoles.join(" "),
-    membership.affiliationType,
+    ...(membership.mentorStatus === "approved"
+      ? [
+          profile.mentorExpertiseTags.join(" "),
+          profile.mentorFunctionalStrengths.join(" "),
+          profile.mentorStageExperience.join(" "),
+          profile.mentorOffers.join(" "),
+          profile.mentorshipPreferences,
+        ]
+      : []),
+    publicAffiliationLabel(membership),
+    membership.mentorStatus === "approved" ? "approved mentor" : "",
   ]
     .join(" ")
     .toLowerCase();
@@ -752,15 +946,25 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
     const records = await (options.spaceId
       ? listFeedPostRecordsForSpace(options.spaceId, postOptions)
       : listPublicFeedPostRecordsForOrg(org.id, postOptions));
+    const richViewsByPostId = await loadPostRichViews(
+      records.map((record) => record.post),
+    );
 
     return records
       .map(({ commentCount, membership, post, profile }) => {
+        const rich = richViewsByPostId.get(post.id) ?? {
+          images: [],
+          mentions: [],
+        };
         const view: FeedPostView = {
           id: post.id,
           type: post.type,
           opportunitySource: post.opportunitySource,
           title: post.title,
           body: post.body,
+          images: rich.images,
+          linkPreview: rich.linkPreview,
+          mentions: rich.mentions,
           tags: post.tags,
           relatedRolesNeeded: post.relatedRolesNeeded,
           status: post.status,
@@ -815,6 +1019,7 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
     followedMembershipIds,
     savedPostsById,
     visibleCommentCountByPostId,
+    richViewsByPostId,
   ] = await Promise.all([
     listMembershipProfileRecordsByIds(
       authorMembershipIds,
@@ -849,6 +1054,7 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
       : listVisibleCommentCountsForOrg(org.id, {
           postIds: relevantPosts.map((post) => post.id),
         }),
+    loadPostRichViews(relevantPosts),
   ]);
   const followedIds = new Set(followedMembershipIds);
   const matchedIds = new Set(matchedMembershipIds);
@@ -874,6 +1080,10 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
         recommendationReasons.push("Matched");
       }
       const savedPost = savedPostsById.get(post.id);
+      const rich = richViewsByPostId.get(post.id) ?? {
+        images: [],
+        mentions: [],
+      };
 
       const view: FeedPostView = {
         id: post.id,
@@ -881,6 +1091,9 @@ export async function getFeedViewsForOrg(org: Organization, options: FeedViewOpt
         opportunitySource: post.opportunitySource,
         title: post.title,
         body: post.body,
+        images: rich.images,
+        linkPreview: rich.linkPreview,
+        mentions: rich.mentions,
         tags: post.tags,
         relatedRolesNeeded: post.relatedRolesNeeded,
         status: post.status,
@@ -937,7 +1150,14 @@ export async function getMatchViews(membershipId: string, matchRecords: Array<{
     const profile = record?.profile;
     const membership = record?.membership;
 
-    if (!profile || !membership) {
+    if (!profile || !membership || !profile.introOptIn) {
+      return null;
+    }
+    if (
+      match.matchType === "mentor_match" &&
+      (membership.mentorStatus !== "approved" ||
+        !profile.offeringMatchTypes.includes("mentor_match"))
+    ) {
       return null;
     }
 
@@ -985,7 +1205,18 @@ export async function getMatchCardViewsForProfile(
   }> = [];
 
   for (const record of records) {
-    if (!record.targetProfile || !record.targetMembership) {
+    if (
+      !record.targetProfile ||
+      !record.targetMembership ||
+      !record.targetProfile.introOptIn
+    ) {
+      continue;
+    }
+    if (
+      record.match.matchType === "mentor_match" &&
+      (record.targetMembership.mentorStatus !== "approved" ||
+        !record.targetProfile.offeringMatchTypes.includes("mentor_match"))
+    ) {
       continue;
     }
 
@@ -1054,6 +1285,29 @@ export async function getPostThreadIntroContext(input: {
           })
       : Promise.resolve(new Map()),
   ]);
+  if (thread && input.spaceId) {
+    const targetIds = [
+      ...thread.mentions.map((mention) => mention.membershipId),
+      ...thread.comments.flatMap((record) =>
+        (record.comment.mentions ?? []).map((mention) => mention.membershipId),
+      ),
+    ];
+    const activeIds = new Set(
+      await listMentionableMembershipIdsForSpace(input.spaceId, targetIds),
+    );
+    thread.mentions = thread.mentions.filter((mention) =>
+      activeIds.has(mention.membershipId),
+    );
+    thread.comments = thread.comments.map((record) => ({
+      ...record,
+      comment: {
+        ...record.comment,
+        mentions: (record.comment.mentions ?? []).filter((mention) =>
+          activeIds.has(mention.membershipId),
+        ),
+      },
+    }));
+  }
   const authorMembershipId = thread?.author?.membership.id;
 
   return {
@@ -1112,6 +1366,7 @@ export async function getIntroRequestViews(
 
     return {
       id: request.id,
+      kind: request.kind,
       status: request.status,
       introPurpose: request.introPurpose,
       note: request.note,
@@ -1119,10 +1374,7 @@ export async function getIntroRequestViews(
       createdAt: request.createdAt,
       respondedAt: request.respondedAt,
       contactDetails: canViewContactDetails(membershipId, request)
-        ? {
-            email: otherProfile.emailForIntro,
-            whatsapp: otherProfile.whatsappNumber,
-          }
+        ? acceptedContactDetails(otherProfile)
         : undefined,
       otherParty: toLimitedProfileCard(otherProfile, otherMembership),
       isIncoming,
@@ -1163,6 +1415,7 @@ export async function getIntroRequestViewsForSpace(
     }
     return {
       id: request.id,
+      kind: request.kind,
       spaceId: request.spaceId,
       spaceName: space ? getCommunityDisplayName(space) : undefined,
       spaceSlug: space?.slug,
@@ -1173,10 +1426,7 @@ export async function getIntroRequestViewsForSpace(
       createdAt: request.createdAt,
       respondedAt: request.respondedAt,
       contactDetails: canViewContactDetails(membershipId, request)
-        ? {
-            email: otherRecord.profile.emailForIntro,
-            whatsapp: otherRecord.profile.whatsappNumber,
-          }
+        ? acceptedContactDetails(otherRecord.profile)
         : undefined,
       otherParty: toLimitedProfileCard(otherRecord.profile, otherRecord.membership),
       isIncoming,
@@ -1227,6 +1477,7 @@ export async function getAccountIntroHistoryViews(
     if (!otherRecord?.profile) return [];
     return [{
       id: request.id,
+      kind: request.kind,
       spaceId: request.spaceId,
       spaceName: request.spaceId
         ? nameBySpaceId.get(request.spaceId)
@@ -1241,10 +1492,7 @@ export async function getAccountIntroHistoryViews(
       createdAt: request.createdAt,
       respondedAt: request.respondedAt,
       contactDetails: canViewContactDetails(membershipId, request)
-        ? {
-            email: otherRecord.profile.emailForIntro,
-            whatsapp: otherRecord.profile.whatsappNumber,
-          }
+        ? acceptedContactDetails(otherRecord.profile)
         : undefined,
       otherParty: toLimitedProfileCard(otherRecord.profile, otherRecord.membership),
       isIncoming,
@@ -1331,9 +1579,19 @@ export async function getAdminPostModerationDashboard(
     listPostsForOrg(orgId, { limit: options.postLimit ?? 50 }),
     listCommentRecordsForOrg(orgId, { limit: options.commentLimit ?? 30 }),
   ]);
+  const postIds = posts.map((post) => post.id);
+  const [images, previews, mentions] = await Promise.all([
+    listPostImagesForPostIds(postIds, { includeRemoved: true, includeUnready: true }),
+    listPostLinkPreviewsForPostIds(postIds, {
+      includeRemoved: true,
+      includeUnready: true,
+    }),
+    listPostMentionsForPostIds(postIds),
+  ]);
   const authorMembershipIds = [
     ...posts.map((post) => post.authorMembershipId),
     ...commentRecords.map((record) => record.comment.authorMembershipId),
+    ...mentions.map((mention) => mention.mentionedMembershipId),
   ];
   const membershipRecords = await listMembershipProfileRecordsByIds(authorMembershipIds, {
     orgId,
@@ -1360,6 +1618,43 @@ export async function getAdminPostModerationDashboard(
       commentsLocked: post.commentsLocked,
       status: post.status,
       authorName: nameForMembership(post.authorMembershipId),
+      images: images
+        .filter((image) => image.postId === post.id && image.uploadStatus === "ready")
+        .sort((left, right) => left.position - right.position)
+        .map((image) => ({
+          id: image.id,
+          url: `/api/post-images/${image.id}`,
+          width: image.width ?? 1,
+          height: image.height ?? 1,
+          alt: image.alt?.trim() || "Post image",
+          moderationStatus: image.moderationStatus,
+        })),
+      linkPreview: (() => {
+        const preview = previews.find(
+          (candidate) => candidate.postId === post.id && candidate.fetchStatus === "ready",
+        );
+        if (!preview) return undefined;
+        let domain = preview.originalUrl;
+        try {
+          domain = new URL(preview.originalUrl).hostname;
+        } catch {
+          // Keep the stored URL visible to moderators if a legacy row is malformed.
+        }
+        return {
+          id: preview.id,
+          url: preview.originalUrl,
+          domain,
+          title: preview.title,
+          moderationStatus: preview.moderationStatus,
+        };
+      })(),
+      mentions: mentions
+        .filter((mention) => mention.postId === post.id)
+        .map((mention) => ({
+          id: mention.id,
+          label: mention.label,
+          memberName: nameForMembership(mention.mentionedMembershipId),
+        })),
     })),
     comments: commentRecords.map((record) => ({
       id: record.comment.id,

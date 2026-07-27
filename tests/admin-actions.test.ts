@@ -11,10 +11,21 @@ const redirectMock = vi.hoisted(() =>
 const revalidatePathMock = vi.hoisted(() => vi.fn());
 const afterMock = vi.hoisted(() => vi.fn());
 const viewerRef = vi.hoisted(() => ({ current: null as ViewerContext | null }));
+const sendNotificationEmailMock = vi.hoisted(() =>
+  vi.fn(async () => ({ id: "email_test" })),
+);
+const createClerkIdentityInvitationMock = vi.hoisted(() =>
+  vi.fn(async ({ emailAddress }: { emailAddress: string }) => ({
+    id: `app_inv_${emailAddress}`,
+  })),
+);
+const revokeClerkIdentityInvitationMock = vi.hoisted(() =>
+  vi.fn(async () => undefined),
+);
 const createOrganizationInvitationMock = vi.hoisted(() => {
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "pk_test_wavesparks";
   process.env.CLERK_SECRET_KEY = "sk_test_wavesparks";
-  delete process.env.RESEND_API_KEY;
+  process.env.RESEND_API_KEY = "re_test_wavesparks";
   return vi.fn(async ({ emailAddress }: { emailAddress: string }) => ({
     id: `inv_${emailAddress}`,
     emailAddress,
@@ -122,6 +133,16 @@ vi.mock("@/lib/auth", () => ({
   getViewerContextForAction: vi.fn(() => viewerRef.current),
 }));
 
+vi.mock("@/server/notifications", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/notifications")>()),
+  sendNotificationEmail: sendNotificationEmailMock,
+}));
+
+vi.mock("@/server/clerk-identity-invitations", () => ({
+  createClerkIdentityInvitation: createClerkIdentityInvitationMock,
+  revokeClerkIdentityInvitation: revokeClerkIdentityInvitationMock,
+}));
+
 import {
   confirmMemberImportAction,
   createCohortAction,
@@ -132,7 +153,9 @@ import {
   promoteCohortMembersAction,
   previewMemberImportAction,
   retryMemberInvitationsAction,
+  resendMembershipInvitationAction,
   updatePostModerationAction,
+  updateMentorDesignationAction,
   updateMembershipAction,
   updateProfileFlagsAction,
 } from "@/actions/admin";
@@ -162,6 +185,8 @@ async function setAdminViewer() {
     membership,
     profile,
     canAdmin: true,
+    isApprovedMentor: membership.mentorStatus === "approved",
+    canMentor: membership.mentorStatus === "approved",
     scopes: ["org:admin", "org:member"],
   };
 
@@ -178,6 +203,34 @@ function formDataFromEntries(entries: Record<string, string>) {
 
 function mainSpace() {
   return getStore().spaces.find((space) => space.kind === "main")!;
+}
+
+function addLocalInvitation(input: {
+  membershipId: string;
+  email: string;
+  status?: "pending" | "accepted" | "revoked" | "expired";
+  deliveryError?: string;
+}) {
+  const now = new Date().toISOString();
+  const invitation = {
+    id: `minv_test_${input.membershipId}_${getStore().membershipInvitations.length}`,
+    orgId: seedOrganization.id,
+    membershipId: input.membershipId,
+    email: input.email.toLowerCase(),
+    tokenHash: `${getStore().membershipInvitations.length + 1}`.padStart(64, "0"),
+    status: input.status ?? "pending",
+    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+    createdByMembershipId: "mem_avery",
+    ...(input.status === "accepted"
+      ? { acceptedAt: now, acceptedByClerkUserId: "user_test_accepted" }
+      : {}),
+    ...(input.status === "revoked" ? { revokedAt: now } : {}),
+    deliveryError: input.deliveryError,
+    createdAt: now,
+    updatedAt: now,
+  } as const;
+  getStore().membershipInvitations.unshift(invitation);
+  return invitation;
 }
 
 async function createEventDestination(name: string) {
@@ -223,15 +276,20 @@ describe("admin server actions", () => {
         })),
       }),
     );
+    sendNotificationEmailMock.mockImplementation(async () => ({ id: "email_test" }));
+    createClerkIdentityInvitationMock.mockImplementation(async ({ emailAddress }) => ({
+      id: `app_inv_${emailAddress}`,
+    }));
+    revokeClerkIdentityInvitationMock.mockImplementation(async () => undefined);
     viewerRef.current = null;
   });
 
-  it("confirms the Clerk invitation before reporting success", async () => {
+  it("persists and emails a local invitation before reporting success", async () => {
     await setAdminViewer();
     const destination = await createEventDestination("Clerk invitation destination");
     const formData = formDataFromEntries({
-      email: "new.clerk.member@example.com",
-      name: "New Clerk Member",
+      email: "new.member@example.com",
+      name: "New Member",
       role: "member",
       status: "approved",
       destination_space_id: destination.id,
@@ -243,7 +301,7 @@ describe("admin server actions", () => {
     ).rejects.toThrow("NEXT_REDIRECT:/org/wavesparks/admin/members?status=member_invited");
 
     const user = getStore().users.find(
-      (candidate) => candidate.email === "new.clerk.member@example.com",
+      (candidate) => candidate.email === "new.member@example.com",
     );
     const membership = getStore().memberships.find(
       (candidate) => candidate.userId === user?.id,
@@ -251,39 +309,102 @@ describe("admin server actions", () => {
 
     expect(user).toBeDefined();
     expect(membership).toMatchObject({
-      clerkInvitationStatus: "pending",
+      accountStatus: "invited",
+      mentorStatus: "not_mentor",
       role: "member",
       status: "pending",
+    });
+    expect(
+      getStore().membershipInvitations.find(
+        (invitation) => invitation.membershipId === membership?.id,
+      ),
+    ).toMatchObject({
+      email: "new.member@example.com",
+      status: "pending",
+      sentAt: expect.any(String),
+      deliveryError: undefined,
     });
     await expect(getSpaceMembership(destination.id, membership!.id)).resolves.toMatchObject({
       accessStatus: "active",
     });
     await expect(getSpaceMembership(mainSpace().id, membership!.id)).resolves.toBeUndefined();
-    expect(createOrganizationInvitationMock).toHaveBeenCalledTimes(1);
+    expect(createOrganizationInvitationMock).not.toHaveBeenCalled();
+    expect(createClerkIdentityInvitationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        emailAddress: "new.member@example.com",
+        redirectUrl: expect.stringContaining(
+          "/api/internal/membership-invitations/accept?orgSlug=wavesparks&token=",
+        ),
+      }),
+    );
     expect(afterMock).toHaveBeenCalledTimes(1);
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/admin/members");
 
-    expect(createOrganizationInvitationMock).toHaveBeenCalledWith({
-      emailAddress: "new.clerk.member@example.com",
-      inviterUserId: "user_clerk_admin",
-      organizationId: "org_clerk_wavespark",
-      redirectUrl: "http://localhost:3000/org/wavesparks/accept-invitation",
-      role: "org:member",
-      publicMetadata: {
-        orgSlug: "wavesparks",
-        membershipId: membership?.id,
-        membershipRole: "member",
-      },
-    });
   });
 
-  it("records a failed Clerk invitation instead of reporting success", async () => {
+  it("persists an approved mentor invitation independently from account permissions", async () => {
+    const adminMembership = await setAdminViewer();
+    const destination = await createEventDestination("Mentor invitation destination");
+    const formData = formDataFromEntries({
+      email: "new.mentor@example.com",
+      name: "New Mentor",
+      role: "member",
+      mentor_status: "approved",
+      destination_space_id: destination.id,
+      space_access_status: "active",
+    });
+
+    await expect(createManagedAccountAction("wavesparks", formData)).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavesparks/admin/members?status=member_invited",
+    );
+
+    const user = getStore().users.find(
+      (candidate) => candidate.email === "new.mentor@example.com",
+    );
+    const membership = getStore().memberships.find(
+      (candidate) => candidate.userId === user?.id,
+    );
+    expect(membership).toMatchObject({
+      role: "member",
+      mentorStatus: "approved",
+      mentorReviewedAt: expect.any(String),
+      mentorReviewedByMembershipId: adminMembership.id,
+    });
+    await expect(getSpaceMembership(destination.id, membership!.id)).resolves.toMatchObject({
+      accessStatus: "active",
+    });
+    expect(createOrganizationInvitationMock).not.toHaveBeenCalled();
+  });
+
+  it("does not allow invitations to forge a pending mentor review", async () => {
+    await setAdminViewer();
+    const destination = await createEventDestination("Invalid mentor invitation destination");
+    const formData = formDataFromEntries({
+      email: "pending.mentor@example.com",
+      name: "Pending Mentor",
+      role: "member",
+      mentor_status: "needs_review",
+      destination_space_id: destination.id,
+      space_access_status: "active",
+    });
+
+    await expect(createManagedAccountAction("wavesparks", formData)).rejects.toThrow(
+      "New invitations can be Not a mentor or Approved mentor.",
+    );
+    expect(
+      getStore().users.some((candidate) => candidate.email === "pending.mentor@example.com"),
+    ).toBe(false);
+  });
+
+  it("records a failed Clerk identity invitation delivery instead of reporting success", async () => {
     await setAdminViewer();
     const destination = await createEventDestination("Failed invitation destination");
-    createOrganizationInvitationMock.mockRejectedValueOnce(new Error("Clerk invitation failed"));
+    createClerkIdentityInvitationMock.mockRejectedValueOnce(
+      new Error("Clerk identity invitation unavailable"),
+    );
     const formData = formDataFromEntries({
-      email: "failed.clerk.member@example.com",
-      name: "Failed Clerk Member",
+      email: "failed.member@example.com",
+      name: "Failed Member",
       role: "member",
       status: "pending",
       destination_space_id: destination.id,
@@ -295,33 +416,28 @@ describe("admin server actions", () => {
     );
 
     const user = getStore().users.find(
-      (candidate) => candidate.email === "failed.clerk.member@example.com",
+      (candidate) => candidate.email === "failed.member@example.com",
     );
     const membership = getStore().memberships.find(
       (candidate) => candidate.userId === user?.id,
     );
-    expect(membership).toMatchObject({
-      clerkInvitationStatus: "failed",
-      clerkInvitationError: "The invitation couldn’t be created. Try again in a few minutes.",
+    expect(membership).toMatchObject({ status: "pending" });
+    expect(
+      getStore().membershipInvitations.find(
+        (invitation) => invitation.membershipId === membership?.id,
+      ),
+    ).toMatchObject({
       status: "pending",
+      sentAt: undefined,
+      deliveryError:
+        "The invitation email could not be sent. Check the email service, then try again.",
     });
   });
 
-  it("reuses a pending invitation found in the unfiltered Clerk response", async () => {
+  it("rotates an existing local invitation when an admin resends it", async () => {
     await setAdminViewer();
     const destination = await createEventDestination("Pending invitation destination");
     const email = "already.pending@example.com";
-    getOrganizationInvitationListMock.mockResolvedValueOnce({
-      data: [
-        {
-          id: "orginv_existing",
-          emailAddress: email,
-          role: "org:member",
-          status: "pending",
-        },
-      ],
-      totalCount: 1,
-    });
     const formData = formDataFromEntries({
       email,
       name: "Already Pending",
@@ -335,23 +451,31 @@ describe("admin server actions", () => {
       "NEXT_REDIRECT:/org/wavesparks/admin/members?status=member_invited",
     );
 
-    expect(getOrganizationInvitationListMock).toHaveBeenCalledWith({
-      organizationId: "org_clerk_wavespark",
-      limit: 500,
-      offset: 0,
-    });
-    expect(createOrganizationInvitationMock).not.toHaveBeenCalled();
     const user = getStore().users.find((candidate) => candidate.email === email);
     const membership = getStore().memberships.find(
       (candidate) => candidate.userId === user?.id,
+    )!;
+    const firstInvitation = getStore().membershipInvitations.find(
+      (invitation) => invitation.membershipId === membership.id,
+    )!;
+
+    await expect(
+      resendMembershipInvitationAction("wavesparks", membership.id),
+    ).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavesparks/admin/members?status=member_invited",
     );
-    expect(membership).toMatchObject({
-      clerkInvitationId: "orginv_existing",
-      clerkInvitationStatus: "pending",
-    });
+
+    const invitations = getStore().membershipInvitations.filter(
+      (invitation) => invitation.membershipId === membership.id,
+    );
+    expect(invitations).toHaveLength(2);
+    expect(invitations.find((invitation) => invitation.id === firstInvitation.id)?.status)
+      .toBe("revoked");
+    expect(invitations.filter((invitation) => invitation.status === "pending"))
+      .toHaveLength(1);
   });
 
-  it("adds an existing Clerk user and sends the explicit sign-in notification", async () => {
+  it("does not query Clerk Organizations or auto-connect a matching Clerk directory user", async () => {
     await setAdminViewer();
     const destination = await createEventDestination("Existing Clerk destination");
     const email = "existing.clerk.member@example.com";
@@ -363,13 +487,6 @@ describe("admin server actions", () => {
         },
       ],
     });
-    getOrganizationMembershipListMock.mockImplementation(
-      async (input?: { userId?: string[] }) =>
-        input?.userId?.[0] === "user_clerk_existing"
-          ? { data: [] }
-          : { data: [{ id: "clerk_mem_admin", role: "org:admin" }] },
-    );
-    const emailLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const formData = formDataFromEntries({
       email,
       name: "Existing Clerk Member",
@@ -383,22 +500,19 @@ describe("admin server actions", () => {
       "NEXT_REDIRECT:/org/wavesparks/admin/members?status=member_invited",
     );
 
-    expect(createOrganizationMembershipMock).toHaveBeenCalledWith({
-      organizationId: "org_clerk_wavespark",
-      role: "org:member",
-      userId: "user_clerk_existing",
-    });
-    expect(emailLog).toHaveBeenCalledWith(
-      "[wavesparks] email skipped",
-      "Your Wavesparks invitation",
-      email,
-    );
+    expect(getUserListMock).not.toHaveBeenCalled();
+    expect(createOrganizationMembershipMock).not.toHaveBeenCalled();
     const user = getStore().users.find((candidate) => candidate.email === email);
     const membership = getStore().memberships.find(
       (candidate) => candidate.userId === user?.id,
     );
-    expect(user?.clerkUserId).toBe("user_clerk_existing");
-    expect(membership?.clerkMembershipId).toBe("clerk_mem_admin");
+    expect(user?.clerkUserId).toBeUndefined();
+    expect(membership?.accountStatus).toBe("invited");
+    expect(
+      getStore().membershipInvitations.some(
+        (invitation) => invitation.membershipId === membership?.id,
+      ),
+    ).toBe(true);
   });
 
   it("ignores legacy membership status and grants only the explicit destination Space", async () => {
@@ -435,6 +549,7 @@ describe("admin server actions", () => {
       email: "new.admin@example.com",
       name: "New Admin",
       role: "org_admin",
+      mentor_status: "approved",
       status: "pending",
       destination_space_id: "",
     });
@@ -456,7 +571,11 @@ describe("admin server actions", () => {
     );
     expect(
       getStore().memberships.find((membership) => membership.userId === user?.id),
-    ).toMatchObject({ role: "org_admin", status: "pending" });
+    ).toMatchObject({
+      mentorStatus: "approved",
+      role: "org_admin",
+      status: "pending",
+    });
     const membership = getStore().memberships.find(
       (candidate) => candidate.userId === user?.id,
     )!;
@@ -465,9 +584,7 @@ describe("admin server actions", () => {
         (spaceMembership) => spaceMembership.membershipId === membership.id,
       ),
     ).toBe(false);
-    expect(createOrganizationInvitationMock).toHaveBeenCalledWith(
-      expect.objectContaining({ role: "org:admin" }),
-    );
+    expect(createOrganizationInvitationMock).not.toHaveBeenCalled();
   });
 
   it("adds an existing member to a cohort without overwriting member data", async () => {
@@ -495,6 +612,7 @@ describe("admin server actions", () => {
 
     expect(await getUserById(existingUser.id)).toMatchObject({ name: "Priya Desai" });
     expect(await getMembershipById(existingMembership.id)).toMatchObject({
+      mentorStatus: "needs_review",
       role: "member",
       status: "pending",
     });
@@ -517,12 +635,17 @@ describe("admin server actions", () => {
     const store = getStore();
     const destination = mainSpace();
     const pending = store.memberships.find((membership) => membership.id === "mem_priya")!;
-    pending.clerkInvitationId = "orginv_priya";
-    pending.clerkInvitationStatus = "pending";
+    pending.accountStatus = "invited";
+    addLocalInvitation({ membershipId: pending.id, email: "priya@example.com" });
     const connected = store.memberships.find((membership) => membership.id === "mem_jules")!;
-    connected.clerkMembershipId = "clerk_mem_jules";
+    connected.accountStatus = "connected";
     const existing = store.memberships.find((membership) => membership.id === "mem_rhea")!;
-    existing.clerkInvitationStatus = "accepted";
+    existing.accountStatus = "invited";
+    addLocalInvitation({
+      membershipId: existing.id,
+      email: "rhea@example.com",
+      status: "accepted",
+    });
 
     const preview = await previewMemberImportAction("wavesparks", {
       destinationSpaceId: destination.id,
@@ -568,7 +691,7 @@ describe("admin server actions", () => {
     });
   });
 
-  it("confirms imports through Clerk bulk calls of at most ten invitations", async () => {
+  it("sends local imports in bounded email batches", async () => {
     await setAdminViewer();
     const destination = mainSpace();
     const rows = Array.from({ length: 12 }, (_, index) => ({
@@ -583,20 +706,8 @@ describe("admin server actions", () => {
       rows,
     });
 
-    expect(createOrganizationInvitationBulkMock).toHaveBeenCalledTimes(2);
-    expect(
-      createOrganizationInvitationBulkMock.mock.calls.map(
-        ([organizationId, invitations]) => [organizationId, invitations.length],
-      ),
-    ).toEqual([
-      ["org_clerk_wavespark", 10],
-      ["org_clerk_wavespark", 2],
-    ]);
-    expect(
-      createOrganizationInvitationBulkMock.mock.calls.every(
-        ([, invitations]) => invitations.length <= 10,
-      ),
-    ).toBe(true);
+    expect(createClerkIdentityInvitationMock).toHaveBeenCalledTimes(12);
+    expect(createOrganizationInvitationBulkMock).not.toHaveBeenCalled();
     expect(result.summary).toMatchObject({
       invited: 12,
       connected: 0,
@@ -607,7 +718,7 @@ describe("admin server actions", () => {
     expect(
       result.rows.every(
         (row) =>
-          row.message === "Invitation created. Access to Wavesparks Community added.",
+          row.message === "Invitation sent. Access to Wavesparks Community added.",
       ),
     ).toBe(true);
     for (const row of rows) {
@@ -616,34 +727,32 @@ describe("admin server actions", () => {
         getStore().memberships.find((membership) => membership.userId === user?.id),
       ).toMatchObject({
         invitedByUserId: "usr_avery",
+        accountStatus: "invited",
+        mentorStatus: "not_mentor",
         role: "member",
         status: "pending",
-        clerkInvitationStatus: "pending",
       });
       const membership = getStore().memberships.find(
         (candidate) => candidate.userId === user?.id,
       )!;
+      expect(
+        getStore().membershipInvitations.find(
+          (invitation) => invitation.membershipId === membership.id,
+        ),
+      ).toMatchObject({ status: "pending", sentAt: expect.any(String) });
       await expect(getSpaceMembership(destination.id, membership.id)).resolves.toMatchObject({
         accessStatus: "active",
       });
     }
   });
 
-  it("reports a missing Clerk bulk result as a retryable per-row failure", async () => {
+  it("reports a Clerk invitation failure as a retryable per-row failure", async () => {
     await setAdminViewer();
     const destination = mainSpace();
-    createOrganizationInvitationBulkMock.mockImplementationOnce(
-      async (_organizationId, invitations) => ({
-        data: invitations
-          .filter((_, index) => index !== 1)
-          .map(({ emailAddress }) => ({
-            id: `inv_partial_${emailAddress}`,
-            emailAddress,
-            role: "org:member",
-            status: "pending",
-          })),
-      }),
-    );
+    createClerkIdentityInvitationMock
+      .mockResolvedValueOnce({ id: "app_inv_first" })
+      .mockRejectedValueOnce(new Error("Clerk identity invitation unavailable"))
+      .mockResolvedValueOnce({ id: "app_inv_third" });
 
     const result = await confirmMemberImportAction("wavesparks", {
       destinationSpaceId: destination.id,
@@ -661,23 +770,29 @@ describe("admin server actions", () => {
       status: "failed",
       retryable: true,
       message:
-        "The invitation couldn’t be created. Try again in a few minutes. Access to Wavesparks Community added.",
+        "The invitation email could not be sent. Check the email service, then try again. Access to Wavesparks Community added.",
     });
     const failedUser = getStore().users.find(
       (user) => user.email === "partial-2@example.com",
     );
+    const failedMembership = getStore().memberships.find(
+      (membership) => membership.userId === failedUser?.id,
+    )!;
     expect(
-      getStore().memberships.find((membership) => membership.userId === failedUser?.id),
+      getStore().membershipInvitations.find(
+        (invitation) => invitation.membershipId === failedMembership.id,
+      ),
     ).toMatchObject({
-      clerkInvitationError: "The invitation couldn’t be created. Try again in a few minutes.",
-      clerkInvitationStatus: "failed",
+      status: "pending",
+      deliveryError:
+        "The invitation email could not be sent. Check the email service, then try again.",
     });
   });
 
-  it("isolates a Clerk 429 to its ten-person batch and continues later batches", async () => {
+  it("isolates a Clerk invitation 429 and continues the batch", async () => {
     await setAdminViewer();
     const destination = mainSpace();
-    createOrganizationInvitationBulkMock.mockRejectedValueOnce(
+    createClerkIdentityInvitationMock.mockRejectedValueOnce(
       Object.assign(new Error("Too many requests"), { status: 429 }),
     );
     const rows = Array.from({ length: 11 }, (_, index) => ({
@@ -692,25 +807,19 @@ describe("admin server actions", () => {
       rows,
     });
 
-    expect(createOrganizationInvitationBulkMock).toHaveBeenCalledTimes(2);
-    expect(result.summary).toMatchObject({ invited: 1, spaceAdded: 11, failed: 10 });
-    expect(result.rows.slice(0, 10).every((row) => row.retryable)).toBe(true);
-    expect(
-      result.rows
-        .slice(0, 10)
-        .every(
-          (row) =>
-            row.message ===
-            "The invitation service is busy. Wait a few minutes, then try again. Access to Wavesparks Community added.",
-        ),
-    ).toBe(true);
-    expect(result.rows[10]).toMatchObject({
-      email: "rate-limit-11@example.com",
-      status: "invited",
+    expect(createOrganizationInvitationBulkMock).not.toHaveBeenCalled();
+    expect(result.summary).toMatchObject({ invited: 10, spaceAdded: 11, failed: 1 });
+    expect(result.rows[0]).toMatchObject({
+      email: "rate-limit-1@example.com",
+      status: "failed",
+      retryable: true,
+      message:
+        "The invitation service is busy. Wait a few minutes, then try again. Access to Wavesparks Community added.",
     });
+    expect(result.rows.slice(1).every((row) => row.status === "invited")).toBe(true);
   });
 
-  it("connects existing Clerk users, reuses pending invitations, and bulks only new rows", async () => {
+  it("uses only local invitations even when Clerk directory mocks contain matching users", async () => {
     await setAdminViewer();
     const destination = mainSpace();
     const connectedEmail = "bulk-existing@example.com";
@@ -723,25 +832,6 @@ describe("admin server actions", () => {
         },
       ],
     });
-    getOrganizationInvitationListMock.mockResolvedValueOnce({
-      data: [
-        {
-          id: "orginv_bulk_pending",
-          emailAddress: pendingEmail,
-          role: "org:member",
-          status: "pending",
-        },
-      ],
-      totalCount: 1,
-    });
-    getOrganizationMembershipListMock.mockImplementation(
-      async (input?: { userId?: string[] }) =>
-        input?.userId?.[0] === "user_clerk_bulk_existing"
-          ? { data: [] }
-          : { data: [{ id: "clerk_mem_admin", role: "org:admin" }] },
-    );
-    const emailLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
-
     const result = await confirmMemberImportAction("wavesparks", {
       destinationSpaceId: destination.id,
       accessStatus: "active",
@@ -753,42 +843,36 @@ describe("admin server actions", () => {
     });
 
     expect(result.summary).toMatchObject({
-      connected: 1,
-      invited: 2,
+      connected: 0,
+      invited: 3,
       spaceAdded: 3,
       failed: 0,
     });
-    expect(createOrganizationMembershipMock).toHaveBeenCalledWith({
-      organizationId: "org_clerk_wavespark",
-      role: "org:member",
-      userId: "user_clerk_bulk_existing",
-    });
-    expect(createOrganizationInvitationBulkMock).toHaveBeenCalledTimes(1);
-    expect(createOrganizationInvitationBulkMock.mock.calls[0]?.[1]).toHaveLength(1);
-    expect(createOrganizationInvitationBulkMock.mock.calls[0]?.[1]?.[0]).toMatchObject({
-      emailAddress: "bulk-new@example.com",
-    });
+    expect(getUserListMock).not.toHaveBeenCalled();
+    expect(createOrganizationMembershipMock).not.toHaveBeenCalled();
+    expect(createOrganizationInvitationBulkMock).not.toHaveBeenCalled();
+    expect(createClerkIdentityInvitationMock).toHaveBeenCalledTimes(3);
     const pendingUser = getStore().users.find((user) => user.email === pendingEmail);
+    const pendingMembership = getStore().memberships.find(
+      (membership) => membership.userId === pendingUser?.id,
+    )!;
     expect(
-      getStore().memberships.find((membership) => membership.userId === pendingUser?.id),
-    ).toMatchObject({
-      clerkInvitationId: "orginv_bulk_pending",
-      clerkInvitationStatus: "pending",
-    });
-    expect(emailLog).toHaveBeenCalledWith(
-      "[wavesparks] email skipped",
-      "Your Wavesparks invitation",
-      connectedEmail,
-    );
+      getStore().membershipInvitations.find(
+        (invitation) => invitation.membershipId === pendingMembership.id,
+      ),
+    ).toMatchObject({ status: "pending", sentAt: expect.any(String) });
   });
 
   it("retries only retryable memberships from the current organization", async () => {
     await setAdminViewer();
     const store = getStore();
     const retryable = store.memberships.find((membership) => membership.id === "mem_priya")!;
-    retryable.clerkInvitationId = "orginv_failed_priya";
-    retryable.clerkInvitationStatus = "failed";
-    retryable.clerkInvitationError = "Previous failure";
+    retryable.accountStatus = "invited";
+    addLocalInvitation({
+      membershipId: retryable.id,
+      email: "priya@example.com",
+      deliveryError: "Previous failure",
+    });
     const sourceUser = store.users.find((user) => user.id === retryable.userId)!;
     const otherUser = {
       ...sourceUser,
@@ -818,40 +902,37 @@ describe("admin server actions", () => {
     expect(result.rows).toHaveLength(2);
     expect(result.rows.some((row) => row.membershipId === otherMembership.id)).toBe(false);
     expect(result.summary).toMatchObject({ invited: 1, skipped: 1, failed: 0 });
-    expect(createOrganizationInvitationBulkMock).toHaveBeenCalledTimes(1);
-    expect(createOrganizationInvitationBulkMock.mock.calls[0]?.[1]).toHaveLength(1);
-    expect(createOrganizationInvitationBulkMock.mock.calls[0]?.[1]?.[0]).toMatchObject({
-      emailAddress: "priya@example.com",
-    });
+    expect(createOrganizationInvitationBulkMock).not.toHaveBeenCalled();
+    expect(createClerkIdentityInvitationMock).toHaveBeenCalledTimes(1);
+    expect(
+      getStore().membershipInvitations.filter(
+        (invitation) => invitation.membershipId === retryable.id,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "pending", sentAt: expect.any(String) }),
+        expect.objectContaining({ status: "revoked" }),
+      ]),
+    );
   });
 
-  it("retries a failed sign-in notification for an already connected account", async () => {
+  it("does not create membership invitations for an already connected account", async () => {
     await setAdminViewer();
     const connected = (await getMembershipById("mem_jules"))!;
-    connected.clerkMembershipId = "clerk_mem_jules";
-    connected.clerkInvitationError = "Invitation email failed: Resend unavailable";
-    const emailLog = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    connected.accountStatus = "connected";
 
     const result = await retryMemberInvitationsAction("wavesparks", [connected.id]);
 
     expect(result.rows).toEqual([
       expect.objectContaining({
         membershipId: connected.id,
-        status: "connected",
+        status: "skipped",
         retryable: false,
-        message: "Sign-in notification sent to the connected account.",
+        message: "This invitation is no longer retryable.",
       }),
     ]);
-    expect(await getMembershipById(connected.id)).toMatchObject({
-      clerkMembershipId: "clerk_mem_jules",
-      clerkInvitationError: undefined,
-    });
     expect(createOrganizationInvitationBulkMock).not.toHaveBeenCalled();
-    expect(emailLog).toHaveBeenCalledWith(
-      "[wavesparks] email skipped",
-      "Your Wavesparks invitation",
-      "jules@example.com",
-    );
+    expect(createClerkIdentityInvitationMock).not.toHaveBeenCalled();
   });
 
   it("creates a cohort and redirects admins into the cohort detail", async () => {
@@ -877,7 +958,7 @@ describe("admin server actions", () => {
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/admin/cohorts");
   });
 
-  it("imports cohort students in confirmed Clerk batches", async () => {
+  it("imports cohort students with local invitations", async () => {
     await setAdminViewer();
     const cohort = await createCohort({
       orgId: seedOrganization.id,
@@ -904,7 +985,8 @@ describe("admin server actions", () => {
       invitedEmail: "cohort.student@example.com",
       status: "invited",
     });
-    expect(createOrganizationInvitationMock).toHaveBeenCalledTimes(1);
+    expect(createOrganizationInvitationMock).not.toHaveBeenCalled();
+    expect(createClerkIdentityInvitationMock).toHaveBeenCalledTimes(1);
     expect(afterMock).not.toHaveBeenCalled();
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/admin/cohorts");
     expect(revalidatePathMock).toHaveBeenCalledWith(
@@ -912,18 +994,11 @@ describe("admin server actions", () => {
     );
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/admin/members");
 
-    expect(createOrganizationInvitationMock).toHaveBeenCalledWith({
-      emailAddress: "cohort.student@example.com",
-      inviterUserId: "user_clerk_admin",
-      organizationId: "org_clerk_wavespark",
-      redirectUrl: "http://localhost:3000/org/wavesparks/accept-invitation",
-      role: "org:member",
-      publicMetadata: {
-        orgSlug: "wavesparks",
-        membershipId: record.membership.id,
-        membershipRole: "member",
-      },
-    });
+    expect(
+      getStore().membershipInvitations.find(
+        (invitation) => invitation.membershipId === record.membership.id,
+      ),
+    ).toMatchObject({ status: "pending", sentAt: expect.any(String) });
   });
 
   it("keeps cohort import validation errors on the detail page", async () => {
@@ -968,7 +1043,7 @@ describe("admin server actions", () => {
     expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 
-  it("uses the linked Wavesparks organization when no Clerk org is active", async () => {
+  it("does not require an active Clerk organization for cohort invitations", async () => {
     await setAdminViewer();
     authMock.mockResolvedValueOnce({
       has: vi.fn(() => false),
@@ -992,7 +1067,8 @@ describe("admin server actions", () => {
 
     expect(await listCohortMemberRecordsForCohort(seedOrganization.id, cohort.id)).toHaveLength(1);
     expect(afterMock).not.toHaveBeenCalled();
-    expect(createOrganizationInvitationMock).toHaveBeenCalledTimes(1);
+    expect(createOrganizationInvitationMock).not.toHaveBeenCalled();
+    expect(createClerkIdentityInvitationMock).toHaveBeenCalledTimes(1);
   });
 
   it("keeps legacy Cohort promotion disabled without granting Main access", async () => {
@@ -1250,6 +1326,50 @@ describe("admin server actions", () => {
           notification.type === "membership_approved",
       ),
     ).toBe(false);
+  });
+
+  it("approves a mentor independently and schedules every affected Space for recompute", async () => {
+    const adminMembership = await setAdminViewer();
+    const main = mainSpace();
+    await grantSpaceMembership({
+      orgId: seedOrganization.id,
+      spaceId: main.id,
+      membershipId: "mem_priya",
+      accessStatus: "active",
+    });
+    const formData = formDataFromEntries({ mentor_status: "approved" });
+
+    await expect(
+      updateMentorDesignationAction("wavesparks", "mem_priya", formData),
+    ).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavesparks/admin/members?status=membership_updated",
+    );
+
+    await expect(getMembershipById("mem_priya")).resolves.toMatchObject({
+      role: "member",
+      mentorStatus: "approved",
+      mentorReviewedAt: expect.any(String),
+      mentorReviewedByMembershipId: adminMembership.id,
+    });
+    expect(afterMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/mentoring");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/people");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/people/mem_priya");
+  });
+
+  it("re-authorizes mentor designation changes inside the Server Action", async () => {
+    const before = (await getMembershipById("mem_priya"))!.mentorStatus;
+    const formData = formDataFromEntries({ mentor_status: "approved" });
+
+    await expect(
+      updateMentorDesignationAction("wavesparks", "mem_priya", formData),
+    ).rejects.toThrow("Unauthorized.");
+
+    await expect(getMembershipById("mem_priya")).resolves.toMatchObject({
+      mentorStatus: before,
+    });
+    expect(afterMock).not.toHaveBeenCalled();
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 
   it("updates profile flags before recomputing matches after the response", async () => {

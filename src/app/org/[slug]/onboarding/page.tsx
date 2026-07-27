@@ -18,6 +18,24 @@ const validationFieldMeta: Record<string, { label: string; step: number }> = {
   max_mentees: { label: "Max mentees", step: 3 },
 };
 
+function safeRequestedReturnPath(slug: string, value?: string) {
+  if (!value) return undefined;
+
+  try {
+    const url = new URL(value, "https://wavespark.local");
+    const orgRoot = `/org/${slug}`;
+    if (
+      url.origin !== "https://wavespark.local" ||
+      (url.pathname !== orgRoot && !url.pathname.startsWith(`${orgRoot}/`))
+    ) {
+      return undefined;
+    }
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export default async function OnboardingPage({
   params,
   searchParams,
@@ -48,10 +66,14 @@ export default async function OnboardingPage({
   const missing = Array.isArray(query.missing) ? query.missing[0] : query.missing;
   const fields = Array.isArray(query.fields) ? query.fields[0] : query.fields;
   const requestedSpace = Array.isArray(query.space) ? query.space[0] : query.space;
+  const requestedReturnTo = Array.isArray(query.return_to)
+    ? query.return_to[0]
+    : query.return_to;
   const returnTo =
-    requestedSpace && /^[a-z0-9][a-z0-9-]{0,127}$/.test(requestedSpace)
+    safeRequestedReturnPath(slug, requestedReturnTo) ??
+    (requestedSpace && /^[a-z0-9][a-z0-9-]{0,127}$/.test(requestedSpace)
       ? `/org/${slug}/s/${requestedSpace}/feed`
-      : `/org/${slug}/profile`;
+      : `/org/${slug}/profile`);
   const invalidFields = (fields ?? "")
     .split(",")
     .map((field) => validationFieldMeta[field])
@@ -106,9 +128,11 @@ export default async function OnboardingPage({
           />
           <OnboardingForm
             action={action}
+            canMentor={viewer.canMentor}
             initialStep={initialStep}
             links={links}
             matchTypeConfigs={matchTypeConfigs}
+            openMentoringDetails={returnTo === `/org/${slug}/mentoring#mentor-profile`}
             profile={profile}
             returnTo={returnTo}
           />

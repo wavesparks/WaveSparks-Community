@@ -7,6 +7,10 @@ import {
   savePostInSpaceAction,
   unsavePostInSpaceAction,
 } from "@/actions/member";
+import { CommentComposer } from "@/components/community/comment-composer";
+import { LinkPreviewCard } from "@/components/community/link-preview-card";
+import { PostImageGallery } from "@/components/community/post-image-gallery";
+import { RichTextBody } from "@/components/community/rich-text-body";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -23,6 +27,11 @@ import {
 } from "@/lib/community-copy";
 import { singleQueryValue } from "@/lib/feed-filters";
 import { getActiveIntroStatusCopy } from "@/lib/intro-status";
+import type {
+  PostImageView,
+  PostLinkPreviewView,
+  RichTextMention,
+} from "@/lib/domain";
 import { postStatusLabel, postTypeLabel } from "@/lib/post-copy";
 import { getSpaceViewerContext } from "@/lib/space-auth";
 import { formatDate } from "@/lib/utils";
@@ -88,6 +97,11 @@ export default async function SpacePostDetailPage({
   if (!thread || thread.post.hidden) notFound();
 
   const { post } = thread;
+  const richThread = thread as typeof thread & {
+    images?: PostImageView[];
+    linkPreview?: PostLinkPreviewView;
+    mentions?: RichTextMention[];
+  };
   const authorRecord = thread.author;
   const authorMembership = authorRecord?.membership;
   const authorProfile = authorRecord?.profile;
@@ -144,7 +158,19 @@ export default async function SpacePostDetailPage({
                 {formatDate(post.createdAt)}
               </span>
             </div>
-            <SectionHeading description={post.body} level={1} title={post.title} />
+            <SectionHeading level={1} title={post.title || postTypeLabel(post.type)} />
+            {post.body ? (
+              <RichTextBody
+                body={post.body}
+                className="block text-sm leading-7 text-[var(--ink-soft)] sm:text-base"
+                memberHref={(membershipId) =>
+                  `/org/${slug}/s/${space.slug}/people/${membershipId}`
+                }
+                mentions={richThread.mentions ?? []}
+              />
+            ) : null}
+            <PostImageGallery images={richThread.images ?? []} />
+            <LinkPreviewCard preview={richThread.linkPreview} />
             <div className="flex flex-wrap gap-2">
               {post.tags.map((tag, index) => (
                 <Badge key={`space-post-tag-${tag}-${index}`} variant="muted">
@@ -225,6 +251,7 @@ export default async function SpacePostDetailPage({
                 commentCards.map(({ card, comment }) => (
                   <div
                     className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3"
+                    id={`comment-${comment.id}`}
                     key={comment.id}
                   >
                     <div className="flex items-start gap-3">
@@ -235,9 +262,14 @@ export default async function SpacePostDetailPage({
                         <p className="font-semibold text-[var(--ink)]">
                           {card?.displayName || `Former ${personLabel}`}
                         </p>
-                        <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                          {comment.body}
-                        </p>
+                        <RichTextBody
+                          body={comment.body}
+                          className="mt-1 block text-sm leading-6 text-[var(--ink-soft)]"
+                          memberHref={(membershipId) =>
+                            `/org/${slug}/s/${space.slug}/people/${membershipId}`
+                          }
+                          mentions={comment.mentions ?? []}
+                        />
                       </div>
                     </div>
                   </div>
@@ -260,7 +292,7 @@ export default async function SpacePostDetailPage({
                 </p>
               </div>
             ) : context.canInteract ? (
-              <form
+              <CommentComposer
                 action={addCommentInSpaceAction.bind(
                   null,
                   slug,
@@ -268,17 +300,8 @@ export default async function SpacePostDetailPage({
                   viewer.membership.id,
                   post.id,
                 )}
-                className="space-y-3"
-              >
-                <Label htmlFor="space-comment-body">Comment</Label>
-                <Textarea
-                  id="space-comment-body"
-                  name="body"
-                  placeholder="Add your response"
-                  required
-                />
-                <SubmitButton pendingLabel="Adding comment">Add comment</SubmitButton>
-              </form>
+                candidateEndpoint={`/api/org/${encodeURIComponent(slug)}/spaces/${encodeURIComponent(space.id)}/mention-candidates`}
+              />
             ) : (
               <InteractionGate action="reply" slug={slug} spaceSlug={space.slug} />
             )}

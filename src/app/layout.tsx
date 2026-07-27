@@ -55,7 +55,6 @@ function ClerkBoundary({ children }: { children: React.ReactNode }) {
       signInUrl={env.clerkSignInUrl}
       signUpFallbackRedirectUrl={env.clerkSignUpFallbackRedirectUrl}
       signUpUrl={env.clerkSignUpUrl}
-      taskUrls={{ "choose-organization": "/session-tasks/choose-organization" }}
     >
       {children}
     </ClerkProvider>

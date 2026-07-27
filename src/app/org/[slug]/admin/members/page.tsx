@@ -17,7 +17,11 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { Select } from "@/components/ui/select";
 import { StatusBanner } from "@/components/ui/status-banner";
 import { getViewerContext } from "@/lib/auth";
-import type { AccountStatus } from "@/lib/domain";
+import type {
+  AccountStatus,
+  MembershipInvitation,
+  MentorStatus,
+} from "@/lib/domain";
 import { isE2ELocalAuthEnabled } from "@/lib/e2e-local-auth";
 import { isClerkConfigured } from "@/lib/env";
 import { singleQueryValue } from "@/lib/feed-filters";
@@ -51,6 +55,13 @@ const invitationOptions = [
   ["not_invited", "Not invited"],
 ] as const;
 
+const mentorOptions = [
+  ["", "All mentor designations"],
+  ["not_mentor", "Not a mentor"],
+  ["needs_review", "Needs review"],
+  ["approved", "Approved mentor"],
+] as const;
+
 function optionValue<T extends string>(
   value: string | undefined,
   options: ReadonlyArray<readonly [string, string]>,
@@ -67,6 +78,7 @@ function memberListHref(
   slug: string,
   values: {
     account?: string;
+    mentor?: string;
     space?: string;
     invitation?: string;
     page?: number;
@@ -76,6 +88,7 @@ function memberListHref(
   const query = new URLSearchParams();
   if (values.search) query.set("search", values.search);
   if (values.account) query.set("account", values.account);
+  if (values.mentor) query.set("mentor", values.mentor);
   if (values.invitation) query.set("invitation", values.invitation);
   if (values.space) query.set("space", values.space);
   if (values.page && values.page > 1) query.set("page", String(values.page));
@@ -87,13 +100,14 @@ function accessLabel(status: AccountStatus) {
   return getAccountStatusLabel(status);
 }
 
-function invitationLabel(membership: {
-  clerkInvitationStatus?: string;
-  clerkMembershipId?: string;
-}) {
-  if (membership.clerkMembershipId) return "Connected";
-  if (!membership.clerkInvitationStatus) return "Not invited";
-  return `Invitation ${membership.clerkInvitationStatus}`;
+function invitationLabel(
+  accountStatus: AccountStatus,
+  invitation?: Pick<MembershipInvitation, "deliveryError" | "status">,
+) {
+  if (accountStatus === "connected") return "Connected";
+  if (!invitation) return "Not invited";
+  if (invitation.deliveryError) return "Invitation failed";
+  return `Invitation ${invitation.status}`;
 }
 
 export default async function AdminMembersPage({
@@ -122,6 +136,10 @@ export default async function AdminMembersPage({
     singleQueryValue(query.invitation),
     invitationOptions,
   );
+  const mentor = optionValue<MentorStatus>(
+    singleQueryValue(query.mentor),
+    mentorOptions,
+  );
   const requestedSpace = singleQueryValue(query.space)?.trim() || undefined;
   const requestedPage = positivePage(singleQueryValue(query.page));
   const spaces = await listSpacesForOrg(viewer.org.id);
@@ -134,12 +152,13 @@ export default async function AdminMembersPage({
     query: search,
     accountStatus: account,
     invitationStatus: invitation,
+    mentorStatus: mentor,
     spaceId: selectedSpace,
     page: requestedPage,
     pageSize: 25,
   });
   const invitationsEnabled = isClerkConfigured() || isE2ELocalAuthEnabled();
-  const listValues = { search, account, invitation, space: selectedSpace };
+  const listValues = { search, account, invitation, mentor, space: selectedSpace };
 
   return (
     <AppShell currentPath={`/org/${slug}/admin/members`} viewer={viewer}>
@@ -173,7 +192,7 @@ export default async function AdminMembersPage({
         ) : null}
 
         <Card className="space-y-4">
-          <form className="grid gap-4 lg:grid-cols-[minmax(220px,1.4fr)_1fr_1fr_1fr_auto] lg:items-end">
+          <form className="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(220px,1.4fr)_1fr_1fr_1fr_1fr_auto] xl:items-end">
             <div>
               <Label htmlFor="member-search">Name or email</Label>
               <Input
@@ -196,6 +215,14 @@ export default async function AdminMembersPage({
               <Label htmlFor="member-invitation">Invitation</Label>
               <Select defaultValue={invitation ?? ""} id="member-invitation" name="invitation">
                 {invitationOptions.map(([value, label]) => (
+                  <option key={label} value={value}>{label}</option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="member-mentor">Mentor designation</Label>
+              <Select defaultValue={mentor ?? ""} id="member-mentor" name="mentor">
+                {mentorOptions.map(([value, label]) => (
                   <option key={label} value={value}>{label}</option>
                 ))}
               </Select>
@@ -230,7 +257,7 @@ export default async function AdminMembersPage({
                 {memberPage.total} {memberPage.total === 1 ? "member" : "members"}
               </h2>
               <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                Account connection and community or Event access are tracked separately.
+                Account permissions, mentor designation, and community or Event access are tracked separately.
               </p>
             </div>
             {memberPage.pageCount > 1 ? (
@@ -241,9 +268,9 @@ export default async function AdminMembersPage({
           </div>
 
           <div className="space-y-3">
-            {memberPage.records.map(({ spaces: memberSpaces, membership, profile, user }) => {
-              const connected = Boolean(membership.clerkMembershipId);
-              const invitation = invitationLabel(membership);
+            {memberPage.records.map(({ invitation, spaces: memberSpaces, membership, profile, user }) => {
+              const connected = membership.accountStatus === "connected";
+              const invitationText = invitationLabel(membership.accountStatus, invitation);
               return (
                 <Card className="space-y-4" key={membership.id}>
                   <div className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_0.8fr_0.9fr] md:items-start">
@@ -253,6 +280,11 @@ export default async function AdminMembersPage({
                           {profile?.preferredName || user?.name || "Unnamed member"}
                         </h3>
                         {membership.role === "org_admin" ? <Badge variant="accent">Administrator</Badge> : null}
+                        {membership.mentorStatus === "approved" ? (
+                          <Badge variant="accent">Approved mentor</Badge>
+                        ) : membership.mentorStatus === "needs_review" ? (
+                          <Badge variant="default">Mentor review</Badge>
+                        ) : null}
                       </div>
                       <p className="mt-1 break-words text-sm text-[var(--ink-soft)]">
                         {user?.email || "Email unavailable"}
@@ -271,12 +303,12 @@ export default async function AdminMembersPage({
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">Invitation</p>
-                      <Badge className="mt-2" variant={connected ? "accent" : membership.clerkInvitationStatus === "failed" ? "muted" : "default"}>
-                        {invitation}
+                      <Badge className="mt-2" variant={connected ? "accent" : invitation?.deliveryError ? "muted" : "default"}>
+                        {invitationText}
                       </Badge>
-                      {membership.clerkInvitationError ? (
+                      {invitation?.deliveryError ? (
                         <p className="mt-2 break-words text-xs leading-5 text-red-700">
-                          {adminInvitationIssue(membership.clerkInvitationError)}
+                          {adminInvitationIssue(invitation.deliveryError)}
                         </p>
                       ) : null}
                     </div>
@@ -303,12 +335,15 @@ export default async function AdminMembersPage({
                     membership={{
                       accountStatus: membership.accountStatus,
                       id: membership.id,
+                      mentorStatus: membership.mentorStatus,
                       role: membership.role,
                       approvalNote: membership.approvalNote,
-                      clerkMembershipId: membership.clerkMembershipId,
-                      clerkInvitationStatus: membership.clerkInvitationStatus,
-                      clerkInvitationError: membership.clerkInvitationError,
                     }}
+                    invitation={invitation ? {
+                      deliveryError: invitation.deliveryError,
+                      sentAt: invitation.sentAt,
+                      status: invitation.status,
+                    } : undefined}
                     spaces={spaces.map((space) => ({
                       id: space.id,
                       kind: space.kind,

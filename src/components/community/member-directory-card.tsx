@@ -1,4 +1,11 @@
-import { BriefcaseBusiness, ExternalLink, Handshake, MapPin, UserPlus } from "lucide-react";
+import {
+  BriefcaseBusiness,
+  ExternalLink,
+  GraduationCap,
+  Handshake,
+  MapPin,
+  UserPlus,
+} from "lucide-react";
 
 import {
   followMembershipAction,
@@ -68,7 +75,12 @@ export function MemberDirectoryCard({
     : `/org/${slug}/requests`;
   const introCopy = getActiveIntroStatusCopy(profile.introStatus);
   const needs = [...profile.whatTheyNeed, ...profile.desiredRoles].slice(0, 4);
-  const expertise = [...profile.skillTags, ...profile.mentorOffers].slice(0, 5);
+  const expertise = [
+    ...profile.skillTags,
+    ...profile.mentorExpertiseTags,
+    ...profile.mentorFunctionalStrengths,
+    ...profile.mentorOffers,
+  ].slice(0, 5);
 
   return (
     <Card className="space-y-4 p-4">
@@ -78,6 +90,12 @@ export function MemberDirectoryCard({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-lg font-semibold text-[var(--ink)]">{profile.displayName}</h3>
             <Badge variant="muted">{profile.affiliationLabel}</Badge>
+            {profile.isApprovedMentor ? (
+              <Badge className="gap-1" variant="accent">
+                <GraduationCap className="size-3.5" aria-hidden />
+                Approved mentor
+              </Badge>
+            ) : null}
             <Badge variant="accent">{profile.stage}</Badge>
           </div>
           <p className="mt-1 line-clamp-2 text-sm leading-5 text-[var(--ink-soft)]">
@@ -163,14 +181,21 @@ export function MemberDirectoryCard({
             View introduction
           </LinkButton>
         ) : null}
-        {!isSelf && viewerMembershipId && !introCopy ? (
+        {!isSelf && viewerMembershipId && !introCopy && profile.openToIntroductions ? (
           <LinkButton
-            href={`${profilePath}#request-introduction`}
+            href={`${profilePath}${profile.acceptingMentoringRequests ? "?connection=mentoring" : ""}#request-introduction`}
             size="sm"
           >
             <UserPlus className="size-4" />
-            Request introduction
+            {profile.acceptingMentoringRequests
+              ? "Request mentoring"
+              : "Request introduction"}
           </LinkButton>
+        ) : null}
+        {!isSelf && viewerMembershipId && !introCopy && !profile.openToIntroductions ? (
+          <span className="px-2 py-1 text-sm text-[var(--ink-soft)]">
+            Not accepting introductions
+          </span>
         ) : null}
       </div>
     </Card>

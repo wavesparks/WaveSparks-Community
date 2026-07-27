@@ -79,7 +79,6 @@ export async function GET(request: NextRequest) {
   }
 
   return Response.json({
-    clerkOrgId: context.status === "authenticated" ? context.clerkOrgId : undefined,
     state: context.status === "authenticated" ? context.state : undefined,
     target,
   });

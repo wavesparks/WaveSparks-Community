@@ -12,10 +12,12 @@ import {
   buildFallbackExplanation,
   buildMatchingEmbeddingTexts,
   cosineSimilarity,
+  computeMatch,
   computeMatchBreakdown,
+  MATCHING_ALGORITHM_VERSION,
   recomputeMatchesForProfiles,
 } from "@/server/matching";
-import { buildLocalEmbedding } from "@/server/embeddings";
+import { buildLocalEmbedding, LOCAL_EMBEDDING_MODEL } from "@/server/embeddings";
 import {
   getMatchFeedbackSummaryForOrg,
   getStore,
@@ -46,6 +48,19 @@ describe("matching engine", () => {
     expect(result.seekingProfileText).toContain("inclusive-learning-signal");
     expect(result.seekingProfileText).toContain("prototype-research-signal");
     expect(result.offeringText).toContain("first-python-project-signal");
+  });
+
+  it("includes mentor stage experience and mentorship preferences in offering embeddings", () => {
+    const profile = {
+      ...seedProfiles[0],
+      mentorStageExperience: ["mvp-stage-signal", "scaling-stage-signal"],
+      mentorshipPreferences: "structured-weekly-mentorship-signal",
+    };
+
+    const result = buildMatchingEmbeddingTexts(profile);
+
+    expect(result.offeringText).toContain("mvp-stage-signal, scaling-stage-signal");
+    expect(result.offeringText).toContain("structured-weekly-mentorship-signal");
   });
 
   it("generates explainable matches while excluding non-approved members", () => {
@@ -80,7 +95,10 @@ describe("matching engine", () => {
         "work_style",
         "location",
       ]);
-      expect(match.algorithmVersion).toBe("hybrid-v2");
+      expect(match.algorithmVersion).toBe(MATCHING_ALGORITHM_VERSION);
+      expect(match.score).toBeGreaterThanOrEqual(1);
+      expect(match.score).toBeLessThanOrEqual(100);
+      expect(Number.isInteger(match.score)).toBe(true);
     }
   });
 
@@ -113,6 +131,133 @@ describe("matching engine", () => {
     );
   });
 
+  it("scores mentor venture stage against provider experience without changing mutual types", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      stage: "mvp",
+      industryTags: [],
+      problemSpaceTags: [],
+      businessModelTags: [],
+    };
+    const target = {
+      ...seedProfiles.find((profile) => profile.id === "pro_rhea")!,
+      stage: "exploring",
+      industryTags: [],
+      problemSpaceTags: [],
+      businessModelTags: [],
+      mentorStageExperience: ["mvp"],
+      maxMentees: 2,
+      mentorAvailability: "weekly",
+    };
+    const ventureOnlyWeights = {
+      semantic: 0,
+      skills: 0,
+      venture: 100,
+      availability: 0,
+      work_style: 0,
+      location: 0,
+    };
+    const mentorConfig: MatchTypeConfig = {
+      ...seedMatchTypeConfigs.find((config) => config.slug === "mentor_match")!,
+      weights: ventureOnlyWeights,
+    };
+    const mutualConfig: MatchTypeConfig = {
+      ...seedMatchTypeConfigs.find((config) => config.slug === "cofounder_match")!,
+      weights: ventureOnlyWeights,
+    };
+
+    const mentorVenture = computeMatchBreakdown(source, target, mentorConfig).venture;
+    const mutualVenture = computeMatchBreakdown(source, target, mutualConfig).venture;
+    expect(mentorVenture).toBeGreaterThan(mutualVenture);
+    expect(mutualVenture).toBeGreaterThan(0);
+  });
+
+  it("treats mentor availability and capacity as ranking guidance, not eligibility", () => {
+    const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
+    const target = seedProfiles.find((profile) => profile.id === "pro_marcus")!;
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+
+    expect(
+      computeMatch(
+        seedOrganization,
+        sourceMembership,
+        source,
+        targetMembership,
+        target,
+        "mentor_match",
+      ),
+    ).not.toBeNull();
+    const zeroCapacity = computeMatch(
+      seedOrganization,
+      sourceMembership,
+      source,
+      targetMembership,
+      { ...target, maxMentees: 0 },
+      "mentor_match",
+    );
+    const unavailable = computeMatch(
+      seedOrganization,
+      sourceMembership,
+      source,
+      targetMembership,
+      { ...target, mentorAvailability: "unavailable" },
+      "mentor_match",
+    );
+    expect(zeroCapacity).not.toBeNull();
+    expect(unavailable).not.toBeNull();
+  });
+
+  it("requires canonical mentor approval even when legacy profile signals offer mentoring", () => {
+    const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
+    const target = seedProfiles.find((profile) => profile.id === "pro_marcus")!;
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+
+    expect(target.offeringMatchTypes).toContain("mentor_match");
+    expect(targetMembership.affiliationType).toBe("mentor");
+    expect(
+      computeMatch(
+        seedOrganization,
+        sourceMembership,
+        source,
+        { ...targetMembership, mentorStatus: "needs_review" },
+        target,
+        "mentor_match",
+      ),
+    ).toBeNull();
+  });
+
+  it("does not recommend a target who has paused incoming introduction requests", () => {
+    const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
+    const target = seedProfiles.find((profile) => profile.id === "pro_rhea")!;
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+
+    expect(
+      computeMatch(
+        seedOrganization,
+        sourceMembership,
+        source,
+        targetMembership,
+        { ...target, introOptIn: false },
+        "cofounder_match",
+      ),
+    ).toBeNull();
+  });
+
   it("uses member-friendly language in match explanations", () => {
     const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
     const target = seedProfiles.find((profile) => profile.id === "pro_rhea")!;
@@ -130,8 +275,10 @@ describe("matching engine", () => {
       "cofounder_match",
     );
 
-    expect(explanation).toContain(`${target.preferredName} may be a good person to meet`);
-    expect(explanation).toContain("in common");
+    expect(explanation).toContain(`You and ${target.preferredName} may be able to help each other`);
+    expect(explanation).toContain("Rhea offers backend, matching your need for backend");
+    expect(explanation).toContain("you offer product, matching their need for product");
+    expect(explanation).toContain("Relevant signals include");
     expect(explanation).not.toContain("surfaced because");
     expect(explanation).not.toContain("Shared signals");
   });
@@ -141,6 +288,32 @@ describe("matching engine", () => {
     const right = buildLocalEmbedding("restaurant payroll tax compliance");
 
     expect(cosineSimilarity(left, right)).toBeLessThan(0.2);
+  });
+
+  it("does not compare embeddings produced by different models", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      embeddingModel: "provider-model-a",
+      seekingEmbedding: [1, 0],
+    };
+    const target = {
+      ...seedProfiles.find((profile) => profile.id === "pro_marcus")!,
+      embeddingModel: "provider-model-b",
+      offeringEmbedding: [1, 0],
+    };
+    const semanticOnlyConfig: MatchTypeConfig = {
+      ...seedMatchTypeConfigs.find((config) => config.slug === "mentor_match")!,
+      weights: {
+        semantic: 100,
+        skills: 0,
+        venture: 0,
+        availability: 0,
+        work_style: 0,
+        location: 0,
+      },
+    };
+
+    expect(computeMatchBreakdown(source, target, semanticOnlyConfig).semantic).toBe(0);
   });
 
   it("supports an admin-defined seeker-to-provider match type", () => {
@@ -196,8 +369,397 @@ describe("matching engine", () => {
       sourceProfileId: source.id,
       targetProfileId: target.id,
       matchType: customConfig.slug,
-      score: 100,
+      score: 85,
     });
+  });
+
+  it("treats missing preference values as unknown instead of perfect agreement", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      ambitionLevel: 0,
+      commitmentHorizon: "",
+      communicationStyle: "",
+      conflictStyle: "",
+      decisionStyle: "",
+      missionVsMarketOrientation: "",
+      riskTolerance: 0,
+      speedPreference: "",
+      structureVsChaos: 0,
+      workStyle: "",
+    };
+    const target = {
+      ...seedProfiles.find((profile) => profile.id === "pro_rhea")!,
+      ambitionLevel: 0,
+      commitmentHorizon: "",
+      communicationStyle: "",
+      conflictStyle: "",
+      decisionStyle: "",
+      missionVsMarketOrientation: "",
+      riskTolerance: 0,
+      speedPreference: "",
+      structureVsChaos: 0,
+      workStyle: "",
+    };
+    const workStyleOnlyConfig: MatchTypeConfig = {
+      ...seedMatchTypeConfigs.find((config) => config.slug === "cofounder_match")!,
+      weights: {
+        semantic: 0,
+        skills: 0,
+        venture: 0,
+        availability: 0,
+        work_style: 100,
+        location: 0,
+      },
+    };
+
+    expect(computeMatchBreakdown(source, target, workStyleOnlyConfig).work_style).toBe(0);
+  });
+
+  it("requires reciprocal core evidence for a mutual match", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      seekingEmbedding: [1, 0],
+      offeringEmbedding: [0, 1],
+      embeddingModel: "test-provider",
+      desiredRoles: ["backend engineering"],
+      helpNeededTags: [],
+      skillTags: ["customer research"],
+      topStrengths: [],
+      canContribute: [],
+    };
+    const target = {
+      ...seedProfiles.find((profile) => profile.id === "pro_rhea")!,
+      seekingEmbedding: [1, 0],
+      offeringEmbedding: [1, 0],
+      embeddingModel: "test-provider",
+      desiredRoles: ["unrelated legal advice"],
+      helpNeededTags: [],
+      skillTags: ["backend engineering"],
+      topStrengths: [],
+      canContribute: [],
+    };
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+
+    expect(
+      computeMatch(
+        seedOrganization,
+        sourceMembership,
+        source,
+        targetMembership,
+        target,
+        "cofounder_match",
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores a core factor completely when its configured weight is zero", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      desiredRoles: ["backend engineering"],
+      helpNeededTags: [],
+      skillTags: ["customer research"],
+      topStrengths: [],
+      canContribute: [],
+      seekingEmbedding: undefined,
+      offeringEmbedding: undefined,
+      embeddingModel: undefined,
+    };
+    const target = {
+      ...source,
+      id: "pro_skills_only_target",
+      membershipId: "mem_rhea",
+      preferredName: "Skills only target",
+      desiredRoles: ["customer research"],
+      skillTags: ["backend engineering"],
+    };
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+    const skillsOnlyConfig: MatchTypeConfig = {
+      ...seedMatchTypeConfigs.find((config) => config.slug === "cofounder_match")!,
+      weights: {
+        semantic: 0,
+        skills: 100,
+        venture: 0,
+        availability: 0,
+        work_style: 0,
+        location: 0,
+      },
+    };
+    const withoutEmbeddings = computeMatch(
+      seedOrganization,
+      sourceMembership,
+      source,
+      targetMembership,
+      target,
+      skillsOnlyConfig,
+    );
+    const withUnrelatedEmbeddings = computeMatch(
+      seedOrganization,
+      sourceMembership,
+      {
+        ...source,
+        seekingEmbedding: [1, 0],
+        offeringEmbedding: [1, 0],
+        embeddingModel: "test-provider",
+      },
+      targetMembership,
+      {
+        ...target,
+        seekingEmbedding: [0, 1],
+        offeringEmbedding: [0, 1],
+        embeddingModel: "test-provider",
+      },
+      skillsOnlyConfig,
+    );
+
+    expect(withoutEmbeddings).not.toBeNull();
+    expect(withUnrelatedEmbeddings?.score).toBe(withoutEmbeddings?.score);
+  });
+
+  it("does not turn one broad shared sector into a high-quality match", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      ambitionLevel: 0,
+      availabilityStart: "",
+      businessModelTags: [],
+      canContribute: [],
+      commitmentHorizon: "",
+      communicationStyle: "",
+      conflictStyle: "",
+      country: "",
+      decisionStyle: "",
+      desiredRoles: ["co-founder"],
+      embeddingModel: LOCAL_EMBEDDING_MODEL,
+      helpNeededTags: [],
+      industryTags: ["Sectoral Innovation: AI & Future Communications"],
+      meetingFrequencyPreference: "",
+      missionVsMarketOrientation: "",
+      offeringEmbedding: [1, 0],
+      offeringMatchTypes: ["cofounder_match"],
+      preferredGeographies: [],
+      problemSpaceTags: [],
+      remotePreference: "",
+      riskTolerance: 0,
+      seekingEmbedding: [1, 0],
+      seekingMatchTypes: ["cofounder_match"],
+      skillTags: ["co-founder"],
+      speedPreference: "",
+      stage: "",
+      structureVsChaos: 0,
+      timeCommitment: "",
+      timezone: "",
+      topStrengths: [],
+      workStyle: "",
+    };
+    const target = {
+      ...source,
+      id: "pro_broad_sector_target",
+      membershipId: "mem_rhea",
+      preferredName: "Broad sector target",
+    };
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+    const match = computeMatch(
+      seedOrganization,
+      sourceMembership,
+      source,
+      targetMembership,
+      target,
+      "cofounder_match",
+    );
+
+    expect(match).not.toBeNull();
+    expect(match?.score).toBeLessThan(65);
+    expect(match?.scoreBand).toBe("emerging");
+    expect(match?.explanationText).not.toContain("ways of working");
+  });
+
+  it("reserves 90+ for a well-evidenced reciprocal fit", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      seekingEmbedding: [1, 0],
+      offeringEmbedding: [0, 1],
+      embeddingModel: "test-provider",
+      desiredRoles: ["backend engineering"],
+      helpNeededTags: [],
+      skillTags: ["customer research"],
+      topStrengths: [],
+      canContribute: [],
+    };
+    const target = {
+      ...source,
+      id: "pro_high_quality_target",
+      membershipId: "mem_rhea",
+      preferredName: "High quality target",
+      seekingEmbedding: [0, 1],
+      offeringEmbedding: [1, 0],
+      desiredRoles: ["customer research"],
+      skillTags: ["backend engineering"],
+    };
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+    const match = computeMatch(
+      seedOrganization,
+      sourceMembership,
+      source,
+      targetMembership,
+      target,
+      "cofounder_match",
+    );
+
+    expect(match).not.toBeNull();
+    expect(match?.score).toBeGreaterThanOrEqual(90);
+    expect(match?.confidence).toBe("high");
+    expect(match?.scoreBand).toBe("high");
+  });
+
+  it("caps a known severe commitment conflict below 60", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      seekingEmbedding: [1, 0],
+      offeringEmbedding: [0, 1],
+      embeddingModel: "test-provider",
+      desiredRoles: ["backend engineering"],
+      helpNeededTags: [],
+      skillTags: ["customer research"],
+      topStrengths: [],
+      canContribute: [],
+      timeCommitment: "full time",
+    };
+    const target = {
+      ...source,
+      id: "pro_commitment_conflict_target",
+      membershipId: "mem_rhea",
+      preferredName: "Commitment conflict target",
+      seekingEmbedding: [0, 1],
+      offeringEmbedding: [1, 0],
+      desiredRoles: ["customer research"],
+      skillTags: ["backend engineering"],
+      timeCommitment: "mentor only",
+    };
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+    const match = computeMatch(
+      seedOrganization,
+      sourceMembership,
+      source,
+      targetMembership,
+      target,
+      "cofounder_match",
+    );
+
+    expect(match).not.toBeNull();
+    expect(match?.score).toBeLessThan(60);
+    expect(match?.scoreBand).toBe("emerging");
+    expect(match?.explanationText).not.toContain("availability and commitment look compatible");
+  });
+
+  it("does not treat exploratory and serious part-time commitment as a severe conflict", () => {
+    const source = {
+      ...seedProfiles.find((profile) => profile.id === "pro_jules")!,
+      seekingEmbedding: [1, 0],
+      offeringEmbedding: [0, 1],
+      embeddingModel: "test-provider",
+      desiredRoles: ["backend engineering"],
+      helpNeededTags: [],
+      skillTags: ["customer research"],
+      topStrengths: [],
+      canContribute: [],
+      timeCommitment: "exploratory",
+    };
+    const target = {
+      ...source,
+      id: "pro_reasonable_commitment_target",
+      membershipId: "mem_rhea",
+      preferredName: "Reasonable commitment target",
+      seekingEmbedding: [0, 1],
+      offeringEmbedding: [1, 0],
+      desiredRoles: ["customer research"],
+      skillTags: ["backend engineering"],
+      timeCommitment: "part time serious",
+    };
+    const sourceMembership = seedMemberships.find(
+      (membership) => membership.id === source.membershipId,
+    )!;
+    const targetMembership = seedMemberships.find(
+      (membership) => membership.id === target.membershipId,
+    )!;
+    const match = computeMatch(
+      seedOrganization,
+      sourceMembership,
+      source,
+      targetMembership,
+      target,
+      "cofounder_match",
+    );
+
+    expect(match).not.toBeNull();
+    expect(match?.score).toBeGreaterThanOrEqual(60);
+  });
+
+  it("never explains a factor with zero evidence", () => {
+    const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
+    const target = seedProfiles.find((profile) => profile.id === "pro_rhea")!;
+    const explanation = buildFallbackExplanation(
+      source,
+      target,
+      {
+        semantic: 20,
+        skills: 0,
+        venture: 0,
+        availability: 0,
+        work_style: 0,
+        location: 0,
+      },
+      "cofounder_match",
+    );
+
+    expect(explanation).toContain("aligns with what you are looking for");
+    expect(explanation).not.toContain("ways of working");
+    expect(explanation).not.toContain("availability and commitment");
+  });
+
+  it("does not describe negligible or conflicting contributions as compatible", () => {
+    const source = seedProfiles.find((profile) => profile.id === "pro_jules")!;
+    const target = seedProfiles.find((profile) => profile.id === "pro_rhea")!;
+    const explanation = buildFallbackExplanation(
+      source,
+      target,
+      {
+        semantic: 20,
+        skills: 0,
+        venture: 0,
+        availability: 0.01,
+        work_style: 0.01,
+        location: 0.01,
+      },
+      "cofounder_match",
+    );
+
+    expect(explanation).not.toContain("availability and commitment look compatible");
+    expect(explanation).not.toContain("ways of working look compatible");
+    expect(explanation).not.toContain("location or time-zone fit looks practical");
   });
 
   it("uses at most five active intent posts from the last 90 days", () => {

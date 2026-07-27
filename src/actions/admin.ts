@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { auth } from "@clerk/nextjs/server";
 import { nanoid } from "nanoid";
 
 import { getViewerContextForAction } from "@/lib/auth";
@@ -11,10 +10,9 @@ import {
   getCommunityDisplayName,
   WAVESPARKS_COMMUNITY_NAME,
 } from "@/lib/community-copy";
-import { getE2ELocalClerkOrganizationContext } from "@/lib/e2e-local-auth";
-import { isClerkConfigured } from "@/lib/env";
 import type {
   AccountStatus,
+  MentorStatus,
   MembershipRole,
   SpaceAccessStatus,
   SpaceLifecycle,
@@ -47,12 +45,10 @@ import {
   revokeMembershipInvitation,
   sendMembershipInvitation,
   sendMembershipInvitationsBulk,
-  syncMembershipClerkLifecycle,
-} from "@/server/clerk-membership-lifecycle";
+} from "@/server/membership-invitations";
 import {
   buildNotification,
   enqueueNotificationEmail,
-  sendNotificationEmail,
 } from "@/server/notifications";
 import {
   addMembershipsToMainCommunity,
@@ -66,11 +62,14 @@ import {
   getCommentRecordById,
   getMembershipRecordById,
   getPostById,
+  getPostImageById,
+  getPostLinkPreviewById,
   getSpaceById,
   getProfileRecordById,
   importCohortMembers,
   grantSpaceMembership,
   listMemberImportCandidatesForOrg,
+  listLatestMembershipInvitationsByMembershipIds,
   listMembershipRecordsByIds,
   listSpaceMembershipRecordsByMembershipIds,
   listSpacesForOrg,
@@ -85,13 +84,14 @@ import {
   updateCohort,
   updateEventSpace,
   updateMembershipAccountStatus,
-  updateMembershipClerkState,
+  updateMembershipMentorStatus,
   updateMembershipRole,
   updateOrganizationSettings,
   updatePostModeration,
+  updatePostImageModeration,
+  updatePostLinkPreviewModeration,
   updateProfileFlags,
 } from "@/server/store";
-import { ensureClerkAdminOrganizationContext } from "@/server/clerk-sync";
 import { buildMemberImportPreview } from "@/server/member-import";
 
 async function requireAdminForAction(slug: string) {
@@ -112,37 +112,22 @@ async function requireAdminForAction(slug: string) {
   };
 }
 
-async function requireClerkAdminContextForAction(
-  admin: Awaited<ReturnType<typeof requireAdminForAction>>,
-) {
-  const e2eContext = getE2ELocalClerkOrganizationContext();
-  if (e2eContext && !isClerkConfigured()) {
-    return { organizationId: e2eContext.orgId, userId: e2eContext.userId };
-  }
-  const clerkAuth = await auth();
-
-  if (!clerkAuth.userId) {
-    throw new Error("Sign in again to continue.");
-  }
-
-  try {
-    return await ensureClerkAdminOrganizationContext({
-      clerkUserId: clerkAuth.userId,
-      membership: admin.membership,
-      org: admin.org,
-      user: admin.user,
-    });
-  } catch (error) {
-    console.error("[wavesparks] Invitation account setup failed", admin.membership.id, error);
-    throw new Error("Invitations are unavailable right now. Try again in a few minutes.");
-  }
-}
-
 function membershipRole(value: FormDataEntryValue | null): MembershipRole {
   if (value === "org_admin" || value === "member") {
     return value;
   }
   throw new Error("Choose Member or Administrator.");
+}
+
+function mentorStatus(value: FormDataEntryValue | null): MentorStatus {
+  if (
+    value === "not_mentor" ||
+    value === "needs_review" ||
+    value === "approved"
+  ) {
+    return value;
+  }
+  throw new Error("Choose a valid mentor designation.");
 }
 
 function importSpaceAccessStatus(
@@ -177,71 +162,6 @@ function accountStatus(value: FormDataEntryValue | null): AccountStatus {
   throw new Error("Choose a valid account status.");
 }
 
-async function sendExplicitMembershipInvitation(
-  input: Parameters<typeof sendMembershipInvitation>[0],
-) {
-  const result = await sendMembershipInvitation(input);
-  if (result.kind !== "membership") {
-    return result;
-  }
-
-  const signInUrl = absoluteAppUrl(`/org/${input.org.slug}/signin`);
-  try {
-    await sendNotificationEmail({
-      to: input.user.email,
-      subject: "Your Wavesparks invitation",
-      html: `<p>Your Wavesparks account is ready.</p><p><a href="${signInUrl}">Sign in</a> to open the community or event you were invited to.</p>`,
-    });
-  } catch (error) {
-    console.error("[wavesparks] Invitation notification email failed", input.membership.id, error);
-    await updateMembershipClerkState(input.membership.id, {
-      clerkInvitationError: "Invitation email failed. Try again.",
-      clerkInvitationUpdatedAt: new Date().toISOString(),
-    });
-    throw new Error("The account is ready, but the notification email could not be sent. Try again.");
-  }
-  return result;
-}
-
-async function sendExplicitMembershipInvitationsBulk(
-  inputs: Parameters<typeof sendMembershipInvitationsBulk>[0],
-) {
-  const outcomes = await sendMembershipInvitationsBulk(inputs);
-  const inputsByMembershipId = new Map(
-    inputs.map((input) => [input.membership.id, input]),
-  );
-
-  for (const outcome of outcomes) {
-    if (outcome.error || outcome.result?.kind !== "membership") {
-      continue;
-    }
-    const input = inputsByMembershipId.get(outcome.membershipId);
-    if (!input) {
-      continue;
-    }
-
-    const signInUrl = absoluteAppUrl(`/org/${input.org.slug}/signin`);
-    try {
-      await sendNotificationEmail({
-        to: input.user.email,
-        subject: "Your Wavesparks invitation",
-        html: `<p>Your Wavesparks account is ready.</p><p><a href="${signInUrl}">Sign in</a> to open the community or event you were invited to.</p>`,
-      });
-    } catch (error) {
-      console.error("[wavesparks] Invitation notification email failed", input.membership.id, error);
-      const message = "The account is ready, but the notification email could not be sent. Try again.";
-      await updateMembershipClerkState(input.membership.id, {
-        clerkInvitationError: "Invitation email failed. Try again.",
-        clerkInvitationUpdatedAt: new Date().toISOString(),
-      });
-      outcome.error = message;
-      outcome.result = undefined;
-    }
-  }
-
-  return outcomes;
-}
-
 function enqueueProfileMatchRecompute(slug: string, orgId: string, profileId: string) {
   after(async () => {
     try {
@@ -263,6 +183,25 @@ function enqueueSpaceMatchRecompute(slug: string, spaceId: string) {
       console.error("[wavesparks] Space match recompute failed", spaceId, error);
     }
   });
+}
+
+function revalidateMentorDesignationPaths(slug: string, membershipId: string) {
+  revalidatePath(`/org/${slug}/admin/matches`);
+  revalidatePath(`/org/${slug}/admin/members`);
+  revalidatePath(`/org/${slug}/admin/profiles`);
+  revalidatePath(`/org/${slug}/admin/requests`);
+  revalidatePath(`/org/${slug}/matches`);
+  revalidatePath(`/org/${slug}/mentoring`);
+  revalidatePath(`/org/${slug}/people`);
+  revalidatePath(`/org/${slug}/people/${membershipId}`);
+  revalidatePath(`/org/${slug}/requests`);
+}
+
+function revalidateMentorSpacePaths(slug: string, spaceSlug: string) {
+  revalidatePath(`/org/${slug}/s/${spaceSlug}/people`);
+  revalidatePath(`/org/${slug}/s/${spaceSlug}/matches`);
+  revalidatePath(`/org/${slug}/s/${spaceSlug}/opportunities`);
+  revalidatePath(`/org/${slug}/s/${spaceSlug}/requests`);
 }
 
 function cohortDetailStatusPath(slug: string, cohortId: string, status: string) {
@@ -374,18 +313,15 @@ export async function confirmMemberImportAction(
   const invitationInputs = imported.filter(
     (result) => result.shouldInvite && result.classification !== "conflict",
   );
-  const clerkContext = invitationInputs.length
-    ? await requireClerkAdminContextForAction(admin)
-    : undefined;
   const invitationRequests = invitationInputs.map((result) => ({
-    forceNew: result.membership.clerkInvitationStatus === "failed",
-    inviterUserId: clerkContext!.userId,
+    forceNew: true,
+    inviterMembershipId: admin.membership.id,
     membership: result.membership,
     org,
     user: result.user,
   }));
   const outcomes = invitationRequests.length
-    ? await sendExplicitMembershipInvitationsBulk(invitationRequests)
+    ? await sendMembershipInvitationsBulk(invitationRequests)
     : [];
   const outcomesByMembershipId = new Map(
     outcomes.map((outcome) => [outcome.membershipId, outcome]),
@@ -468,7 +404,7 @@ export async function confirmMemberImportAction(
         normalizedEmail: row.normalizedEmail,
         status: "invited",
         membershipId: importResult.membership.id,
-        message: `Invitation created.${spaceMessage}`,
+        message: `Invitation sent.${spaceMessage}`,
         retryable: false,
       };
     }
@@ -532,32 +468,28 @@ export async function retryMemberInvitationsAction(
     throw new Error("Retry no more than 100 invitations at a time.");
   }
   const records = await listMembershipRecordsByIds(ids, { orgId: admin.org.id });
+  const invitationsByMembershipId = await listLatestMembershipInvitationsByMembershipIds(
+    records.map((record) => record.membership.id),
+    { orgId: admin.org.id },
+  );
   const retryableInvitations = records.filter(
-    (record) =>
-      record.user &&
-      !record.membership.clerkMembershipId &&
-      (record.membership.clerkInvitationStatus === "failed" ||
-        record.membership.clerkInvitationStatus === "expired" ||
-      record.membership.clerkInvitationStatus === "revoked") &&
-      record.membership.accountStatus !== "suspended" &&
-      record.membership.accountStatus !== "deprovisioned",
+    (record) => {
+      const invitation = invitationsByMembershipId.get(record.membership.id);
+      return Boolean(
+        record.user &&
+          record.membership.accountStatus === "invited" &&
+          (!invitation ||
+            invitation.status === "expired" ||
+            invitation.status === "revoked" ||
+            Boolean(invitation.deliveryError)),
+      );
+    },
   );
-  const retryableNotifications = records.filter(
-    (record) =>
-      record.user &&
-      Boolean(record.membership.clerkMembershipId) &&
-      record.membership.clerkInvitationError?.startsWith("Invitation email failed:") &&
-      record.membership.accountStatus !== "suspended" &&
-      record.membership.accountStatus !== "deprovisioned",
-  );
-  const clerkContext = retryableInvitations.length
-    ? await requireClerkAdminContextForAction(admin)
-    : undefined;
   const outcomes = retryableInvitations.length
-    ? await sendExplicitMembershipInvitationsBulk(
+    ? await sendMembershipInvitationsBulk(
         retryableInvitations.map((record) => ({
           forceNew: true,
-          inviterUserId: clerkContext!.userId,
+          inviterMembershipId: admin.membership.id,
           membership: record.membership,
           org: admin.org,
           user: record.user!,
@@ -567,35 +499,6 @@ export async function retryMemberInvitationsAction(
   const outcomesByMembershipId = new Map(
     outcomes.map((outcome) => [outcome.membershipId, outcome]),
   );
-  const notificationOutcomes = new Map<
-    string,
-    { error?: string; sent: boolean }
-  >();
-  for (const record of retryableNotifications) {
-    try {
-      await sendNotificationEmail({
-        to: record.user!.email,
-        subject: "Your Wavesparks invitation",
-        html: `<p>Your Wavesparks account is ready.</p><p><a href="${absoluteAppUrl(`/org/${admin.org.slug}/signin`)}">Sign in</a> to open the community or event you were invited to.</p>`,
-      });
-      await updateMembershipClerkState(record.membership.id, {
-        clerkInvitationError: null,
-        clerkInvitationUpdatedAt: new Date().toISOString(),
-      });
-      notificationOutcomes.set(record.membership.id, { sent: true });
-    } catch (error) {
-      console.error("[wavesparks] Invitation notification email failed", record.membership.id, error);
-      const message = "The account is ready, but the notification email could not be sent. Try again.";
-      await updateMembershipClerkState(record.membership.id, {
-        clerkInvitationError: "Invitation email failed. Try again.",
-        clerkInvitationUpdatedAt: new Date().toISOString(),
-      });
-      notificationOutcomes.set(record.membership.id, {
-        error: message,
-        sent: false,
-      });
-    }
-  }
   const rows = records.map<MemberImportResultRow>((record, index) => {
     const email = record.user?.email ?? "";
     const base = {
@@ -605,23 +508,6 @@ export async function retryMemberInvitationsAction(
       normalizedEmail: email.toLowerCase(),
       membershipId: record.membership.id,
     };
-    const notificationOutcome = notificationOutcomes.get(record.membership.id);
-    if (notificationOutcome?.error) {
-      return {
-        ...base,
-        status: "failed",
-        message: notificationOutcome.error,
-        retryable: true,
-      };
-    }
-    if (notificationOutcome?.sent) {
-      return {
-        ...base,
-        status: "connected",
-        message: "Sign-in notification sent to the connected account.",
-        retryable: false,
-      };
-    }
     const outcome = outcomesByMembershipId.get(record.membership.id);
     if (outcome?.error) {
       return {
@@ -643,7 +529,7 @@ export async function retryMemberInvitationsAction(
       return {
         ...base,
         status: "invited",
-        message: "Invitation created.",
+        message: "Invitation sent.",
         retryable: false,
       };
     }
@@ -655,7 +541,7 @@ export async function retryMemberInvitationsAction(
     };
   });
 
-  if (retryableInvitations.length || retryableNotifications.length) {
+  if (retryableInvitations.length) {
     revalidatePath(`/org/${slug}/admin/members`);
     revalidatePath(`/org/${slug}/admin/cohorts`);
   }
@@ -903,21 +789,6 @@ export async function importCohortStudentsAction(
   if (students.length > 100) {
     redirect(cohortDetailStatusPath(slug, cohortId, "cohort_import_too_large"));
   }
-  const e2eClerkContext = getE2ELocalClerkOrganizationContext();
-  if (!isClerkConfigured() && !e2eClerkContext) {
-    redirect(cohortDetailStatusPath(slug, cohortId, "cohort_clerk_unconfigured"));
-  }
-  let clerkContext = e2eClerkContext
-    ? { organizationId: e2eClerkContext.orgId, userId: e2eClerkContext.userId }
-    : undefined;
-  if (!clerkContext) {
-    try {
-      clerkContext = await requireClerkAdminContextForAction(admin);
-    } catch {
-      redirect(cohortDetailStatusPath(slug, cohortId, "cohort_clerk_session_required"));
-    }
-  }
-
   const results = await importCohortMembers(org.id, cohortId, students, {
     invitedByUserId: admin.user.id,
   });
@@ -928,9 +799,9 @@ export async function importCohortStudentsAction(
     const batch = pendingInvitations.slice(index, index + 10);
     const settled = await Promise.allSettled(
       batch.map((result) =>
-        sendExplicitMembershipInvitation({
-          forceNew: result.membership.clerkInvitationStatus === "failed",
-          inviterUserId: clerkContext.userId,
+        sendMembershipInvitation({
+          forceNew: true,
+          inviterMembershipId: admin.membership.id,
           membership: result.membership,
           org,
           user: result.user!,
@@ -971,6 +842,12 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
   const email = String(formData.get("email") ?? "");
   const name = String(formData.get("name") ?? "");
   const role = membershipRole(formData.get("role") ?? "member");
+  const requestedMentorStatus = mentorStatus(
+    formData.get("mentor_status") ?? "not_mentor",
+  );
+  if (requestedMentorStatus === "needs_review") {
+    throw new Error("New invitations can be Not a mentor or Approved mentor.");
+  }
   if (role === "org_admin" && formData.get("confirm_admin_access") !== "on") {
     throw new Error("Confirm that you want to make this person an administrator.");
   }
@@ -1038,14 +915,15 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
     }
     redirect(`${resultPath}?status=member_existing`);
   }
-  const clerkContext = await requireClerkAdminContextForAction(admin);
-
   const { membership, user } = await createManagedAccount({
     orgId: org.id,
     email,
     name: existingCandidate?.user?.name ?? name,
     createPasswordCredential: false,
     role,
+    mentorStatus: requestedMentorStatus,
+    mentorReviewedByMembershipId:
+      requestedMentorStatus === "approved" ? admin.membership.id : undefined,
     // Migration-era metadata only; role and Space entitlement are authoritative.
     status: "pending",
     invitedByUserId: admin.user.id,
@@ -1067,9 +945,9 @@ export async function createManagedAccountAction(slug: string, formData: FormDat
 
   let failed = false;
   try {
-    await sendExplicitMembershipInvitation({
-      forceNew: membership.clerkInvitationStatus === "failed",
-      inviterUserId: clerkContext.userId,
+    await sendMembershipInvitation({
+      forceNew: true,
+      inviterMembershipId: admin.membership.id,
       membership,
       org,
       user,
@@ -1102,12 +980,15 @@ export async function updateMembershipAction(slug: string, membershipId: string,
     );
   }
   const nextRole = membershipRole(formData.get("role") ?? targetMembership.role);
-  const affectedAccountSpaceIds = [
-    ...new Set(
-      (await listSpaceMembershipRecordsByMembershipIds(org.id, [membershipId]))
-        .get(membershipId)
-        ?.map((record) => record.space.id) ?? [],
-    ),
+  const nextMentorStatus = mentorStatus(
+    formData.get("mentor_status") ?? targetMembership.mentorStatus,
+  );
+  const affectedAccountSpaces = [
+    ...new Map(
+      ((await listSpaceMembershipRecordsByMembershipIds(org.id, [membershipId]))
+        .get(membershipId) ?? [])
+        .map((record) => [record.space.id, record.space]),
+    ).values(),
   ];
   const nextAccountStatus = accountStatus(
     formData.get("account_status") ?? targetMembership.accountStatus,
@@ -1123,39 +1004,101 @@ export async function updateMembershipAction(slug: string, membershipId: string,
   const roleUpdated = await updateMembershipRole(membershipId, nextRole, {
     existingMembership: targetMembership,
   });
+  const mentorUpdated = nextMentorStatus === targetMembership.mentorStatus
+    ? roleUpdated ?? targetMembership
+    : await updateMembershipMentorStatus(
+        membershipId,
+        nextMentorStatus,
+        {
+          existingMembership: roleUpdated ?? targetMembership,
+          reviewedByMembershipId: admin.membership.id,
+          recomputeMatches: false,
+        },
+      );
   const membership = await updateMembershipAccountStatus(
     membershipId,
     nextAccountStatus,
     {
       adminNote: String(formData.get("approval_note") ?? ""),
-      existingMembership: roleUpdated ?? targetMembership,
+      existingMembership: mentorUpdated ?? roleUpdated ?? targetMembership,
       recomputeMatches: false,
     },
   );
 
   if (!membership) return;
 
-  const clerkContext = await requireClerkAdminContextForAction(admin);
-  let clerkFailed = false;
+  let invitationFailed = false;
+  const becameInviteable =
+    targetMembership.accountStatus !== "invited" && membership.accountStatus === "invited";
+  const becameInactive =
+    membership.accountStatus === "suspended" ||
+    membership.accountStatus === "deprovisioned";
   try {
-    await syncMembershipClerkLifecycle({
-      actorUserId: clerkContext.userId,
-      membership,
-      org,
-      user: targetUser,
-    });
+    if (becameInviteable) {
+      await sendMembershipInvitation({
+        forceNew: true,
+        inviterMembershipId: admin.membership.id,
+        membership,
+        org,
+        user: targetUser,
+      });
+    } else if (becameInactive) {
+      await revokeMembershipInvitation({ membership, org });
+    }
   } catch {
-    clerkFailed = true;
+    invitationFailed = true;
   }
 
-  revalidatePath(`/org/${slug}/admin/members`);
+  revalidateMentorDesignationPaths(slug, membershipId);
   revalidatePath(`/org/${slug}/admin/spaces`);
-  affectedAccountSpaceIds.forEach((spaceId) =>
-    enqueueSpaceMatchRecompute(slug, spaceId),
-  );
+  affectedAccountSpaces.forEach((space) => {
+    revalidateMentorSpacePaths(slug, space.slug);
+    enqueueSpaceMatchRecompute(slug, space.id);
+  });
   redirect(
-    `/org/${slug}/admin/members?status=${clerkFailed ? "membership_clerk_failed" : "membership_updated"}`,
+    `/org/${slug}/admin/members?status=${invitationFailed ? "membership_invitation_failed" : "membership_updated"}`,
   );
+}
+
+export async function updateMentorDesignationAction(
+  slug: string,
+  membershipId: string,
+  formData: FormData,
+) {
+  const admin = await requireAdminForAction(slug);
+  const targetRecord = await getMembershipRecordById(membershipId);
+  const targetMembership = targetRecord?.membership;
+  if (!targetMembership || targetMembership.orgId !== admin.org.id) {
+    throw new Error("Unauthorized.");
+  }
+
+  const nextMentorStatus = mentorStatus(formData.get("mentor_status"));
+  const affectedSpaces = [
+    ...new Map(
+      ((await listSpaceMembershipRecordsByMembershipIds(admin.org.id, [membershipId]))
+        .get(membershipId) ?? [])
+        .map((record) => [record.space.id, record.space]),
+    ).values(),
+  ];
+  const membership = await updateMembershipMentorStatus(
+    membershipId,
+    nextMentorStatus,
+    {
+      existingMembership: targetMembership,
+      reviewedByMembershipId: admin.membership.id,
+      recomputeMatches: false,
+    },
+  );
+  if (!membership) {
+    throw new Error("This member could not be found.");
+  }
+
+  revalidateMentorDesignationPaths(slug, membershipId);
+  affectedSpaces.forEach((space) => {
+    revalidateMentorSpacePaths(slug, space.slug);
+    enqueueSpaceMatchRecompute(slug, space.id);
+  });
+  redirect(`/org/${slug}/admin/members?status=membership_updated`);
 }
 
 export async function updateMemberSpaceAccessAction(
@@ -1197,16 +1140,18 @@ export async function updateMemberSpaceAccessAction(
 
 export async function resendMembershipInvitationAction(slug: string, membershipId: string) {
   const admin = await requireAdminForAction(slug);
-  const clerkContext = await requireClerkAdminContextForAction(admin);
   const record = await getMembershipRecordById(membershipId);
   if (!record?.user || record.membership.orgId !== admin.org.id) {
     throw new Error("Unauthorized.");
   }
+  if (record.membership.accountStatus !== "invited") {
+    throw new Error("Only invited accounts can receive a membership invitation.");
+  }
   let failed = false;
   try {
-    await sendExplicitMembershipInvitation({
+    await sendMembershipInvitation({
       forceNew: true,
-      inviterUserId: clerkContext.userId,
+      inviterMembershipId: admin.membership.id,
       membership: record.membership,
       org: admin.org,
       user: record.user,
@@ -1223,7 +1168,6 @@ export async function resendMembershipInvitationAction(slug: string, membershipI
 
 export async function revokeMembershipInvitationAction(slug: string, membershipId: string) {
   const admin = await requireAdminForAction(slug);
-  const clerkContext = await requireClerkAdminContextForAction(admin);
   const record = await getMembershipRecordById(membershipId);
   if (!record?.user || record.membership.orgId !== admin.org.id) {
     throw new Error("Unauthorized.");
@@ -1231,10 +1175,8 @@ export async function revokeMembershipInvitationAction(slug: string, membershipI
   let failed = false;
   try {
     await revokeMembershipInvitation({
-      actorUserId: clerkContext.userId,
       membership: record.membership,
       org: admin.org,
-      user: record.user,
     });
   } catch {
     failed = true;
@@ -1292,6 +1234,58 @@ export async function updatePostModerationAction(slug: string, postId: string, f
     }
   }
   redirect(`/org/${slug}/admin/posts?status=post_moderation_updated`);
+}
+
+export async function moderatePostImageAction(
+  slug: string,
+  imageId: string,
+  status: "visible" | "removed",
+) {
+  const { org, membership } = await requireAdminForAction(slug);
+  const image = await getPostImageById(imageId);
+  if (!image?.postId || image.orgId !== org.id) throw new Error("Unauthorized.");
+  const post = await getPostById(image.postId);
+  const space = await getSpaceById(image.spaceId);
+  if (!post || post.orgId !== org.id || !space || space.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+  await updatePostImageModeration(image.id, status, membership.id);
+  revalidatePath(`/org/${slug}/admin/posts`);
+  for (const path of getSpacePostCommentRevalidationPaths(
+    slug,
+    space.slug,
+    post.id,
+    post.type,
+  )) {
+    revalidatePath(path);
+  }
+  redirect(`/org/${slug}/admin/posts?status=post_media_moderation_updated`);
+}
+
+export async function moderatePostLinkPreviewAction(
+  slug: string,
+  previewId: string,
+  status: "visible" | "removed",
+) {
+  const { org, membership } = await requireAdminForAction(slug);
+  const preview = await getPostLinkPreviewById(previewId);
+  if (!preview?.postId || preview.orgId !== org.id) throw new Error("Unauthorized.");
+  const post = await getPostById(preview.postId);
+  const space = await getSpaceById(preview.spaceId);
+  if (!post || post.orgId !== org.id || !space || space.orgId !== org.id) {
+    throw new Error("Unauthorized.");
+  }
+  await updatePostLinkPreviewModeration(preview.id, status, membership.id);
+  revalidatePath(`/org/${slug}/admin/posts`);
+  for (const path of getSpacePostCommentRevalidationPaths(
+    slug,
+    space.slug,
+    post.id,
+    post.type,
+  )) {
+    revalidatePath(path);
+  }
+  redirect(`/org/${slug}/admin/posts?status=post_media_moderation_updated`);
 }
 
 export async function updateProfileFlagsAction(slug: string, profileId: string, formData: FormData) {

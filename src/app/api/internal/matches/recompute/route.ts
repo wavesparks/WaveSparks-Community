@@ -3,6 +3,7 @@ import { env } from "@/lib/env";
 import {
   getOrganizationBySlug,
   getSpaceById,
+  recomputeMatchesForAllOrganizations,
   recomputeMatchesForSpace,
   getViewerRecordByEmailAndSlug,
   recomputeMatchesForOrg,
@@ -14,13 +15,8 @@ async function handleRecompute(request: Request) {
     ? ((await request.json().catch(() => ({}))) as { orgSlug?: string; spaceId?: string })
     : {};
   const requestUrl = new URL(request.url);
-  const orgSlug = body.orgSlug ?? requestUrl.searchParams.get("orgSlug") ?? "wavesparks";
+  const requestedOrgSlug = body.orgSlug ?? requestUrl.searchParams.get("orgSlug") ?? undefined;
   const spaceId = body.spaceId ?? requestUrl.searchParams.get("spaceId") ?? undefined;
-  const org = await getOrganizationBySlug(orgSlug);
-
-  if (!org) {
-    return Response.json({ error: "Organization not found" }, { status: 404 });
-  }
 
   const authorizedBySecret =
     env.cronSecret &&
@@ -32,6 +28,25 @@ async function handleRecompute(request: Request) {
   // navigations can carry SameSite=Lax cookies. Interactive admins use POST.
   if (request.method === "GET" && !authorizedBySecret) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (request.method === "GET" && authorizedBySecret && !requestedOrgSlug && !spaceId) {
+    const result = await recomputeMatchesForAllOrganizations();
+    return Response.json({
+      ok: result.failedSpaceCount === 0,
+      count: result.matchCount,
+      failedSpaceCount: result.failedSpaceCount,
+      organizationCount: result.organizationCount,
+      organizations: result.organizations,
+      spaceId: null,
+    }, { status: result.failedSpaceCount ? 500 : 200 });
+  }
+
+  const orgSlug = requestedOrgSlug ?? "wavesparks";
+  const org = await getOrganizationBySlug(orgSlug);
+
+  if (!org) {
+    return Response.json({ error: "Organization not found" }, { status: 404 });
   }
 
   if (!authorizedBySecret) {

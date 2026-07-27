@@ -1,4 +1,5 @@
 import type { Membership, OpportunitySource, PostType } from "@/lib/domain";
+import { isApprovedMentor } from "@/server/permissions";
 
 export const opportunityTypes: PostType[] = [
   "opportunity",
@@ -18,17 +19,23 @@ export function opportunitySourceForPost(
   type: PostType,
   membership: Membership,
   requested: FormDataEntryValue | null,
+  options: { canAdmin?: boolean } = {},
 ) {
   if (!isOpportunityPostType(type)) {
     return undefined;
   }
 
-  if (membership.role === "org_admin" && isOpportunitySource(requested)) {
-    return requested;
+  const approvedMentor = isApprovedMentor(membership);
+
+  const canAdmin = options.canAdmin ?? membership.role === "org_admin";
+  if (canAdmin) {
+    if (requested === "member") return "member";
+    if (approvedMentor && requested === "mentor") return "mentor";
+    return "official";
   }
 
-  if (membership.affiliationType === "mentor" || membership.archetypes.includes("mentor")) {
-    return "mentor";
+  if (approvedMentor) {
+    return requested === "mentor" ? "mentor" : "member";
   }
 
   return "member";

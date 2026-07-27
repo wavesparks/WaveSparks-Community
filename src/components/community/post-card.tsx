@@ -15,6 +15,9 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
+import { LinkPreviewCard } from "@/components/community/link-preview-card";
+import { PostImageGallery } from "@/components/community/post-image-gallery";
+import { RichTextBody } from "@/components/community/rich-text-body";
 import { LinkButton } from "@/components/ui/link-button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import type { FeedPostView } from "@/lib/domain";
@@ -124,17 +127,28 @@ export function PostCard({
 
       <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-start">
         <div className="min-w-0 space-y-2 pl-1">
-          <h3 className="text-lg font-semibold leading-snug text-[var(--ink)] sm:text-xl">
-            <Link
-              className="transition hover:text-[var(--accent)]"
-              href={postPath}
-            >
-              {post.title}
-            </Link>
-          </h3>
-          <p className="line-clamp-2 text-sm leading-6 text-[var(--ink-soft)]">
-            {post.body}
-          </p>
+          {post.title ? (
+            <h3 className="text-lg font-semibold leading-snug text-[var(--ink)] sm:text-xl">
+              <Link
+                className="transition hover:text-[var(--accent)]"
+                href={postPath}
+              >
+                {post.title}
+              </Link>
+            </h3>
+          ) : null}
+          {post.body ? (
+            <RichTextBody
+              body={post.body}
+              className="block line-clamp-2 text-sm leading-6 text-[var(--ink-soft)]"
+              memberHref={(membershipId) =>
+                spaceSlug
+                  ? `/org/${slug}/s/${spaceSlug}/people/${membershipId}`
+                  : `/org/${slug}/people/${membershipId}`
+              }
+              mentions={post.mentions}
+            />
+          ) : null}
         </div>
         <Link
           className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-2.5 py-1.5 text-xs font-semibold text-[var(--ink-soft)] transition duration-150 ease-out hover:border-[var(--accent)]/40 hover:bg-[var(--surface)] hover:text-[var(--ink)] active:translate-y-px active:scale-[0.99]"
@@ -145,6 +159,9 @@ export function PostCard({
           <NavPendingIndicator className="size-1.5" />
         </Link>
       </div>
+
+      <PostImageGallery images={post.images} />
+      <LinkPreviewCard compact preview={post.linkPreview} />
 
       <div className="flex flex-wrap gap-2 pl-1">
         {post.tags.map((tag, index) => (

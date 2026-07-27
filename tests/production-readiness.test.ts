@@ -61,7 +61,7 @@ describe("production readiness checks", () => {
 
     expect(result.errors).toEqual(
       expect.arrayContaining([
-        "NEXT_PUBLIC_APP_URL must point to the community app domain (for example, https://app.wavesparks.co) so Clerk invitations return to the app, not the marketing site.",
+        "NEXT_PUBLIC_APP_URL must point to the community app domain (for example, https://app.wavesparks.co) so invitation links return to the app, not the marketing site.",
       ]),
     );
   });
@@ -124,6 +124,22 @@ describe("production readiness checks", () => {
     expect(result.errors).toEqual(
       expect.arrayContaining([
         "Resend email config is incomplete. Set all of: RESEND_API_KEY, RESEND_FROM_EMAIL.",
+      ]),
+    );
+  });
+
+  it("keeps invitations available and warns when optional Resend notifications are not configured", () => {
+    const result = checkProductionReadiness({
+      ...baseProductionEnv,
+      RESEND_API_KEY: undefined,
+      RESEND_FROM_EMAIL: undefined,
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        "RESEND_API_KEY is not configured; related production features may be unavailable.",
+        "RESEND_FROM_EMAIL is not configured; related production features may be unavailable.",
       ]),
     );
   });

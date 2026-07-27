@@ -1,32 +1,28 @@
-import { ArrowLeft, LockKeyhole, Send } from "lucide-react";
+import { ArrowLeft, LockKeyhole } from "lucide-react";
 
 import { createPostInSpaceAction } from "@/actions/member";
+import { PostComposer } from "@/components/community/post-composer";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { LinkButton } from "@/components/ui/link-button";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { Select } from "@/components/ui/select";
-import { SubmitButton } from "@/components/ui/submit-button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   getCommunityDisplayName,
   getCommunityPeopleLabels,
 } from "@/lib/community-copy";
 import { singleQueryValue } from "@/lib/feed-filters";
+import { env } from "@/lib/env";
 import { getSpaceViewerContext } from "@/lib/space-auth";
+import { getPostMediaStorageMode } from "@/server/post-media-storage";
 
 function defaultOpportunitySource({
-  affiliationType,
-  archetypes,
   canAdmin,
+  canMentor,
 }: {
-  affiliationType: string;
-  archetypes: string[];
   canAdmin: boolean;
+  canMentor: boolean;
 }) {
   if (canAdmin) return "official";
-  if (affiliationType === "mentor" || archetypes.includes("mentor")) return "mentor";
+  if (canMentor) return "mentor";
   return "member";
 }
 
@@ -62,10 +58,10 @@ export default async function SpaceComposePage({
   const destination = opportunityMode ? "opportunities" : "feed";
   const backPath = `/org/${slug}/s/${space.slug}/${destination}`;
   const source = defaultOpportunitySource({
-    affiliationType: viewer.membership.affiliationType,
-    archetypes: viewer.membership.archetypes,
     canAdmin: viewer.canAdmin,
+    canMentor: viewer.canMentor,
   });
+  const mediaStorageMode = getPostMediaStorageMode();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -116,107 +112,26 @@ export default async function SpaceComposePage({
         </Card>
       ) : (
         <Card>
-          <form
+          <PostComposer
             action={createPostInSpaceAction.bind(
               null,
               slug,
               space.id,
               viewer.membership.id,
             )}
-            className="space-y-5"
-          >
-            <div>
-              <Label htmlFor="type">Post type</Label>
-              <Select
-                defaultValue={opportunityMode ? "opportunity" : feedPostType}
-                id="type"
-                name="type"
-              >
-                {opportunityMode ? null : (
-                  <>
-                    <option value="general_update">General update</option>
-                    <option value="ask">Question</option>
-                    <option value="resource">Resource</option>
-                    <option value="announcement">Announcement</option>
-                  </>
-                )}
-                <option value="opportunity">Opportunity</option>
-                <option value="looking_for_cofounder">Looking for cofounder</option>
-                <option value="looking_for_mentor">Looking for mentor</option>
-              </Select>
-            </div>
-
-            {opportunityMode ? (
-              <div>
-                <Label htmlFor="opportunity_source">Shared by</Label>
-                {viewer.canAdmin ? (
-                  <Select
-                    defaultValue={source}
-                    id="opportunity_source"
-                    name="opportunity_source"
-                  >
-                    <option value="official">Organizers</option>
-                    <option value="member">Participants</option>
-                    <option value="mentor">Mentors</option>
-                  </Select>
-                ) : (
-                  <>
-                    <Input
-                      disabled
-                      id="opportunity_source"
-                      value={source === "mentor" ? "Mentors" : "Participants"}
-                    />
-                    <input name="opportunity_source" type="hidden" value={source} />
-                  </>
-                )}
-              </div>
-            ) : null}
-
-            <div>
-              <Label htmlFor="title">Title</Label>
-              <Input id="title" name="title" placeholder="Clear, specific headline" required />
-            </div>
-            <div>
-              <Label htmlFor="body">Details</Label>
-              <Textarea
-                id="body"
-                name="body"
-                placeholder="Add the details, who this is for, and what kind of response would help."
-                required
-              />
-            </div>
-            <div className="grid gap-5 md:grid-cols-2">
-              <div>
-                <Label htmlFor="tags">Tags</Label>
-                <Input id="tags" name="tags" placeholder="climate, sales, design" />
-              </div>
-              <div>
-                <Label htmlFor="related_startup_name">Related startup</Label>
-                <Input
-                  id="related_startup_name"
-                  name="related_startup_name"
-                  placeholder="Optional"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <Label htmlFor="related_roles_needed">Roles needed</Label>
-                <Input
-                  id="related_roles_needed"
-                  name="related_roles_needed"
-                  placeholder="technical, design, GTM"
-                />
-              </div>
-            </div>
-            <SubmitButton
-              className="w-full"
-              pendingLabel={opportunityMode ? "Publishing opportunity" : "Publishing post"}
-            >
-              <Send className="size-4" />
-              {opportunityMode
-                ? `Publish opportunity in ${communityName}`
-                : `Publish post in ${communityName}`}
-            </SubmitButton>
-          </form>
+            appOrigin={env.appUrl}
+            canAdmin={viewer.canAdmin}
+            canMentor={viewer.canMentor}
+            communityName={communityName}
+            defaultOpportunitySource={source}
+            defaultType={opportunityMode ? "opportunity" : feedPostType}
+            imageUploadsEnabled={Boolean(mediaStorageMode)}
+            membershipId={viewer.membership.id}
+            memoryImageUploads={mediaStorageMode === "memory"}
+            opportunityMode={opportunityMode}
+            slug={slug}
+            spaceId={space.id}
+          />
         </Card>
       )}
     </div>

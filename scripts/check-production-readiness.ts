@@ -10,9 +10,9 @@ const requiredEnv = [
 ] as const;
 
 const optionalButExpectedEnv = [
+  "BLOB_READ_WRITE_TOKEN",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
-  "BLOB_READ_WRITE_TOKEN",
 ] as const;
 
 export interface ProductionReadinessResult {
@@ -112,7 +112,7 @@ function checkAppUrl(env: NodeJS.ProcessEnv, errors: string[]) {
   const hostname = hostnameFromUrlValue(value);
   if (hostname && isWavesparksMarketingHostname(hostname)) {
     errors.push(
-      `${key} must point to the community app domain (for example, https://app.wavesparks.co) so Clerk invitations return to the app, not the marketing site.`,
+      `${key} must point to the community app domain (for example, https://app.wavesparks.co) so invitation links return to the app, not the marketing site.`,
     );
   }
 }

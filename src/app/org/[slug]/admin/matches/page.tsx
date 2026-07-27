@@ -13,8 +13,8 @@ import { singleQueryValue } from "@/lib/feed-filters";
 import { matchFeedbackReasonLabels } from "@/lib/match-feedback";
 import type { MatchRecord, MatchType } from "@/lib/domain";
 import {
-  listMatchProfileRecordsForOrg,
   getMatchFeedbackSummaryForOrg,
+  listAdminMatchCardRecordsForOrg,
   listMatchRunsForOrg,
   listMatchTypeConfigsForOrg,
   listSpacesForOrg,
@@ -81,7 +81,7 @@ export default async function AdminMatchesPage({
     : undefined;
   const selectedScoreBand = scoreBandFromQuery(singleQueryValue(query.score_band));
   const [matchCards, runs, feedbackSummary, spaces] = await Promise.all([
-    listMatchProfileRecordsForOrg(viewer.org.id, {
+    listAdminMatchCardRecordsForOrg(viewer.org.id, {
       limit: 20,
       matchType: selectedMatchType,
       scoreBand: selectedScoreBand,
@@ -138,7 +138,13 @@ export default async function AdminMatchesPage({
           </div>
           {matchCards.map(({ match, sourceProfile, targetProfile }) => {
             return (
-              <Card className="space-y-4" key={match.id}>
+              <Card
+                className="space-y-4"
+                data-match-type={match.matchType}
+                data-space-id={match.spaceId ?? ""}
+                data-testid="admin-match-card"
+                key={match.id}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-xs font-semibold uppercase text-[var(--ink-soft)]">

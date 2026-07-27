@@ -1,6 +1,7 @@
 import { UserButton } from "@clerk/nextjs";
 import {
   CalendarDays,
+  GraduationCap,
   LockKeyhole,
   PenLine,
   Shield,
@@ -102,18 +103,18 @@ export function SpaceShell({
         } as CSSProperties
       }
     >
-      <header className="sticky top-0 z-40 border-b border-[var(--line)] bg-[var(--surface)]/95 backdrop-blur-xl">
+      <header className="relative z-40 border-b border-[var(--line)] bg-[var(--surface)]/95 backdrop-blur-xl sm:sticky sm:top-0">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex min-h-16 flex-wrap items-center gap-3 py-2.5 lg:flex-nowrap">
+          <div className="flex min-h-16 flex-wrap items-center gap-2 py-2 sm:gap-3 sm:py-2.5 lg:flex-nowrap">
             <Link
               aria-label="Home"
               className="flex shrink-0 items-center"
               href={`/org/${viewer.org.slug}`}
             >
-              <BrandLogo className="h-8 max-w-[150px]" />
+              <BrandLogo className="h-7 max-w-24 sm:h-8 sm:max-w-[150px]" />
             </Link>
 
-            <div className="min-w-[220px] flex-1 sm:max-w-sm">
+            <div className="min-w-0 flex-1 sm:min-w-[220px] sm:max-w-sm">
               <SpaceSwitcher
                 currentSpace={currentSpace}
                 orgSlug={viewer.org.slug}
@@ -121,7 +122,7 @@ export function SpaceShell({
               />
             </div>
 
-            <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+            <div className="flex w-full items-center justify-end gap-1.5 sm:ml-auto sm:w-auto sm:gap-2">
               <LinkButton
                 className="hidden sm:inline-flex"
                 href={`/org/${viewer.org.slug}`}
@@ -130,8 +131,22 @@ export function SpaceShell({
               >
                 Home
               </LinkButton>
+              {viewer.canMentor ? (
+                <LinkButton
+                  aria-label="Mentoring"
+                  className="px-2 sm:px-3"
+                  href={`/org/${viewer.org.slug}/mentoring`}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <GraduationCap aria-hidden className="size-4" />
+                  <span className="hidden xl:inline">Mentoring</span>
+                </LinkButton>
+              ) : null}
               {viewer.canAdmin ? (
                 <LinkButton
+                  aria-label="Admin"
+                  className="px-2 sm:px-3"
                   href={`/org/${viewer.org.slug}/admin/members`}
                   size="sm"
                   variant="ghost"
@@ -141,6 +156,7 @@ export function SpaceShell({
                 </LinkButton>
               ) : null}
               <LinkButton
+                className="px-2 sm:px-3"
                 href={`/org/${viewer.org.slug}/requests`}
                 size="sm"
                 variant="ghost"
@@ -148,6 +164,8 @@ export function SpaceShell({
                 Inbox
               </LinkButton>
               <LinkButton
+                aria-label="Profile"
+                className="px-2 sm:px-3"
                 href={`/org/${viewer.org.slug}/profile`}
                 size="sm"
                 variant="secondary"
@@ -176,10 +194,10 @@ export function SpaceShell({
             </div>
           </div>
 
-          <div className="border-t border-[var(--line)] py-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-[var(--night)] text-[var(--surface)] shadow-sm">
+          <div className="border-t border-[var(--line)] py-2 sm:py-3">
+            <div className="flex items-center justify-between gap-2 sm:gap-3">
+              <div className="flex min-w-0 items-center gap-2 sm:items-start sm:gap-3">
+                <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[var(--night)] text-[var(--surface)] shadow-sm sm:size-10">
                   {currentSpace.kind === "main" ? (
                     <LockKeyhole aria-hidden className="size-4" />
                   ) : (
@@ -188,34 +206,41 @@ export function SpaceShell({
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-lg font-semibold text-[var(--ink)]">
+                    <p className="truncate text-base font-semibold text-[var(--ink)] sm:text-lg">
                       {communityName}
                     </p>
                     {currentSpace.kind === "event" ? (
                       <>
-                        <Badge variant="accent">{getCommunityTypeLabel(currentSpace)}</Badge>
-                        {statusLabel ? <Badge variant="muted">{statusLabel}</Badge> : null}
+                        <Badge className="hidden sm:inline-flex" variant="accent">
+                          {getCommunityTypeLabel(currentSpace)}
+                        </Badge>
+                        {statusLabel ? (
+                          <Badge className="hidden sm:inline-flex" variant="muted">
+                            {statusLabel}
+                          </Badge>
+                        ) : null}
                       </>
                     ) : null}
                     {dateLabel ? (
-                      <span className="text-xs font-semibold text-[var(--ink-soft)]">
+                      <span className="hidden text-xs font-semibold text-[var(--ink-soft)] sm:inline">
                         {dateLabel}
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-[var(--ink-soft)] sm:text-sm">
+                  <p className="mt-0.5 hidden line-clamp-2 text-xs leading-5 text-[var(--ink-soft)] sm:block sm:text-sm">
                     {audienceDescription}
                   </p>
                 </div>
               </div>
               {canInteract ? (
                 <LinkButton
-                  className="w-full lg:w-auto"
-                  href={`/org/${viewer.org.slug}/s/${currentSpace.slug}/compose`}
+                  aria-label={`Post in ${communityName}`}
+                  className="shrink-0 px-2.5 sm:px-3"
+                  href={`/org/${viewer.org.slug}/s/${currentSpace.slug}/compose?kind=feed`}
                   size="sm"
                 >
                   <PenLine aria-hidden className="size-4" />
-                  Post in {communityName}
+                  <span className="hidden sm:inline">Post in {communityName}</span>
                 </LinkButton>
               ) : null}
             </div>

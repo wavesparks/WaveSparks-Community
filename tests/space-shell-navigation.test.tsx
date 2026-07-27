@@ -4,6 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const navigation = vi.hoisted(() => ({
   pathname: "/org/wavesparks/s/event-alpha/knowledge",
 }));
+const originalScrollTo = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  "scrollTo",
+);
 
 vi.mock("next/navigation", () => ({
   usePathname: () => navigation.pathname,
@@ -49,7 +53,15 @@ const spaces: SpaceShellSpace[] = [
 ];
 
 describe("SpaceSwitcher", () => {
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    if (originalScrollTo) {
+      Object.defineProperty(HTMLElement.prototype, "scrollTo", originalScrollTo);
+    } else {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
+    }
+  });
 
   it("uses member-facing labels, preserves the section, and closes after selection", () => {
     const { container } = render(
@@ -98,4 +110,97 @@ describe("SpaceSwitcher", () => {
     );
     expect(screen.queryByRole("link", { name: /^Requests$/ })).not.toBeInTheDocument();
   });
+
+  it.each([
+    ["Knowledge", "knowledge"],
+    ["Opportunities", "opportunities"],
+    ["Introductions", "requests"],
+  ])("brings a clipped active %s link into view on direct entry", (label, section) => {
+    navigation.pathname = `/org/wavesparks/s/event-alpha/${section}`;
+    const scrollTo = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      if (this.getAttribute("aria-label") === "Community navigation") {
+        return domRect(0, 320);
+      }
+      if (this.getAttribute("aria-current") === "page") {
+        return domRect(420, 540);
+      }
+      return domRect(0, 100);
+    });
+
+    render(
+      <SpaceSectionNavigation
+        orgSlug="wavesparks"
+        spaceSlug="event-alpha"
+      />,
+    );
+
+    const activeLink = screen.getByRole("link", { name: new RegExp(label) });
+    expect(activeLink).toHaveAttribute("aria-current", "page");
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    expect(scrollTo.mock.contexts[0]).toBe(
+      screen.getByRole("navigation", { name: "Community navigation" }),
+    );
+    expect(scrollTo).toHaveBeenCalledWith({
+      behavior: "auto",
+      left: 220,
+    });
+  });
+
+  it("does not move a visible active link or repeat for the same section", () => {
+    navigation.pathname = "/org/wavesparks/s/event-alpha/knowledge";
+    const scrollTo = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: scrollTo,
+    });
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      if (this.getAttribute("aria-label") === "Community navigation") {
+        return domRect(0, 640);
+      }
+      if (this.getAttribute("aria-current") === "page") {
+        return domRect(420, 540);
+      }
+      return domRect(0, 100);
+    });
+
+    const { rerender } = render(
+      <SpaceSectionNavigation
+        orgSlug="wavesparks"
+        spaceSlug="event-alpha"
+      />,
+    );
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    navigation.pathname = "/org/wavesparks/s/event-alpha/knowledge/post-1";
+    rerender(
+      <SpaceSectionNavigation
+        orgSlug="wavesparks"
+        spaceSlug="event-alpha"
+      />,
+    );
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
 });
+
+function domRect(left: number, right: number): DOMRect {
+  return {
+    bottom: 40,
+    height: 40,
+    left,
+    right,
+    top: 0,
+    width: right - left,
+    x: left,
+    y: 0,
+    toJSON: () => ({}),
+  };
+}

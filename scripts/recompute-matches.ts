@@ -16,9 +16,14 @@ async function main() {
     return;
   }
 
-  const { recomputeMatchesForOrg } = await import("@/server/store");
-  const matches = await recomputeMatchesForOrg("org_wavespark");
-  console.info(`Recomputed ${matches.length} matches for Wavesparks.`);
+  const { recomputeMatchesForAllOrganizations } = await import("@/server/store");
+  const result = await recomputeMatchesForAllOrganizations();
+  console.info(
+    `Recomputed ${result.matchCount} matches across ${result.organizationCount} organizations.`,
+  );
+  for (const organization of result.organizations) {
+    console.info(`- ${organization.slug}: ${organization.matchCount} matches`);
+  }
 }
 
 main().catch((error) => {

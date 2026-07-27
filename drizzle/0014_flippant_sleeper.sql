@@ -1,0 +1,2 @@
+ALTER TABLE "membership_invitations" ADD COLUMN "clerk_identity_invitation_id" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "membership_invitations_clerk_identity_invitation_id_idx" ON "membership_invitations" USING btree ("clerk_identity_invitation_id");

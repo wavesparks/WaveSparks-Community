@@ -13,8 +13,8 @@ import { SectionHeading } from "@/components/ui/section-heading";
 const authCompleteRetryCount = 2;
 
 export function AuthCompleteClient({ slug }: { slug: string }) {
-  const { getToken, isLoaded, isSignedIn, orgId } = useAuth();
-  const { setActive, signOut } = useClerk();
+  const { getToken, isLoaded, isSignedIn } = useAuth();
+  const { signOut } = useClerk();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -59,6 +59,61 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
             continue;
           }
 
+          const invitationResponse = await fetch(
+            `/api/internal/membership-invitations/accept?orgSlug=${encodeURIComponent(slug)}`,
+            {
+              cache: "no-store",
+              credentials: "same-origin",
+              headers: { authorization: `Bearer ${token}` },
+              method: "POST",
+            },
+          );
+
+          if (!active) {
+            return;
+          }
+
+          if (
+            invitationResponse.status === 401 &&
+            index < authCompleteRetryCount - 1
+          ) {
+            continue;
+          }
+
+          if (invitationResponse.status === 401) {
+            setError("We couldn’t confirm your sign-in. Please try again.");
+            return;
+          }
+
+          if (invitationResponse.status === 403) {
+            setError(
+              "This invitation belongs to a different email address. Sign out and use the address that received the invitation.",
+            );
+            return;
+          }
+
+          if (invitationResponse.status === 410) {
+            setError(
+              "This invitation has expired or is no longer active. Ask a Wavesparks admin to resend it.",
+            );
+            return;
+          }
+
+          if (invitationResponse.status === 409) {
+            setError(
+              "We couldn’t connect this invitation to your account. Please contact the Wavesparks team.",
+            );
+            return;
+          }
+
+          if (
+            invitationResponse.status !== 204 &&
+            !invitationResponse.ok
+          ) {
+            setError("We couldn’t finish accepting your invitation. Please try again.");
+            return;
+          }
+
           const response = await fetch(
             `/api/internal/auth/complete?orgSlug=${encodeURIComponent(slug)}`,
             {
@@ -93,22 +148,10 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
           }
 
           const payload = (await response.json()) as {
-            clerkOrgId?: string;
             state?: "ready" | "pending" | "inactive";
             target?: string;
           };
           const target = payload.target ?? `/org/${slug}`;
-          if (
-            payload.clerkOrgId &&
-            payload.state !== "inactive" &&
-            orgId !== payload.clerkOrgId
-          ) {
-            await setActive({
-              organization: payload.clerkOrgId,
-              redirectUrl: target,
-            });
-            return;
-          }
           router.replace(target);
           return;
         }
@@ -128,7 +171,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
     return () => {
       active = false;
     };
-  }, [attempt, getToken, isLoaded, isSignedIn, orgId, router, setActive, slug]);
+  }, [attempt, getToken, isLoaded, isSignedIn, router, slug]);
 
   return (
     <main className="ws-page-shell grid min-h-screen place-items-center px-4 py-8">

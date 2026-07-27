@@ -1,5 +1,6 @@
 export type PlatformRole = "platform_owner" | "standard";
 export type MembershipRole = "org_admin" | "member";
+export type MentorStatus = "not_mentor" | "needs_review" | "approved";
 export type AccountStatus = "invited" | "connected" | "suspended" | "deprovisioned";
 export type ClerkOrgRole = "org:admin" | "org:member" | (string & {});
 export type MembershipStatus =
@@ -14,6 +15,11 @@ export type ClerkInvitationStatus =
   | "revoked"
   | "expired"
   | "failed";
+export type MembershipInvitationStatus =
+  | "pending"
+  | "accepted"
+  | "revoked"
+  | "expired";
 export type AffiliationType =
   | "current participant"
   | "alumni"
@@ -30,6 +36,9 @@ export type PostType =
 export type OpportunitySource = "member" | "mentor" | "official";
 export type PostStatus = "active" | "closed" | "archived";
 export type CommentStatus = "visible" | "removed";
+export type PostImageUploadStatus = "staged" | "processing" | "ready" | "failed";
+export type PostLinkPreviewFetchStatus = "staged" | "fetching" | "ready" | "failed";
+export type PostAttachmentModerationStatus = "visible" | "removed";
 export type MatchType = string;
 export type MatchDirection = "mutual" | "seeker_provider";
 export type MatchConfidence = "high" | "medium" | "low";
@@ -43,6 +52,7 @@ export type MatchFactorKey =
   | "location";
 export type MatchFactorWeights = Record<MatchFactorKey, number>;
 export type IntroStatus = "pending" | "accepted" | "declined" | "expired";
+export type IntroKind = "general" | "mentoring";
 export type IntroSourceType = "match" | "post" | "profile" | "admin_manual";
 export type NotificationType =
   | "membership_approved"
@@ -50,7 +60,9 @@ export type NotificationType =
   | "intro_accepted"
   | "intro_declined"
   | "manual_intro"
-  | "admin_note";
+  | "admin_note"
+  | "post_mentioned"
+  | "comment_mentioned";
 export type ProfileLinkType = "linkedin" | "github" | "website" | "x";
 export type CohortStatus = "active" | "archived";
 export type CohortMemberStatus = "invited" | "promoted";
@@ -121,6 +133,9 @@ export interface Membership {
   orgId: string;
   userId: string;
   role: MembershipRole;
+  mentorStatus: MentorStatus;
+  mentorReviewedAt?: string;
+  mentorReviewedByMembershipId?: string;
   accountStatus: AccountStatus;
   affiliationType: AffiliationType;
   status: MembershipStatus;
@@ -133,6 +148,30 @@ export interface Membership {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface MembershipInvitation {
+  id: string;
+  orgId: string;
+  membershipId: string;
+  email: string;
+  tokenHash: string;
+  status: MembershipInvitationStatus;
+  expiresAt: string;
+  createdByMembershipId: string;
+  clerkIdentityInvitationId?: string;
+  acceptedByClerkUserId?: string;
+  sentAt?: string;
+  acceptedAt?: string;
+  revokedAt?: string;
+  deliveryError?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type MembershipInvitationSummary = Omit<
+  MembershipInvitation,
+  "tokenHash" | "clerkIdentityInvitationId" | "acceptedByClerkUserId"
+>;
 
 export interface Space {
   id: string;
@@ -334,6 +373,105 @@ export interface Post {
   updatedAt: string;
 }
 
+export interface PostImage {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  uploaderMembershipId: string;
+  postId?: string;
+  blobPathname: string;
+  contentType: string;
+  sizeBytes: number;
+  width?: number;
+  height?: number;
+  alt?: string;
+  position: number;
+  uploadStatus: PostImageUploadStatus;
+  uploadError?: string;
+  moderationStatus: PostAttachmentModerationStatus;
+  moderatedByMembershipId?: string;
+  moderatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PostLinkPreview {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  uploaderMembershipId: string;
+  postId?: string;
+  originalUrl: string;
+  title?: string;
+  description?: string;
+  siteName?: string;
+  thumbnailBlobPathname?: string;
+  thumbnailContentType?: string;
+  thumbnailSizeBytes?: number;
+  thumbnailWidth?: number;
+  thumbnailHeight?: number;
+  fetchStatus: PostLinkPreviewFetchStatus;
+  fetchError?: string;
+  moderationStatus: PostAttachmentModerationStatus;
+  moderatedByMembershipId?: string;
+  moderatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PostMention {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  postId: string;
+  mentionedMembershipId: string;
+  label: string;
+  start: number;
+  end: number;
+  createdAt: string;
+}
+
+export interface CommentMention {
+  id: string;
+  orgId: string;
+  spaceId: string;
+  postId: string;
+  commentId: string;
+  mentionedMembershipId: string;
+  label: string;
+  start: number;
+  end: number;
+  createdAt: string;
+}
+
+export interface RichTextMention {
+  membershipId: string;
+  label: string;
+  start: number;
+  end: number;
+  href?: string;
+}
+
+export interface PostImageView {
+  id: string;
+  url: string;
+  width: number;
+  height: number;
+  alt: string;
+  position: number;
+}
+
+export interface PostLinkPreviewView {
+  id: string;
+  url: string;
+  title?: string;
+  description?: string;
+  siteName?: string;
+  thumbnailUrl?: string;
+  thumbnailWidth?: number;
+  thumbnailHeight?: number;
+}
+
 export interface Follow {
   id: string;
   orgId: string;
@@ -356,6 +494,7 @@ export interface Comment {
   postId: string;
   authorMembershipId: string;
   body: string;
+  mentions?: RichTextMention[];
   status: CommentStatus;
   createdAt: string;
   updatedAt: string;
@@ -427,6 +566,7 @@ export interface IntroRequest {
   spaceId?: string;
   requesterMembershipId: string;
   receiverMembershipId: string;
+  kind: IntroKind;
   sourceType: IntroSourceType;
   sourceId: string;
   introPurpose: string;
@@ -448,6 +588,8 @@ export interface Notification {
   title: string;
   body: string;
   link: string;
+  sourcePostId?: string;
+  sourceCommentId?: string;
   readAt?: string;
   createdAt: string;
 }
@@ -485,9 +627,55 @@ export interface FullAdminProfile extends LimitedProfileCard {
   technicalExperienceLevel: string;
   technicalExperience: string;
   longBio: string;
+  schoolOrCompany: string;
+  timezone: string;
+  startupName: string;
+  startupOneLiner: string;
   startupDescription: string;
+  stage: string;
+  industryTags: string[];
+  problemSpaceTags: string[];
+  businessModelTags: string[];
+  currentProgress: string;
+  tractionSummary: string;
+  regionFocus: string;
+  lookingForTypes: string[];
+  seekingMatchTypes: string[];
+  offeringMatchTypes: string[];
   desiredRoles: string[];
+  helpNeededTags: string[];
+  idealMatchDescription: string;
+  skillTags: string[];
+  yearsOfExperience: number;
+  topStrengths: string[];
+  canContribute: string[];
+  priorProjects: string;
+  notableWins: string;
+  timeCommitment: string;
+  availabilityStart: string;
+  remotePreference: string;
+  preferredGeographies: string[];
+  meetingFrequencyPreference: string;
+  ambitionLevel: number;
+  riskTolerance: number;
+  speedPreference: string;
+  decisionStyle: string;
+  workStyle: string;
+  communicationStyle: string;
+  conflictStyle: string;
+  commitmentHorizon: string;
+  missionVsMarketOrientation: string;
+  structureVsChaos: number;
+  mentorExpertiseTags: string[];
+  mentorStageExperience: string[];
+  mentorFunctionalStrengths: string[];
+  mentorAvailability: string;
   mentorOffers: string[];
+  maxMentees: number | null;
+  mentorshipPreferences: string;
+  introOptIn: boolean;
+  profileVisibleInMatching: boolean;
+  onboardingComplete: boolean;
   profileCompletionPercent: number;
   status: MembershipStatus;
   featured: boolean;
@@ -500,6 +688,9 @@ export interface FeedPostView {
   opportunitySource?: OpportunitySource;
   title: string;
   body: string;
+  images: PostImageView[];
+  linkPreview?: PostLinkPreviewView;
+  mentions: RichTextMention[];
   tags: string[];
   relatedRolesNeeded: string[];
   status: PostStatus;
@@ -517,6 +708,7 @@ export interface FeedPostView {
 export interface MemberDirectoryFilters {
   q?: string;
   affiliation?: string;
+  mentorStatus?: MentorStatus;
   stage?: string;
   industry?: string;
   need?: string;
@@ -524,6 +716,9 @@ export interface MemberDirectoryFilters {
 }
 
 export interface MemberDirectoryProfileView extends LimitedProfileCard {
+  isApprovedMentor: boolean;
+  acceptingMentoringRequests: boolean;
+  openToIntroductions: boolean;
   bio: string;
   problemInterest: string;
   currentFocus: string;
@@ -538,7 +733,13 @@ export interface MemberDirectoryProfileView extends LimitedProfileCard {
   problemSpaceTags: string[];
   skillTags: string[];
   desiredRoles: string[];
+  mentorExpertiseTags: string[];
+  mentorStageExperience: string[];
+  mentorFunctionalStrengths: string[];
+  mentorAvailability: string;
   mentorOffers: string[];
+  maxMentees: number | null;
+  mentorshipPreferences: string;
   profileLinks: ProfileLink[];
   isFollowing: boolean;
   introStatus?: IntroStatus;
@@ -566,6 +767,7 @@ export interface IntroRequestView {
   spaceId?: string;
   spaceName?: string;
   spaceSlug?: string;
+  kind: IntroKind;
   status: IntroStatus;
   introPurpose: string;
   note: string;
@@ -574,7 +776,7 @@ export interface IntroRequestView {
   respondedAt?: string;
   contactDetails?: {
     email: string;
-    whatsapp: string;
+    whatsapp?: string;
   };
   otherParty: LimitedProfileCard;
   isIncoming: boolean;
@@ -635,5 +837,7 @@ export interface ViewerContext {
   membership: Membership;
   profile?: Profile;
   canAdmin: boolean;
+  isApprovedMentor: boolean;
+  canMentor: boolean;
   scopes: string[];
 }

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { NavPendingIndicator } from "@/components/layout/nav-pending-indicator";
 import {
@@ -137,6 +137,27 @@ export function SpaceSwitcher({
     }
   };
 
+  useEffect(() => {
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const details = detailsRef.current;
+      if (details?.open && !details.contains(event.target as Node)) {
+        details.open = false;
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      const details = detailsRef.current;
+      if (event.key !== "Escape" || !details?.open) return;
+      details.open = false;
+      details.querySelector("summary")?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
   return (
     <details className="group relative min-w-0" ref={detailsRef}>
       <summary className="flex min-h-11 min-w-0 cursor-pointer list-none items-center gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-left shadow-sm transition hover:bg-[var(--surface-muted)] [&::-webkit-details-marker]:hidden">
@@ -163,7 +184,7 @@ export function SpaceSwitcher({
         />
       </summary>
 
-      <div className="absolute left-0 top-[calc(100%+0.5rem)] z-50 w-[min(340px,calc(100vw-2rem))] rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2 shadow-[0_24px_60px_rgba(34,27,68,0.22)]">
+      <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[min(340px,calc(100vw-2rem))] rounded-lg border border-[var(--line)] bg-[var(--surface)] p-2 shadow-[0_24px_60px_rgba(34,27,68,0.22)] sm:left-0 sm:right-auto">
         <div className="max-h-[min(520px,70vh)] space-y-3 overflow-y-auto">
           {mainSpaces.length ? (
             <div>
@@ -243,15 +264,42 @@ export function SpaceSectionNavigation({
   spaceSlug: string;
 }) {
   const pathname = usePathname();
+  const navigationRef = useRef<HTMLElement>(null);
+  const activeLinkRef = useRef<HTMLAnchorElement>(null);
+  const activeSection = sectionLinks.find((link) => {
+    const href = `/org/${orgSlug}/s/${spaceSlug}/${link.href}`;
+    return pathname === href || pathname.startsWith(`${href}/`);
+  })?.href;
+
+  useEffect(() => {
+    const navigation = navigationRef.current;
+    const activeLink = activeLinkRef.current;
+    if (!navigation || !activeLink || !activeSection) return;
+
+    const navigationBounds = navigation.getBoundingClientRect();
+    const activeLinkBounds = activeLink.getBoundingClientRect();
+    const clippedOnLeft = activeLinkBounds.left < navigationBounds.left;
+    const clippedOnRight = activeLinkBounds.right > navigationBounds.right;
+    if (!clippedOnLeft && !clippedOnRight) return;
+
+    const clippedDistance = clippedOnLeft
+      ? activeLinkBounds.left - navigationBounds.left
+      : activeLinkBounds.right - navigationBounds.right;
+    navigation.scrollTo?.({
+      behavior: "auto",
+      left: navigation.scrollLeft + clippedDistance,
+    });
+  }, [activeSection]);
 
   return (
     <nav
       aria-label="Community navigation"
       className="-mx-1 flex min-w-0 items-center gap-1 overflow-x-auto px-1"
+      ref={navigationRef}
     >
       {sectionLinks.map((link) => {
         const href = `/org/${orgSlug}/s/${spaceSlug}/${link.href}`;
-        const active = pathname === href || pathname.startsWith(`${href}/`);
+        const active = link.href === activeSection;
         const Icon = link.icon;
 
         return (
@@ -265,6 +313,7 @@ export function SpaceSectionNavigation({
             )}
             href={href}
             key={link.href}
+            ref={active ? activeLinkRef : undefined}
           >
             <Icon aria-hidden className="size-4" />
             {link.label}

@@ -18,7 +18,7 @@ import { getViewerContext } from "@/lib/auth";
 import { singleQueryValue } from "@/lib/feed-filters";
 import type { Space } from "@/lib/domain";
 import {
-  listActiveSpaceMemberRecords,
+  countActiveSpaceMembersBySpaceIds,
   listSpacesForOrg,
 } from "@/server/store";
 
@@ -157,13 +157,9 @@ export default async function AdminSpacesPage({
   if (!viewer) return null;
 
   const spaces = await listSpacesForOrg(viewer.org.id);
-  const counts = new Map(
-    await Promise.all(
-      spaces.map(async (space) => [
-        space.id,
-        (await listActiveSpaceMemberRecords(space.id)).length,
-      ] as const),
-    ),
+  const counts = await countActiveSpaceMembersBySpaceIds(
+    viewer.org.id,
+    spaces.map((space) => space.id),
   );
   const mainSpace = spaces.find((space) => space.kind === "main");
   const eventSpaces = spaces.filter((space) => space.kind === "event");
