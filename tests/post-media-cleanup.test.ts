@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const originalEnvironment = {
-  blobToken: process.env.BLOB_READ_WRITE_TOKEN,
+  postMediaToken: process.env.POST_MEDIA_READ_WRITE_TOKEN,
   cronSecret: process.env.CRON_SECRET,
   databaseUrl: process.env.DATABASE_URL,
   e2eLocalAuth: process.env.E2E_LOCAL_AUTH_ENABLED,
@@ -11,7 +11,7 @@ const originalEnvironment = {
 
 function restoreEnvironment() {
   for (const [key, value] of Object.entries({
-    BLOB_READ_WRITE_TOKEN: originalEnvironment.blobToken,
+    POST_MEDIA_READ_WRITE_TOKEN: originalEnvironment.postMediaToken,
     CRON_SECRET: originalEnvironment.cronSecret,
     DATABASE_URL: originalEnvironment.databaseUrl,
     E2E_LOCAL_AUTH_ENABLED: originalEnvironment.e2eLocalAuth,
@@ -46,7 +46,7 @@ describe("post media cleanup", () => {
   });
 
   it("removes old staged rows and untracked Blob objects but keeps recent media", async () => {
-    process.env.BLOB_READ_WRITE_TOKEN = "";
+    process.env.POST_MEDIA_READ_WRITE_TOKEN = "";
     process.env.CRON_SECRET = "cleanup-test-secret";
     process.env.DATABASE_URL = "";
     process.env.E2E_LOCAL_AUTH_ENABLED = "1";

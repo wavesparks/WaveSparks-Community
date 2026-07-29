@@ -72,6 +72,7 @@ const env = {
     nonEmpty(process.env.RESEND_FROM_EMAIL) ?? "Wavesparks <notification@wavesparks.co>",
   cronSecret: nonEmpty(process.env.CRON_SECRET),
   blobReadWriteToken: nonEmpty(process.env.BLOB_READ_WRITE_TOKEN),
+  postMediaReadWriteToken: nonEmpty(process.env.POST_MEDIA_READ_WRITE_TOKEN),
   wavesparkAdminEmails: nonEmpty(process.env.WAVESPARK_ADMIN_EMAILS) ?? "",
   spaceScopedReadsEnabled: enabledRolloutFlag(process.env.SPACE_SCOPED_READS_ENABLED),
 };

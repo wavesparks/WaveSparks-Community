@@ -315,7 +315,8 @@ When `DATABASE_URL` is absent, the application uses in-memory seed data intended
 | `RESEND_API_KEY` | Optional but expected | Ordinary product notification email; not used for membership invitations |
 | `RESEND_FROM_EMAIL` | Configure together with the Resend key | Notification sender |
 | `CRON_SECRET` | Required; at least 32 characters recommended | Protects matching recomputation and media-cleanup endpoints |
-| `BLOB_READ_WRITE_TOKEN` | Optional but expected | Storage for avatars, logos, post images, and link thumbnails |
+| `BLOB_READ_WRITE_TOKEN` | Optional but expected | Public Blob storage for avatars and organization logos |
+| `POST_MEDIA_READ_WRITE_TOKEN` | Optional but expected | Private Blob storage for post images and link-preview thumbnails |
 | `WAVESPARK_ADMIN_EMAILS` | Required by readiness checks | Bootstrap administrator email list; **does not complete Clerk identity binding** |
 | `E2E_CLERK_ADMIN_EMAIL` | Test only | Clerk E2E Admin test account |
 | `E2E_CLERK_USER_EMAIL` | Test only | Clerk E2E Member test account |
@@ -565,7 +566,8 @@ When rotating `CRON_SECRET`, change the Vercel Production value, redeploy, verif
 
 - Organization logos and avatars use public Blob URLs; do not store sensitive images there.
 - Post images and link-preview thumbnails use private Blob storage and are served through application routes that recheck Space access.
-- Media upload depends on `BLOB_READ_WRITE_TOKEN`. Text-only features continue if Blob is unavailable.
+- Avatars and organization logos depend on the public Store token in `BLOB_READ_WRITE_TOKEN`.
+- Post images and link-preview thumbnails depend on a separate private Store token in `POST_MEDIA_READ_WRITE_TOKEN`. Text-only features continue if private Blob storage is unavailable.
 - Confirm the daily cleanup Cron and Blob usage. Database moderation state and Blob retention are separate concerns and must both satisfy the organization's retention policy.
 - Rotate the Blob token in this order: provision the replacement, update the correct Vercel scope, redeploy, test upload and authorized read, revoke the old token, and test again.
 
