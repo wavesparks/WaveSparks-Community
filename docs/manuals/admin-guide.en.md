@@ -1,646 +1,432 @@
-# WaveSparks Community Admin Operations Manual
+# WaveSparks Community Admin Manager Quick-Start Guide
 
-Version: 1.0
-Audit baseline: codebase, current interface, and official vendor documentation as of July 29, 2026
-Intended audience: WaveSparks Community organization administrators, release owners, and frontline operators
+Version: 1.1
 
-> This manual distinguishes between behavior implemented in the current codebase, actions performed in vendor consoles, and controls that must be fixed or established before launch. Before making a production change, confirm the target environment, recovery point, and authorized approver. Never paste secrets into tickets, chat messages, or screenshots.
+Intended audience: company managers who operate a WaveSparks Community organization through the Admin interface.
 
-## 1. Admin responsibilities and the complete operating lifecycle
+This is a product operations guide. It explains routine setup, member administration, Event operations, moderation, and reporting in plain language. Technical deployment, identity, database, email, recovery, and service maintenance belong in the project `README.md` and should be handled by the designated technical owner.
 
-Admins manage community accounts, Spaces, content, introductions, matching, and day-to-day operations. Vercel, Clerk, Neon, and Resend provide deployment, identity, data, and product-email services respectively.
+## 1. Your role at a glance
 
-The standard operating lifecycle is:
+As an Admin, you are responsible for a healthy member experience from invitation through ongoing participation. Your main jobs are to:
 
-1. Resolve the first-Admin identity connection blocker and establish an auditable production administrator.
-2. Configure the production domain, environment variables, Clerk webhook, Neon database, Resend domain, and Vercel Blob.
-3. Run environment audits, migrations, data audits, tests, and deployment verification.
-4. Configure the community name, logo, description, and invitation guidance.
-5. Create Events and configure lifecycle state, timing, participants, and Matching.
-6. Invite individual members or import them in bulk, then follow invitation acceptance through completion.
-7. Manage account permission, Mentor designation, account status, and per-Space access as independent dimensions.
-8. Operate Profiles, posts, Introductions, Matching, and Analytics.
-9. Handle account suspension, content moderation, security incidents, and data anonymization.
-10. Check deployments, Cron, email, and webhooks daily; rotate secrets, rehearse recovery, and review capacity regularly.
+- keep organization details and invitation guidance current;
+- invite the right people and give them the right Space access;
+- create, launch, monitor, and close Events;
+- approve or remove Mentor designation when your organization has verified it;
+- moderate Profiles and community content;
+- oversee Introduction requests and Matching quality;
+- review activity trends and follow up on operational issues.
+
+You do not need to maintain hosting, sign-in infrastructure, the database, or email-delivery services. When a problem cannot be solved in the Admin interface, collect the affected person's email, Space, time, and a screenshot, then contact the technical owner.
+
+### The four controls to check separately
+
+A person's access is controlled by four separate choices:
+
+| Control | Typical values | What it decides |
+| --- | --- | --- |
+| Account permission | Member or Administrator | Whether the person can open the Admin interface |
+| Mentor designation | Not a mentor, Needs review, or Approved | Whether the person can be discovered and matched as a Mentor |
+| Account state | Invited, Connected, Suspended, or Deprovisioned | Whether the account can use the organization at all |
+| Space access | Active, Waitlist, Rejected, Suspended, or Removed | Whether the person can enter one specific Community or Event |
+
+Changing one control does not automatically change the others. For example, approving a Mentor does not make that person an Admin, and adding someone to an Event does not add them to the Main Community.
+
+## 2. Your first 30 minutes
+
+Before inviting a full cohort, complete this short setup:
+
+1. Open the invitation email and sign in with the exact email address that was invited.
+2. Confirm that **Admin** appears in the main navigation.
+3. Open **Admin -> Overview** and note the current account, Profile, Introduction, and activity totals.
+4. Open **Admin -> Settings** and confirm the organization name, logo, tagline, description, and invitation guidance.
+5. Open **Admin -> Community & events** and review the Main Community and any existing Events.
+6. Invite one test Member, add that person to a test or draft Event, and confirm that the intended access works.
+7. Save the name and contact method of the technical owner who supports this project.
 
 ![Admin Overview](../assets/manuals/admin-overview.png)
 
-## 2. Known risks that must be resolved before launch
+### Know the Admin navigation
 
-The items below are not optional documentation notes. They are production risks confirmed by the current code audit.
+| Page | Use it for |
+| --- | --- |
+| Overview | A quick operating snapshot and recent activity |
+| Members | Invitations, imports, permissions, Mentor designation, account state, and Space access |
+| Community & events | Main Community and Event setup, Participants, Content, and Matching |
+| Profiles | Profile review, Featured or Needs review controls, and CSV export |
+| Posts | Content moderation and featured content |
+| Requests | Introduction oversight and manual Introductions |
+| Matches | Match review, feedback, configuration, and refreshes |
+| Analytics | High-level member and engagement trends |
+| Settings | Organization identity and invitation guidance |
 
-### 2.1 P0: The first Admin cannot complete identity connection in a new production database
+## 3. Complete the organization setup
 
-`scripts/bootstrap-production.ts` creates an `org_admin` membership but does not explicitly set `accountStatus`, so the `invited` default is used. The script also does not create a local one-time Invitation, send a Clerk Application Invitation, or write a `clerkUserId`.
+Open **Admin -> Settings** and review each field as a Member would see it.
 
-Production authentication connects local identity only by Clerk User ID and explicitly forbids automatic claiming by email. Therefore, after `db:bootstrap` runs against a new database, the first Admin cannot enter the Admin interface merely by signing in to Clerk with the same email address.
+### Name and tagline
 
-Release requirements:
+Use the official organization or program name. Keep the tagline short enough to explain the community's purpose at a glance.
 
-- Implement a supported first-Admin invitation and binding flow in code, with automated tests.
-- Do not temporarily enable automatic identity binding by email.
-- Do not manually mark a database record as connected without binding its Clerk User ID.
-- Do not use Preview Accounts as production administrators.
-- Do not declare first-Admin provisioning complete until the fix is merged, migrated, rehearsed, and reviewed by a second person.
+### Logo
 
-### 2.2 P1: Some administrative Route Handlers still authorize by email
+Upload a current, approved logo. After saving, open a member-facing page and confirm that it is readable on both light and dark areas of the interface.
 
-The following endpoints conflict with the Clerk-ID identity invariant and should use the server-side Viewer Context and Clerk ID before release:
+### About or community description
 
-- Profile CSV export;
-- Organization logo upload;
-- Member import parsing;
-- Interactive Matching recompute;
-- Preview Accounts provisioning.
+Explain:
 
-The Profile CSV response should also add `Cache-Control: no-store` and an export audit record. Until these issues are fixed, restrict Admin access, do not share Admin accounts, and inspect logs and data outcomes after every sensitive operation.
+- who the community is for;
+- what Members can do here;
+- what behavior is expected;
+- where to ask for help.
 
-### 2.3 P1: Preview Accounts API must not be part of a production operating path
+### Invitation guidance
 
-`POST /api/internal/preview-accounts` currently has no explicit production or E2E guard. It can write four connected QA accounts, including an Admin account. This is not a production tool. Disable or remove it before launch, or add a strict non-production guard.
+Write a short note that prepares recipients for the first login. Tell them to use the exact invited email address, accept the invitation within seven days, and complete their Profile before trying to interact.
 
-### 2.4 P1/P2: Controls not yet implemented
+After any change, save it and check the result from a member-facing page. If the setting saves but does not appear, record what you changed and contact the technical owner.
 
-- Although the schema contains `reports` and `admin_actions`, the product currently has neither a report queue nor a central Admin Audit Log.
-- Suspending a user in the application does not automatically revoke Clerk Sessions. A credential incident requires a separate Clerk action.
-- There is no GitHub Actions release gate, Sentry/OpenTelemetry integration, Log Drain, or alerting-as-code.
-- The Neon recovery process and drill records are not automated; runtime and migration processes share one database credential.
-- Resend has no webhook, delivery-status table, or Admin retry interface.
+## 4. Invite and onboard Members
 
-This manual provides manual control procedures for these gaps. Do not describe any of them as automated controls.
+### Invite one person
 
-## 3. Authorization and responsibility boundaries
+1. Open **Admin -> Members -> Invite people -> One person**.
+2. Enter the person's exact email address and, if available, their name.
+3. Choose **Member** or **Administrator**.
+4. Choose **Not a mentor** or **Approved mentor** independently.
+5. For a Member, select the Main Community or Event and the initial Space access state.
+6. Review the choices, then send the invitation.
+7. Confirm the row-level invitation status in Members.
 
-Admin access requires a `connected` account with either `org_admin` or `platform_owner`. There are currently no fine-grained roles such as "member administrator" or "content moderator"; both Admin roles have full administrative privileges.
+The recipient must accept within seven days and use the exact invited, verified email address. If the invitation expires, send a new one. Resending creates a new valid invitation; revoking makes the old link unusable.
 
-Authorization is divided into independent dimensions:
+Invite Administrators individually. An Administrator can exist without Space access, but they must be explicitly added to a Space if they need to appear in People, post, participate in Matching, or create a manual Introduction there.
 
-- Account permission: Member or Administrator;
-- Mentor designation: `not_mentor`, `needs_review`, or `approved`;
-- Account status: `invited`, `connected`, `suspended`, or `deprovisioned`;
-- Space entitlement: `active`, `waitlist`, `rejected`, `suspended`, or `removed`;
-- Space lifecycle: `draft`, `upcoming`, `active`, `ended`, or `archived`.
+### Import a cohort
 
-An Approved Mentor does not automatically receive Admin access. An Admin can audit every Space, but must be explicitly added to a Space to appear as a social participant in People, publish content, participate in matching, or create a manual Introduction from that Space.
+Use bulk import for a list of Members who should receive the same initial Space access.
 
-An Admin cannot revoke their own effective Admin permission. Require a second confirmation when changing another administrator. Maintain at least two independent administrators protected by MFA to avoid a single point of operational failure.
+1. Open **Admin -> Members -> Invite people -> Import**.
+2. Upload a CSV or XLSX file, or paste CSV data.
+3. Map the required **Email** field and the optional **Name** field.
+4. Select one target Space and one initial access state.
+5. Review the preview and correct or remove invalid rows.
+6. Confirm **Invite N people**.
+7. Review each result and retry only failed rows.
 
-## 4. Admin pages and responsibilities
+Import limits:
 
-| Page | Primary capabilities | Key considerations |
-| --- | --- | --- |
-| Overview | Connected accounts, complete Profiles, accepted Introductions, weekly posters, and recent activity | This is an operating summary, not a monitoring or alerting system |
-| Members | Individual invitations, CSV/XLSX import, invitation retry/revoke, role, Mentor, account, and Space status | Evaluate all four authorization dimensions independently |
-| Community & events | Main Community, Event create/update/archive/restore, Participants, Content, and Matching | `ended` remains interactive; only `archived` stops access |
-| Profiles | View complete Profiles and contact details, Featured/Stale controls, and CSV export | Contains sensitive data; central export auditing is currently absent |
-| Posts | Hide/Unhide, Feature, Lock comments, Archive, and image/link/comment moderation | There is currently no user report entry point |
-| Requests | Review by status, source, or Space; create a manual Introduction | The Admin must have access to the source Space |
-| Matches | Recompute, configure match type/direction/weights/minimum score, review anonymous feedback and runs | Inspect results and feedback after configuration changes |
-| Analytics | Account, Profile, Introduction, teams-formed, and activity trends | This is currently a basic snapshot, not a complete BI system |
-| Settings | Name, logo, tagline, community description, and invitation guidance | The logo is stored in a public Blob |
+- maximum file size: 2 MB;
+- first worksheet only for XLSX;
+- maximum 20 columns;
+- maximum 100 non-empty data rows;
+- the first occurrence of a duplicate email wins.
 
-## 5. Member and invitation lifecycle
-
-### 5.1 Invite one person
-
-1. Open Members -> Invite people -> One person.
-2. Enter the exact email address and an optional name.
-3. Select Member or Administrator.
-4. Independently select Not a mentor or Approved mentor. An invitation cannot create `needs_review`.
-5. For a Member, select the target Main Community or Event and the initial Space access state.
-6. An Administrator can be invited without a Space; add one only if the Admin needs to participate socially.
-7. After submission, inspect the row-level Invitation status. Do not treat Clerk's acceptance of the send request as proof of delivery.
-
-WaveSparks first creates a local one-time invitation, stores only its token hash in Neon, and then asks Clerk to send an Application Invitation. Clerk creates or signs in the identity; it does not create a Clerk Organization, role, or community permission. The recipient must accept within seven days using the exact matching verified email address.
-
-Invitation statuses:
-
-- `pending`: valid and awaiting acceptance;
-- `accepted`: local identity connection completed;
-- `revoked`: invitation revoked;
-- `expired`: validity period elapsed;
-- `failed`: local creation or Clerk delivery request failed.
-
-Resending creates a new valid ticket. After revocation, the old link can no longer be used. Investigate invitation email problems in Clerk, not Resend.
-
-### 5.2 Bulk import
-
-The importer accepts `.csv`, `.xlsx`, or pasted CSV data:
-
-1. Upload or paste the data.
-2. Map the required Email field and optional Name field.
-3. Select exactly one target Space and initial access state.
-4. Correct or remove invalid rows in Preview.
-5. Confirm Invite N people.
-6. Review row-level outcomes and retry only failed rows.
-
-Limits: 2 MB, first worksheet only, no more than 20 columns, and no more than 100 non-empty data rows. Selecting a file does not send invitations. The file is parsed in memory and not retained. A bulk import always creates Member + Not a mentor; it cannot grant Admin access or Mentor approval in bulk.
-
-Existing Profiles and global account permissions are not overwritten. Import only adds the target Space entitlement when it is safe to do so. For a repeated email address, the first row wins. Invalid rows do not block valid rows.
+Selecting a file does not send invitations; nothing is sent until confirmation. Bulk import always creates **Member + Not a mentor**. It cannot grant Admin permission or Mentor approval in bulk. Existing Profiles and global permissions are not overwritten.
 
 ![Members management](../assets/manuals/admin-members.png)
 
-### 5.3 Account states and security actions
+### Follow onboarding progress
 
-- `invited`: identity is not connected and cannot enter any Space.
-- `connected`: the user can operate according to each Space entitlement.
-- `suspended`: reversible global security block that overrides every Space.
-- `deprovisioned`: the organization no longer provisions the account; every Space is blocked.
+Use the Members list to distinguish:
 
-Use Space-level `suspended` or `removed` when only one Event is affected. Use account suspension or deprovisioning for credential compromise, serious violations, or organization-wide departure.
+- **Invited**: invitation sent, but account connection is not complete;
+- **Connected**: the person signed in and connected successfully;
+- **Suspended**: a reversible organization-wide block;
+- **Deprovisioned**: the organization no longer provides access.
 
-During a security incident, application suspension blocks application authorization but does not revoke existing Clerk Sessions. Also revoke Sessions or block the identity in Clerk, and rotate secrets when appropriate.
+If a connected Member can open the organization but not a specific Space, check that Space's access separately. If the Member can read but cannot post, comment, follow, save, browse People, use Matches, or manage requests, ask them to complete all seven required Profile items.
 
-### 5.4 Mentor designation
+## 5. Manage roles, Mentors, and access safely
 
-Mentor designation is a service qualification, not an administrative permission. `needs_review` represents a legacy signal awaiting validation. Only an approved Mentor is included in Mentor discovery and matching. Revoking approval expires pending Mentoring requests and stops new Mentor discovery and matching, while preserving the private Mentor Profile and accepted/declined history.
+### Account permission
 
-## 6. Community and Event lifecycle
+Grant Administrator permission only to people who need the full Admin interface. There are no limited Admin roles such as invitation-only or moderation-only. An Admin cannot remove their own effective Admin permission.
 
-Each organization has exactly one Main Community and can have multiple Events. Main is permanent, invitation-only, and always active; it cannot be ended or archived.
+Before changing another Admin:
 
-Event states:
+1. confirm the person's identity;
+2. confirm the requested permission with an authorized manager;
+3. make sure at least one other active Admin will remain;
+4. record the reason in your organization's change log.
 
-- `draft`: Admin setup only; participants cannot enter.
-- `upcoming`: active participants can enter before the start time.
-- `active`: standard read, write, and matching behavior.
-- `ended`: shown as a Past event, but currently remains readable, writable, and matchable.
-- `archived`: hidden from participants; access and matching stop, while data is retained.
+### Mentor designation
+
+Mentor designation is a service qualification, not an administrative role.
+
+- **Not a mentor**: not offered as a Mentor.
+- **Needs review**: requires an organization decision.
+- **Approved**: eligible for Mentor discovery and matching when the person's Mentor settings and Space access are also ready.
+
+Removing approval stops new Mentor discovery and matching and expires pending Mentoring requests. It does not erase accepted or declined history.
+
+### Account state versus Space access
+
+Use an account-wide state when the decision applies everywhere:
+
+- **Suspended** for a reversible organization-wide block;
+- **Deprovisioned** when the organization no longer provides the account.
+
+Use Space access when the decision applies to only one Community or Event:
+
+- **Active** allows participation while the Space lifecycle also permits it;
+- **Waitlist** and **Rejected** do not grant access;
+- **Suspended** temporarily blocks that Space;
+- **Removed** ends that Space entitlement.
+
+For a suspected account-security issue, suspend the account in WaveSparks immediately, then contact the technical owner so sign-in sessions can also be handled.
+
+## 6. Create and run an Event
+
+Each organization has one permanent Main Community and can have multiple Events. Event access is invitation-only and independent from Main Community access.
+
+![Admin Event launch flow](../assets/manuals/admin-event-launch-flow-en.png)
+
+### Event lifecycle
+
+| State | Member experience | Manager use |
+| --- | --- | --- |
+| Draft | Participants cannot enter | Build and review privately |
+| Upcoming | Active participants can enter | Open before the scheduled start |
+| Active | Normal participation | Run the live program |
+| Ended | Still readable, writable, and matchable | Keep post-event interaction open |
+| Archived | Hidden and inaccessible to participants | Close access while retaining data |
+
+Important: **Ended does not close interaction.** Use **Archived** when access and Matching must stop.
+
+### Create and launch
+
+1. Open **Admin -> Community & events** and create an Event.
+2. Enter the name, slug, description, tags, and schedule.
+3. Keep the Event in **Draft** while preparing it.
+4. Decide whether Matching will be available and review its settings.
+5. Add participants through individual invitations, bulk import, or the Event's Participants area.
+6. Add an Admin as a participant if that Admin needs to participate socially or create manual Introductions in the Event.
+7. Review content, participant access, dates, and invitation guidance.
+8. Change the Event to **Upcoming** or **Active**.
+9. Test with a real Member account before announcing the launch.
 
 ![Community and Events](../assets/manuals/admin-spaces.png)
 
-### 6.1 Create and publish an Event
+### Monitor the live Event
 
-1. Create an Event under Community & events.
-2. Enter its name, slug, description, tags, schedule, and Matching configuration.
-3. Keep it in `draft` while completing content and access checks.
-4. Configure the roster through individual invitations or Add participants within the Event.
-5. Switch to `upcoming` or `active`, then test access with a real Member account.
-6. After the event, use `ended` if interaction should remain available; use `archived` when access must actually stop.
+During the Event:
 
-### 6.2 Add to Main Community
+- check participant access and invitation failures;
+- review Profile completion and help Members who cannot interact;
+- review Posts and moderation needs;
+- watch pending Introduction requests;
+- sample Matches and anonymous Helpful or Not relevant feedback;
+- use Analytics as a directional snapshot, not as a complete reporting system.
 
-From an Event, select eligible participants and choose Add N to Main Community. This action:
+### Close or continue
 
-- immediately creates an `active` Main entitlement;
-- is idempotent for members already in Main;
-- preserves the original Event entitlement;
-- does not copy posts, follows, matches, feedback, or Introductions;
-- reports conflicts row by row.
+Choose **Ended** when the formal program has finished but you want Members to continue reading, posting, and matching. Choose **Archived** when participant access must stop.
 
-Do not assume Event participation automatically grants Main access, and do not simulate an "upgrade" by copying data.
+To move selected Event participants into the ongoing Main Community, use **Add N to Main Community**. This creates active Main access and preserves Event access. It does not copy Posts, follows, Matches, feedback, or Introductions.
 
-## 7. Profile, content, Introduction, and Matching operations
+Adding someone to an Event never grants Main access automatically.
 
-### 7.1 Profiles
+<!-- pagebreak -->
 
-Profiles provides access to complete member data, operational contact details, Featured/Stale queues, and CSV export. Before an export, confirm the purpose, the smallest possible recipient list, and a secure storage location. Delete local copies according to the organization's retention policy.
+## 7. Review Profiles and protect personal information
 
-The current export lacks comprehensive central auditing, and part of its authorization logic requires remediation. Fix it before making export a routine operating procedure.
+Use **Admin -> Profiles** to review complete Profiles, contact details, Featured items, and Profiles that need attention.
 
-### 7.2 Content moderation
+Good manager practice:
 
-Posts supports:
+1. open a Profile only for a clear operational purpose;
+2. correct designation or review status through the available controls;
+3. feature Profiles using a consistent, documented rule;
+4. avoid copying contact details into informal messages;
+5. export CSV data only when necessary and store it in an approved location;
+6. delete working copies according to company retention policy.
 
-- Hide/Unhide;
-- Feature/Unfeature;
-- Lock/Unlock comments;
-- Archive/Reopen;
-- Remove/Restore images, link previews, and comments.
+Admins can see sensitive Profile and contact information. This permission is for community operations, not for sharing details without the person's consent.
 
-Before acting, record the Post or Comment ID, Space, reason, and operator. There is currently no working Reports queue or non-repudiable Admin Audit Log. Record evidence and decisions for material incidents in an external ticketing system.
+## 8. Moderate community content
 
-### 7.3 Introductions
+Open **Admin -> Posts** to:
 
-Requests can be filtered by status, source, and Space. To create a manual Introduction, the Admin must personally have access to that Space, and both candidates must be current participants with complete Profiles. Enter Who is asking, Who should they meet, Purpose, Note, and Suggested first message.
+- hide or unhide a Post;
+- feature or unfeature it;
+- lock or unlock comments;
+- archive or reopen it;
+- remove or restore an image, link preview, or comment.
 
-Admins can view contact details, but must not bypass the two parties' consent by disclosing them to third parties. An Introduction never grants access to a new Space.
+Before a material moderation action, record the Post or Comment ID, Space, reason, and decision maker in your normal company ticket or case log. The current product does not provide a member report queue or a complete central Admin audit log.
 
-### 7.4 Matching
+Suggested response order:
+
+1. preserve enough evidence to review the situation;
+2. hide or lock the content if immediate harm may continue;
+3. confirm the applicable community rule;
+4. decide whether to restore, archive, or keep it hidden;
+5. communicate the outcome through your organization's approved channel;
+6. suspend the account only when the issue applies across the organization.
+
+## 9. Oversee Introduction requests
+
+Use **Admin -> Requests** to filter Introductions by status, source, and Space.
+
+For a manual Introduction:
+
+1. make sure you personally have access to the source Space;
+2. confirm that both people are current participants with complete Profiles;
+3. choose who is asking and who they should meet;
+4. enter the purpose, a clear note, and a suggested first message;
+5. review the request before sending.
+
+An Introduction does not grant access to another Space. Contact details are revealed only to the two participants after acceptance. Do not disclose either person's contact details to someone else or bypass their consent.
+
+Pending requests can become accepted, declined, or expired. WaveSparks does not provide in-product chat, calendar booking, or meeting management after acceptance.
+
+<!-- pagebreak -->
+
+## 10. Oversee Matching without over-tuning it
 
 ![Matching management](../assets/manuals/admin-matches.png)
 
-Matching runs independently within each Space. A candidate must be connected, have active Space access, have a complete Profile and Space intent, and be opted in. An `ended` Event continues matching; an `archived` Event stops.
+Matching runs separately inside each Space. Eligible candidates need a connected account, active Space access, a complete Profile, a complete Space intent, and Matching opt-in.
 
-The Admin interface can:
+In **Admin -> Matches**, you can:
 
-- review Strong/Good matches and each Match type;
-- create or update Match types, with no more than 12 enabled types;
-- configure direction, minimum score, and six weights that total 100;
-- trigger a full refresh;
-- review anonymous Helpful/Not relevant feedback and recent runs.
+- review Strong and Good matches by Match type;
+- review anonymous Helpful or Not relevant feedback;
+- review recent Matching runs;
+- create or adjust Match types;
+- change direction, minimum score, and weighting;
+- start a full refresh.
 
-Record the current configuration before changing it and validate changes in development or with isolated data first. After a production refresh, sample across Spaces, match types, Mentor gates, hidden items, and dismissed items. Fit index is a measure of match relevance, not a success probability or reputation score.
+Treat the fit index as a relevance signal, not a success probability, ranking of personal value, or reputation score.
 
-## 8. System architecture and systems of record
+Before changing settings:
 
-| Area | System of record | Notes |
-| --- | --- | --- |
-| Code and deployment | GitHub + Vercel | There is currently no GitHub Actions gate; delivery primarily depends on Vercel Git integration and manual checks |
-| Identity, credentials, Sessions, identity invitations | Clerk | Clerk Organizations are not used |
-| Organization, roles, invitation authorization, Spaces, content, matching | Neon/Postgres | Sole authority for application authorization |
-| Standard product email | Resend | Invitation email does not use Resend |
-| Avatars, logos, post media | Vercel Blob | Avatars/logos are public; post media is private |
-| Semantic embeddings | OpenAI | `text-embedding-3-large`, 1,024 dimensions; failures use a deterministic local fallback |
+1. write down the current configuration;
+2. define the problem you are trying to solve;
+3. change as little as possible;
+4. run the refresh at a low-activity time;
+5. sample results across different Member types and Spaces;
+6. watch feedback before making another change.
 
-The application region is fixed to `sin1` in `vercel.json`. The Neon region should be selected nearby, but the repository cannot prove which region is actually selected in the vendor console.
+No more than 12 Match types can be enabled. The six weights for a Match type must total 100. An Ended Event continues matching; an Archived Event does not.
 
-## 9. Environment variable management
+## 11. Use Overview and Analytics for decisions
 
-| Variable | Purpose | Production requirement |
-| --- | --- | --- |
-| `NEXT_PUBLIC_APP_URL` | Canonical application URL and invitation return target | HTTPS community application domain, not the marketing site |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Browser-side Clerk key | Starts with `pk_live_` |
-| `CLERK_SECRET_KEY` | Server-side Clerk key | Secret; never expose publicly |
-| `CLERK_JWT_KEY` | Additional Clerk JWT verification | Configure for the deployment architecture |
-| `CLERK_WEBHOOK_SIGNING_SECRET` | Webhook signature verification | Starts with `whsec_` |
-| `NEXT_PUBLIC_CLERK_*_URL` | Sign-in and sign-up paths | `/org/wavesparks/...` or an HTTPS URL |
-| `DATABASE_URL` | Neon Postgres connection | Not localhost; isolated by environment |
-| `SPACE_SCOPED_READS_ENABLED` | Space-isolation switch | Must explicitly be `true`; otherwise the application fails closed |
-| `OPENAI_API_KEY` | Matching embeddings | Secret |
-| `RESEND_API_KEY` | Product notification email | Domain-scoped Sending access |
-| `RESEND_FROM_EMAIL` | Sender address | Must use a verified domain |
-| `CRON_SECRET` | Cron Bearer authentication | Random; at least 32 characters recommended |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob | Secret; media upload is unavailable if absent |
-| `WAVESPARK_ADMIN_EMAILS` | Bootstrap target email addresses | The current first-Admin flow has a P0; do not treat these as usable accounts before remediation |
-| `E2E_CLERK_*` | Clerk E2E test accounts | Not equivalent to the local E2E bypass |
+Overview provides a quick view of connected accounts, complete Profiles, accepted Introductions, weekly posters, and recent activity. Analytics provides basic account, Profile, Introduction, teams-formed, and engagement trends.
 
-Never set `E2E_LOCAL_AUTH_ENABLED` or `E2E_LOCAL_AUTH_SECRET` in production. Development, Preview, and Production must use separate Clerk, Neon, and other secrets.
+Use these pages to answer practical questions:
 
-A Vercel environment-variable change affects only later Deployments. Redeploy after every change, then verify that the running instance uses the new value. Never place real values in Git, README files, PDFs, terminal recordings, or pull requests.
+- Are invitees connecting successfully?
+- Are Members completing Profiles?
+- Are Introductions being accepted?
+- Is activity concentrated in one Space?
+- Did participation change after an Event or communication?
 
-## 10. Release and database migration runbook
+These numbers are operational snapshots. They are not a complete business-intelligence system and should not be used alone for performance evaluation.
 
-### 10.1 Before release
+## 12. A simple operating rhythm
 
-1. Resolve the P0/P1 blockers in Section 2 and complete code review.
-2. Confirm the Git branch, target Vercel Project, and Production Domain.
-3. Establish a recoverable point or branch in Neon, and record its time and owner.
-4. Verify that Vercel Production environment variables are complete and contain no Preview or Development credentials.
-5. Run the following locally or in controlled CI:
+### Daily during an active Event
 
-```bash
-pnpm install --frozen-lockfile
-pnpm env:audit
-pnpm readiness:prod -- --env-only
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-```
-
-`env:audit` requires the development database name to be `wavespark_dev`, requires Clerk test keys in development and live keys in production, and verifies that Development and Production do not point to the same database.
-
-### 10.2 Migration
-
-Start with a dry run:
-
-```bash
-pnpm db:migrate -- --environment=production
-```
-
-After confirming the displayed host, database, and recovery point, an authorized operator runs:
-
-```bash
-pnpm db:migrate -- --environment=production --apply --confirm-production
-pnpm readiness:prod
-```
-
-Migration creates the `vector` extension and applies Drizzle migrations. A Production write requires both `--apply` and `--confirm-production`. The full Readiness check also audits exactly one Main Space per organization, duplicate and orphaned relationships, and the integrity of Space-scoped data.
-
-### 10.3 Deployment and verification
-
-1. Allow Vercel to create a Preview Deployment.
-2. Test sign-in, Space boundaries, and critical features using isolated Preview data. Preview must not connect to the Production `DATABASE_URL`.
-3. Deploy or Promote to Production.
-4. Check the home page, Admin interface, real Clerk sign-in, and invited-user acceptance flow.
-5. Sample Feed, People, Profile, media, Introduction, and Matching.
-6. Inspect Vercel Runtime Logs for 4xx/5xx, webhook, email, and Blob errors.
-7. Check both Cron paths and their latest results.
-
-Rolling back the application does not roll back the Neon schema. For releases containing incompatible database changes, use backward-compatible expansion/migration, deploy schema before code, verify, and remove old fields only afterward. Never treat Vercel Rollback as database recovery.
-
-## 11. Vercel operations and maintenance
-
-### 11.1 Current responsibilities
-
-- Host the Next.js 16 application in region `sin1`;
-- Manage Production, Preview, and Development environment variables;
-- Execute Cron Jobs;
-- Provide Runtime Logs and Observability;
-- Host Vercel Blob.
-
-Cron schedules use UTC:
-
-- `0 8 * * *` -> `/api/internal/matches/recompute`, 16:00 Singapore time;
-- `30 8 * * *` -> `/api/internal/post-media/cleanup`, 16:30 Singapore time.
-
-Both use `CRON_SECRET` Bearer authentication and should execute only in Production.
-
-### 11.2 Daily checks
-
-- Deployments: confirm that Production points to the expected commit and the build succeeded.
-- Runtime Logs: filter by `requestPath` to inspect Cron, webhook, email, Blob, and 5xx activity.
-- Cron Jobs: review recent HTTP status codes, duration, and failures.
-- Usage/Spend: review Functions, bandwidth, Blob storage, and request volume.
-- Alerts: enable appropriate 5xx, usage, and Spend Management alerts.
-- Observability: configure a Log Drain according to retention requirements; the current repository has no persistent alerting implementation.
-
-### 11.3 Environment variables and secret rotation
-
-Use this general sequence:
-
-1. Create a new secret or key at the third-party provider, leaving the old value temporarily valid.
-2. Update the correct Environment scope in Vercel.
-3. Redeploy.
-4. Confirm with real requests and logs that the new value is active.
-5. Revoke the old value and verify again.
-
-Do not update Vercel and wait for existing instances to change automatically. Never place a sensitive secret in a `NEXT_PUBLIC_*` variable.
-
-### 11.4 Rollback
-
-Use Vercel to Rollback to or Promote a known-good Deployment, but always:
-
-- inspect the environment-variable version captured by that Deployment;
-- confirm compatibility with the current Neon schema;
-- check Cron Jobs independently after rollback;
-- record incident time, commit, impact, and recovery outcome.
-
-Official documentation:
-
-- https://vercel.com/docs/environment-variables
-- https://vercel.com/docs/environment-variables/rotating-secrets
-- https://vercel.com/docs/cron-jobs/manage-cron-jobs
-- https://vercel.com/docs/logs/runtime
-- https://vercel.com/docs/deployments/rollback-production-deployment
-- https://vercel.com/docs/alerts
-- https://vercel.com/docs/spend-management
-- https://vercel.com/docs/regions
-- https://vercel.com/docs/vercel-blob
-
-## 12. Clerk operations and maintenance
-
-### 12.1 Current boundary
-
-Clerk manages Users, verified email addresses, credentials, Sessions, and Application Invitations. WaveSparks does not use Clerk Organizations; organizations, roles, memberships, and Space entitlements are stored in Neon.
-
-Normal invitations must originate in WaveSparks Admin. Creating an Invitation directly in Clerk Dashboard establishes identity only and does not create the local authorization chain.
-
-Webhook endpoint: `/api/webhooks/clerk`. Subscribe to:
-
-- `user.created`;
-- `user.updated`;
-- `user.deleted`.
-
-The webhook verifies signatures and deduplicates by `svix-id`. Created/Updated only synchronize an already-bound identity. Deleted anonymizes the local user. Clerk Organization events never grant permissions.
-
-### 12.2 Initial configuration
-
-- Use Clerk live keys in Production and keep the instance separate from Development test keys.
-- Configure the Production domain, DNS, and allowed Redirect URLs.
-- Keep Restricted sign-up enabled so sign-up opens only in a valid invitation context.
-- Create a public HTTPS webhook endpoint and select the three User events.
-- Store the Signing Secret in Vercel Production and Redeploy.
-- Use a test account to verify invitation, acceptance, update, deletion, and failed-event replay.
-- Do not enable Clerk Organization selection for this project; retain the application's own organization model.
-
-### 12.3 Daily operations and incident response
-
-- Invitation not received: inspect Clerk Invitations, Application Logs, the destination address, and service status.
-- Acceptance failure: verify Invitation state, seven-day validity, verified email address, and Clerk User ID binding.
-- Webhook failure: inspect Attempts, response status, and matching Vercel logs; fix the cause and Replay.
-- Identity compromise: suspend in WaveSparks and revoke Sessions or block the user in Clerk.
-- Deletion not synchronized: confirm delivery of `user.deleted` and the correct signature secret, then inspect local anonymization.
-
-Webhooks are asynchronous and eventually consistent. Keep the handler idempotent; never treat it as an immediate transaction inside a user request.
-
-### 12.4 Zero-downtime rotation
-
-Clerk Secret Key:
-
-1. Create a second active key.
-2. Update Vercel Production and Redeploy.
-3. Confirm the new key through Clerk last-used data or Application Logs and a real request.
-4. Delete the old key.
-
-Webhook Secret:
-
-1. Create a new webhook endpoint and Secret.
-2. Update Vercel and Redeploy.
-3. Send a test event and verify signature handling and deduplication.
-4. Delete the old endpoint.
-
-Official documentation:
-
-- https://clerk.com/docs/guides/development/deployment/production
-- https://clerk.com/docs/guides/secure/rotate-api-keys
-- https://clerk.com/docs/guides/users/inviting
-- https://clerk.com/docs/guides/secure/restricting-access
-- https://clerk.com/docs/guides/development/webhooks/overview
-- https://clerk.com/docs/guides/development/webhooks/syncing
-- https://clerk.com/docs/guides/dashboard/logs/application-logs
-- https://clerk.com/docs/guides/secure/session-options
-
-## 13. Neon operations and maintenance
-
-### 13.1 Current boundary
-
-The codebase reads only `DATABASE_URL`. Regular queries use the Neon HTTP driver; transactions and migrations use a single `postgres-js` connection. Migration requires the `vector` extension.
-
-Runtime and Migration currently share one database credential; least-privilege roles have not been separated. The repository contains no automation for Neon Branches, Snapshots, recovery, or alerting.
-
-### 13.2 Connection selection
-
-Prefer a pooled endpoint containing `-pooler` for serverless runtime traffic to reduce concurrent connection pressure. Use a direct endpoint for migrations, `pg_dump`, or tools that require direct-connection semantics. Before changing the connection, review current Neon guidance and the project's connection mode.
-
-### 13.3 Migration, branching, and recovery
-
-- Create a point-in-time branch or snapshot before every Production migration, and record the recovery point.
-- Validate schema diff, Migration, and application compatibility on an isolated Branch.
-- Run a recovery drill on an isolated Branch every quarter and record RTO/RPO.
-- Configure the Restore window for the plan; enable protection and Scheduled snapshots for important Production branches where available.
-- Preview databases must remain isolated and must never reuse the Production `DATABASE_URL`.
-- A Vercel application rollback is not a substitute for Neon PITR.
-
-For recovery, first freeze writes and record the target time. Validate the data and application on an isolated Branch before choosing whether to switch the connection or apply a forward fix. Irreversible data changes require joint approval from the database owner and business owner.
-
-### 13.4 Daily monitoring
-
-Review:
-
-- CPU, RAM, database size, and Compute active time;
-- Client/Server connections and Pooler metrics;
-- cache hit rate, query latency, deadlocks, and errors;
-- Branch and Storage growth and the Restore window;
-- latency between the Vercel and Neon regions;
-- Space data-integrity results from Readiness.
-
-### 13.5 Credential rotation
-
-Prefer creating a new Database role, copying only the necessary Grants, updating Vercel, Redeploying and verifying, and then revoking the old Role. A direct password reset immediately invalidates old connections. Runtime and migration currently share a credential; genuine least-privilege separation requires code and deployment configuration changes.
-
-Official documentation:
-
-- https://neon.com/docs/manage/projects
-- https://neon.com/docs/guides/branching-intro
-- https://neon.com/docs/connect/connection-pooling
-- https://neon.com/docs/guides/schema-diff
-- https://neon.com/docs/manage/endpoints/
-- https://neon.com/docs/changelog
-
-## 14. Resend operations and maintenance
-
-### 14.1 Current boundary
-
-Resend sends only standard product notifications, such as Introduction requested, accepted, or declined. Clerk sends member invitation email.
-
-The current implementation sends asynchronously through Next.js `after()`:
-
-- when Resend is not configured, the application only records `provider unconfigured`; in-app notifications continue;
-- a send failure is written only to the Vercel console;
-- there is no webhook, delivery/bounce/complaint status table, outbound audit, or Admin retry interface;
-- the lower-level sender supports an Idempotency key, but current product calls do not pass one.
-
-Therefore, Resend Dashboard and Logs are the primary sources for current email-delivery operations.
-
-### 14.2 Domain and API Key
-
-- Use a dedicated sending subdomain to isolate reputation.
-- Configure and verify SPF and DKIM.
-- Start DMARC with `p=none` for observation, then tighten it gradually according to organizational policy.
-- Give the API Key Domain-scoped Sending access, not Full access.
-- `RESEND_FROM_EMAIL` must belong to a verified domain.
-
-### 14.3 Daily checks and response
-
-Check `failed`, `bounced`, `complained`, `suppressed`, and recent volume each day:
-
-- Failed: correlate Vercel logs to identify configuration, quota, or destination problems.
-- Bounced: correct the address before resending; do not repeatedly send to a hard bounce.
-- Complained: stop sending and inspect the consent basis.
-- Suppressed: resolve the root cause before removing suppression; do not repeatedly override it.
-- Invitation not received: investigate Clerk, not Resend.
-
-If auditable delivery is required, add a Resend webhook: verify the signature, deduplicate by `svix-id`, tolerate at-least-once delivery and out-of-order events, and retain only the minimum required state. Product emails that may be retried should actually pass an Idempotency key. Resend's deduplication window is 24 hours.
-
-### 14.4 Zero-downtime rotation
-
-1. Create a new Domain-scoped Sending Key.
-2. Update the Vercel Production environment variable.
-3. Redeploy and send a controlled test notification.
-4. Verify the Key and message in Resend Logs.
-5. Delete the old Key and confirm delivery again.
-
-Official documentation:
-
-- https://resend.com/docs/dashboard/api-keys/introduction
-- https://resend.com/docs/knowledge-base/how-to-handle-api-keys
-- https://resend.com/docs/dashboard/domains/introduction
-- https://resend.com/docs/dashboard/domains/dmarc
-- https://resend.com/docs/dashboard/emails/introduction
-- https://resend.com/docs/dashboard/emails/email-suppressions
-- https://resend.com/docs/webhooks/introduction
-- https://resend.com/docs/webhooks/verify-webhooks-requests
-- https://resend.com/docs/dashboard/emails/idempotency-keys
-
-## 15. Vercel Blob and media maintenance
-
-- Avatar and Organization Logo use public Blob URLs; never upload sensitive images.
-- Post images and link previews use private Blob and are read through application authorization.
-- A post can contain up to four images, each no larger than 5 MB, in JPG, PNG, or WebP format; the longest edge is processed down to 2,400 px.
-- Media upload is unavailable when `BLOB_READ_WRITE_TOKEN` is absent; text features remain available.
-- A daily cleanup Cron handles orphaned media; failures currently exist only in Runtime Logs.
-
-Review Blob usage and Cleanup Cron daily. When content is taken down, confirm that both the database moderation state and Blob lifecycle satisfy the retention policy. Rotate the Token in this order: new value -> Vercel -> Redeploy -> upload/read verification -> revoke old value.
-
-## 16. Security incident and offboarding runbook
-
-### 16.1 Member account incident
-
-1. Globally Suspend the member in Members and record the reason.
-2. If identity compromise is suspected, revoke all Sessions or block the user in Clerk.
-3. Inspect recent Admin, Runtime, and Application Logs. Because a complete application audit trail does not exist, correlate with an external incident ticket.
-4. Address affected Spaces, Invitations, content, and Introductions.
-5. Remove the Clerk and application restrictions separately only after recovery criteria are met.
-
-### 16.2 Administrator departure
-
-1. First confirm that at least one other administrator can sign in.
-2. Revoke Admin permission or deprovision the account in WaveSparks.
-3. Revoke Sessions or disable the identity in Clerk.
-4. Remove access from GitHub, Vercel, Neon, Resend, and Clerk consoles.
-5. Rotate any Secret the person may have accessed, and review recent Deployments, Exports, and changes.
-6. Record completion time and the second reviewer in the external audit record.
-
-### 16.3 User deletion
-
-After the Clerk `user.deleted` webhook succeeds, the local Profile and contact data are anonymized, the account is deactivated, related follows, saves, matches, and notifications are deleted, and pending Introductions expire. Historical posts and comments remain attributed to Former member.
-
-Explain the retention policy before deletion. If the Clerk identity is deleted while the webhook fails, local anonymization does not complete automatically; fix the failure and Replay the event.
-
-## 17. Recurring maintenance checklist
-
-### Daily
-
-- Vercel Production Deployment, 5xx responses, and Runtime Logs;
-- HTTP results and path logs for both Cron Jobs;
-- Clerk Invitation and webhook failures;
-- Resend failed, bounced, complained, and suppressed messages;
-- Neon errors, connection anomalies, and capacity anomalies;
-- pending Invitations, Introductions, and content operations queues.
+- Review new invitations and failed rows.
+- Check access questions and Profile-completion blockers.
+- Review urgent moderation needs.
+- Check pending Introduction requests.
+- Note any repeated issue that may require technical support.
 
 ### Weekly
 
-- Sample Space access isolation and `ended`/`archived` states.
-- Review member-import failures, Stale Profiles, Matching runs, and feedback.
-- Review Blob, Functions, Database, and Email usage.
-- Reconcile the Admin list and third-party console access lists.
+- Review Member, Mentor, and Admin permissions.
+- Review Event participant lists and lifecycle states.
+- Sample Posts, Matches, and feedback.
+- Review Profiles needing attention.
+- Check Overview and Analytics trends.
+- Follow up on outstanding support cases.
 
 ### Monthly
 
-- Run the Production Readiness data audit.
-- Review dependency updates, security advisories, alerts, and Spend.
-- Test invited sign-up, webhook, email, media, and critical Matching paths.
-- Remove no-longer-needed Preview Deployments, Branches, and exported files.
+- Confirm organization details and invitation guidance are current.
+- Review inactive or departed accounts and remove unnecessary access.
+- Review who still needs Administrator permission.
+- Review Featured Profiles and content.
+- Delete unneeded local exports according to policy.
+- Meet the technical owner to review recurring service issues.
 
-### Quarterly
+### Before and after every Event
 
-- Run an isolated Neon recovery drill.
-- Rehearse rotation of Clerk, Resend, Blob, Cron, and other Secrets.
-- Run tabletop exercises for Admin departure and security incidents.
-- Review RTO/RPO, data retention, and vendor plan limits.
+Before launch, confirm content, participants, lifecycle, Matching, dates, and test access. After the Event, decide whether it should remain Ended or become Archived, then decide which participants should be added to Main.
 
-## 18. Troubleshooting quick reference
+## 13. Troubleshooting for managers
 
-| Symptom | Check first |
+![Admin support decision flow](../assets/manuals/admin-support-flow-en.png)
+
+| Symptom | What you can check in the Admin interface |
 | --- | --- |
-| Bootstrap Admin cannot sign in | Current P0 first-Admin connection gap; do not use an email fallback, deploy the supported fix first |
-| Connected user sees only My Spaces | Verify an `active` entitlement for the target Space |
-| Event participant cannot see Main | Expected behavior; explicitly Add to Main |
-| User can still post in an Ended Event | Current design; Archive the Event to stop access |
-| Admin is absent from People/Matching | Verify that the Admin is explicitly added to that Space |
-| User can read but cannot interact | Check all seven Profile completion requirements |
-| No matches | Check Profile, Space intent, opt-in, configuration, candidate count, and lifecycle |
-| Invitation not received | Check Clerk Invitation/Application Logs, not Resend |
-| Product notification not received | Check in-app notification, Resend Logs, Vercel Runtime Logs, and target Space access |
-| Webhook does not synchronize | Check Clerk Attempts/Replay, signing Secret, Vercel logs, and the idempotency record |
-| Media upload fails | Check Blob Token, size/type, usage, and Runtime Logs |
-| Cron fails | Check Vercel Cron, `CRON_SECRET`, request-path logs, and database/OpenAI/Blob dependencies |
-| Database errors remain after application rollback | Verify old-code compatibility with the current Neon schema; use PITR or a forward fix when necessary |
+| Invitation was not received | Confirm the email, check invitation status, then resend once; ask the recipient to check spam |
+| Invitation expired | Send a new invitation; the old link cannot be reused |
+| Connected person sees only My Spaces | Confirm Active access for the intended Space |
+| Event participant cannot see Main | This is expected; explicitly use Add to Main Community |
+| Person can read but cannot interact | Ask them to complete all seven required Profile items |
+| Admin is absent from People or Matches | Add that Admin as a participant in the Space |
+| Approved Mentor is not discoverable | Check account connection, Approved status, active Space access, Mentor opt-in, and the `mentor_match` offer |
+| No Matches appear | Check Profile, Space intent, opt-in, candidate count, Match settings, and Event lifecycle |
+| Members can still post in an Ended Event | This is expected; Archive the Event to stop access |
+| Content should stop receiving replies | Lock comments, hide it, or archive it as appropriate |
+| A metric looks wrong | Confirm filters and timing; compare with the underlying Members, Requests, or Posts list |
 
-## 19. Release acceptance checklist
+### When to contact the technical owner
 
-- The first Admin is connected through the supported invitation and binding flow; the P0 is closed by code and tests.
-- Email-authorized Route Handlers and the Preview Accounts P1 are remediated.
-- Development, Preview, and Production use completely separate Clerk, Neon, Resend, and Blob resources.
-- `SPACE_SCOPED_READS_ENABLED=true`, and no E2E bypass exists in Production.
-- Environment audit, Production Readiness, typecheck, lint, tests, and build all pass.
-- A verifiable recovery point exists before Migration, and the post-Migration data audit passes.
-- Clerk live keys, Restricted sign-up, Redirect configuration, and all three User webhooks are correct.
-- The Resend domain passes SPF/DKIM, and the Sending Key has minimum permissions.
-- Both Vercel Cron Jobs, Runtime Logs, Alerts, and Spend controls have been reviewed.
-- Event-only, Main-only, multi-Event, Admin, Mentor, Suspended, and Archived scenarios pass.
-- Feed, People, Posts, Notifications, Introductions, and Matches show no cross-Space leakage.
-- Vercel rollback and Neon restore have each been rehearsed independently.
-- The administrator, console Owner, and emergency-contact lists have been reviewed by two people.
+| Situation | Information to provide |
+| --- | --- |
+| No one can sign in, or sign-in repeatedly fails | Affected emails, time, browser, screenshot, and whether all users are affected |
+| Invitations repeatedly fail after a correct resend | Recipient email, invitation status, time, and screenshot |
+| A saved setting or access change does not take effect | Admin action, person or Space, expected result, actual result, and time |
+| Pages show errors, fail to load, or time out | Page address, action just performed, time, screenshot, and number of affected users |
+| Product notifications repeatedly do not arrive | Recipient, notification type, Space, approximate time, and whether the in-app notification exists |
+| Data appears missing, duplicated, or visible in the wrong Space | Exact record, affected users, Space, screenshot, and when it was first noticed |
+| A security or privacy incident is suspected | Suspend access if safe, preserve evidence, record time and scope, and escalate immediately |
+
+Do not share passwords, invitation links, exports, or service credentials in a support message. Do not attempt command-line, database, deployment, or service-console changes unless the technical owner has explicitly assigned and trained you for that work.
+
+## 14. Manager checklists
+
+### New Member
+
+- Correct email and name entered.
+- Correct Member or Administrator permission selected.
+- Mentor designation reviewed independently.
+- Correct initial Space and access state selected.
+- Invitation status checked.
+- Profile-completion guidance sent.
+
+### Event launch
+
+- Event name, description, tags, and dates reviewed.
+- Event remains Draft until setup is complete.
+- Participant list and access reviewed.
+- Admin participants added where needed.
+- Matching choice and settings reviewed.
+- Real Member access tested.
+- Event changed to Upcoming or Active.
+- Support contact communicated.
+
+### Event close
+
+- Decision made between Ended and Archived.
+- Members understand whether interaction remains available.
+- Selected participants added to Main explicitly.
+- Outstanding Introductions and moderation cases reviewed.
+- Analytics snapshot recorded if required.
+
+### Admin handover
+
+- Another authorized Admin is active.
+- Organization and Event status explained.
+- Open invitations, requests, moderation cases, and support issues handed over.
+- Local exports transferred or deleted according to policy.
+- Technical owner informed of the handover.
+
+WaveSparks works best when access decisions are deliberate, Events are tested before launch, and Members receive clear next-step guidance. For technical operation and maintenance, use the project `README.md` with the technical owner.

@@ -1,299 +1,262 @@
-# WaveSparks Community Mentor 使用手册
+# WaveSparks Community Mentor 快速上手手册
 
-版本：1.0
-审计基线：2026-07-29 代码与当前界面
-适用角色：已由组织批准的 WaveSparks Community Mentor
+版本：1.1 | 更新日期：2026 年 7 月 29 日 | 适用对象：由组织批准的 Mentor
 
-> Mentor 是 Member 身份上的独立认证状态，不是 Admin 角色。除本手册特别说明外，Mentor 也遵循 Member 的访问、Profile、内容和隐私规则。
+这份手册会带你从收到邀请邮件开始，一步步完成设置，并处理第一次辅导请求。重点是告诉你接下来该做什么。
 
-## 1. Mentor 定位与完整旅程
+> Mentor 同时也是 Member。Mentor 资格会增加辅导相关功能，但不会让你自动成为 Admin，也不会让你自动进入所有 Space。
 
-WaveSparks Mentor 是由组织批准、在获授权 Space 内参与社区互动、展示专业资料、进入 Mentor matching 并接收 Mentoring introduction 的成员。
+## 前 20 分钟完成这些事
 
-平台覆盖发现、匹配、请求、同意和联系方式交换；实际辅导安排、沟通、会议记录、目标跟进和成果评估在外部工具中完成。
+第一次加入时，按顺序完成：
 
-典型生命周期：
+1. 在 7 天内打开邀请邮件。
+2. 使用收到邀请的同一个邮箱注册或登录。
+3. 确认账号已连接，并能看到预期的 Space。
+4. 完成 Member Profile 的 7 个必填项。
+5. 确认 Mentor 状态为 Approved。
+6. 填写 Mentor 主题、经验、可提供的帮助和时间安排。
+7. 开启 Accept introductions，并在 Offering 中加入 Mentor match。
+8. 在每个希望获得推荐的 Space 中设置匹配意向。
 
-1. Admin 创建或维护成员记录，并授予 `approved` Mentor 状态。
-2. Mentor 接受 7 天有效的邀请，用对应已验证邮箱连接账号。
-3. 完成 Member Profile 及 Mentor 专属资料。
-4. 开启接受 Introduction，并把 `mentor_match` 加入 Offering。
-5. 在获授权 Space 中参与社区、发布内容、配置匹配 intent。
-6. 被成员发现，收到 General 或 Mentoring introduction。
-7. 在 Mentoring workspace 查看队列，在来源 Space 接受或拒绝。
-8. Accepted 后交换联系方式，在平台外开展辅导。
-9. 根据可用性暂停新请求，持续维护资料和历史记录。
-10. Mentor 资格撤销、Space 权限失效或账号删除时按规则退出。
+![从邀请到可以接收辅导请求](../assets/manuals/mentor-kickstart-flow-zh-CN.png)
 
-![Mentor 工作台](../assets/manuals/mentor-workspace.png)
+## 1. 打开邀请邮件
 
-## 2. 身份、权限与进入条件
+组织 Admin 会通过邮件邀请你加入 WaveSparks。
 
-系统把权限拆成三个维度：
+1. 在收件箱中找到邀请邮件。
+2. 在 7 天内打开邀请链接。
+3. 新用户选择注册；已有账号选择登录。
+4. 使用与邀请邮件完全一致的邮箱地址。
+5. 按提示完成邮箱验证。
+6. 继续进入组织页面。
 
-- 组织角色：`member` 或 `org_admin`；
-- Mentor 状态：`not_mentor`、`needs_review`、`approved`；
-- Space 权限：是否对具体 Space 拥有 `active` access。
+如果链接已过期、邮箱不正确或没有收到邮件，请联系组织 Admin。Admin 可以检查邀请状态并重新发送。
 
-只有 `mentor_status = approved` 且账号 `connected` 时，才具备全局 Mentor 能力。进入具体 Space 仍需该 Space 的 active 权限，且 Space 必须为 `upcoming`、`active` 或 `ended`。
+不要用另一个邮箱创建第二个账号。系统需要通过收到邀请且已经验证的邮箱，把你的登录身份与组织成员记录连接起来。
 
-Approved Mentor 不自动成为 Admin，不能因此创建 Event、邀请成员、审批账号、导出资料、查看全局分析或执行内容 moderation。Admin 若要像普通成员一样发帖或参与 Matching，也必须显式加入相应 Space。
+## 2. 确认账号、Mentor 状态和 Space 权限
 
-## 3. 获得 Mentor 身份与接受邀请
+你能做什么，取决于三个互相独立的条件：
 
-当前没有用户自助申请 Mentor 或自动认证流程。Admin 可在邀请成员时直接授予 Approved Mentor，或在成员连接后调整 Mentor 状态。
+- Member Profile：共享的个人资料必须完成，才能正常参与社区。
+- Mentor 状态：组织必须把你的状态设为 Approved，Mentor 功能才会出现。
+- Space 权限：Admin 必须把你加入每一个需要进入的 Main Space 或 Event。
 
-标准邀请流程：
+例如，即使你已经是 Approved Mentor，如果 Admin 没有把你加入某个 Event，你仍然看不到该 Event。
 
-1. Admin 创建受管成员，选择 Member 或 Approved Mentor，并分配至少一个 Space。
-2. Clerk 发送身份邀请；链接有效期为 7 天。
-3. 打开 `/org/[slug]/accept-invitation`，注册或登录。
-4. 使用与邀请完全一致且已验证的邮箱。
-5. 验证成功后，账号从 invited 变为 connected。
+登录后：
 
-新建邀请不能直接设为 `needs_review`。用户不能自行加入 Space、把自己升级为 Mentor，或通过修改前端字段绕过服务端资格检查。
+1. 打开 My Spaces。
+2. 检查 Main Space 和需要参加的 Event 是否出现。
+3. 打开一个 Space，确认其首页可以正常加载。
+4. 打开 Profile 设置，查看 Mentor 设置是否出现。
+5. 如果缺少 Space 或 Mentor 设置，请让 Admin 检查你的资格和权限。
 
-## 4. 完成 Profile 与 Mentor 专属资料
+Mentor 资格不会提供 Admin 控制权。除非另外具有 Admin 角色，否则你不能邀请成员、管理 Event、导出资料或处理社区内容。
 
-所有 Space 共用同一份全局 Profile。Profile complete 至少需要：
+## 3. 先完成 Member Profile
 
-- Preferred name；
-- Headline；
-- Bio；
-- Current focus；
-- 至少一种 Looking for 类型；
-- 至少一个 Skill tag；
-- Introduction email。
+Member Profile 是全局资料：在所有可访问的 Space 中使用同一份资料。
 
-Mentor 还应维护：
+请完成以下 7 项：
 
-- Mentoring topics；
-- 服务过的创业阶段；
-- Functional strengths；
-- Mentoring offers；
-- Availability；
-- Max mentees（0–100）；
-- Mentorship preferences；
-- 是否接受 Introduction；
-- 是否在接受后共享 WhatsApp。
+1. Preferred name（常用姓名）。
+2. Headline（个人标题）。
+3. Bio（个人简介）。
+4. Current focus（当前重点）。
+5. 至少一种 Looking for 类型。
+6. 至少一个 Skill tag。
+7. Introduction email（介绍联系邮箱）。
 
-![Mentor Profile 设置](../assets/manuals/mentor-profile-settings.png)
+资料应简短、具体，让别人快速看懂你的经验、当前重点和希望认识的人。
 
-Mentor 专属字段只有在服务端确认 Approved 状态后才会保存。Profile 中的 Introduction email 是介绍联系方式，不会改变 Clerk 登录邮箱。
+Introduction email 只会在你接受 Introduction 后显示给另一方。修改它不会改变你的登录邮箱。
 
-## 5. 开启或暂停新的 Mentoring 请求
+在这 7 项完成前，你可以浏览部分页面，但 People、Matches、发帖、评论、关注、收藏和发起 Introduction 等功能会受到限制。
 
-要实际接收新的 Mentoring 请求，需要同时满足：
+## 4. 填写 Mentor 资料
 
-- Mentor 状态为 approved；
-- 账号为 connected；
-- `introOptIn` 已开启；
-- 全局 Offering 包含 `mentor_match`；
-- 目标 Space 权限 active；
-- Profile 和该 Space 的 Matching intent 满足相应入口要求。
+Mentor 状态为 Approved 后，在 Profile 设置中完成 Mentor 部分。
 
-暂停方式：
+填写或检查：
 
-- 关闭“接受 Introduction”：暂停所有新的 General 和 Mentoring introduction。
-- 从 Offering 移除 `mentor_match`：暂停新的 Mentor matching 和直接 Mentoring request，但仍可保留普通 Introduction。
+- Mentoring topics（辅导主题）。
+- 可以服务的创业阶段。
+- Functional strengths（专业强项）。
+- 可以提供的辅导帮助。
+- Availability（可用时间）。
+- Max mentees（最多 0 到 100 人）。
+- Mentorship preferences（辅导偏好）。
+- 是否在接受 Introduction 后共享 WhatsApp。
 
-`maxMentees` 和 Availability 当前用于资料展示及匹配评分，不是系统强制容量上限。没有单独的休假、满员或候补名单状态；达到个人上限时请手动暂停 Offering 或 Introduction。
+尽量写得具体。例如，“帮助早期 B2B 创始人做销售访谈”比“商业建议”更有用。
 
-## 6. 在 Space 中参与社区
+如果 Mentor 字段无法保存，先请 Admin 确认 Mentor 状态是否为 Approved。当前没有自助申请或自助批准 Mentor 的按钮。
 
-My Spaces 显示 Main Space、Your events 和 Past events。进入具体 Space 后，Mentor 和 Member 一样可以：
+Max mentees 和 Availability 会帮助别人理解你的可用容量，也可能影响匹配，但达到上限时系统不会自动停止新请求。
 
-- 浏览 Feed、People、Matches、Knowledge、Opportunities、Introductions；
-- 发布 General update、Question、Resource、Announcement、Opportunity、Looking for cofounder、Looking for mentor；
-- 评论与 `@mention`；
-- 关注成员、收藏帖子；
-- 搜索成员，查看资料；
-- 发起 General introduction。
+## 5. 开启辅导请求
 
-Approved Mentor 发布 Opportunity 时可以使用 Mentor 来源标签。People 页面会展示 Approved Mentor 标识和 Mentor 专业资料。
+如果希望收到新的 Mentoring 请求，需要开启两个全局设置：
 
-内容限制与 Member 相同：标题最多 160 字符、正文最多 10,000 字符、评论最多 2,000 字符，最多 4 张 JPG/PNG/WebP 图片且每张 5MB。
+1. 开启 Accept introductions。
+2. 在 Offering 中加入 Mentor match。
 
-当前不能自助编辑/删除帖子或评论，也没有点赞、举报、屏蔽、私信和独立 Project 管理。内容处理由 Admin 完成。
+两个设置作用不同：
 
-## 7. Mentor Matching
+- Accept introductions 控制是否接收新的 General 和 Mentoring Introduction。
+- Mentor match 控制是否参与 Mentor 匹配并接收直接 Mentoring 请求。
 
-匹配按 Space 独立。Mentor 进入某个 Space 的 Matches 页面后，需要填写：
+如果要暂停所有新 Introduction，请关闭 Accept introductions。
 
-- Current goal；
-- Looking for；
-- What I can offer；
-- Include me in match suggestions。
+如果只想暂停 Mentor 匹配和 Mentoring 请求，请从 Offering 中移除 Mentor match；普通 General Introduction 仍可保持开启。
 
-至少要有 Current goal，并在 Looking for 或 Offer 中填一项，intent 才完整。
+## 6. 在每个 Space 设置匹配意向
 
-![Mentor 匹配](../assets/manuals/mentor-matches.png)
+每个 Space 的 Matching 设置互相独立。在 Main Space 设置完成，并不会让你自动加入某个 Event 的匹配。
 
-作为 Mentor 匹配候选人通常还需：
+在每一个希望获得推荐的 Space 中：
 
-- Approved Mentor、账号 connected；
-- 当前 Space active；
-- 全局 Profile complete；
-- 当前 Space intent complete 并开启 Matching opt-in；
-- `introOptIn` 与 `mentor_match` Offering 开启；
-- Admin 已开启当前 Space 的匹配；
-- Space 未归档。
+1. 打开该 Space。
+2. 选择 Matches。
+3. 填写 Current goal。
+4. 在 Looking for 或 What I can offer 中至少填写一项。
+5. 开启 Include me in match suggestions。
+6. 查看产生的匹配建议。
 
-匹配卡的 1–100 Fit index 综合语义、Skills、创业阶段、Availability、工作方式、地点等因素。Mentor 的阶段经验、Availability 和 Capacity 会参与结果。分数不是成功率、公开信誉、服务质量或学员评分。
+Admin 还需要为该 Space 开启 Matching。
 
-可以标记 Helpful 或 Not relevant。Not relevant 会隐藏结果并保留 dismissal；当前反馈不是公开评价，也不会即时自动训练权重。
+匹配卡上的 1 到 100 Fit index 会综合资料、意向、技能、经验、可用性等信息。它只是发现合适联系人的辅助指标，不是成功概率、公开评分或服务质量分数。
 
-## 8. Mentoring Introduction
+有帮助时选择 Helpful；不合适时选择 Not relevant 并隐藏。这个反馈是私密的，不是对另一位成员的公开评价。
 
-### 8.1 请求来源
+## 7. 快速认识主要页面
 
-Mentoring 请求可以从：
+你最常用的页面包括：
 
-- Approved Mentor 的 People 详情页，选择 Mentoring；
-- `mentor_match` 类型的匹配卡。
+- My Spaces：Main Space、当前 Event 和可访问的历史 Event。
+- Feed：动态、问题、资源、公告和机会。
+- People：成员资料和 Approved Mentor 标识。
+- Matches：当前 Space 的匹配建议和 Introduction 操作。
+- Introductions：当前 Space 的请求。
+- Mentoring：汇总所有可访问 Space 中收到的 Mentoring 请求。
 
-从帖子作者发起的 Introduction 始终是 General，不能伪装成 Mentoring。
+完成 Member Profile 后，你可以像其他 Member 一样发帖、评论、提及成员、关注、收藏和发起 Introduction。
 
-服务端会重新确认双方在同一 Space、权限有效、资料完成、目标仍为 Approved Mentor、仍接受 Introduction 且仍提供 `mentor_match`。不能给自己发请求。
+不要在帖子或评论中写入客户或 Mentee 的保密信息。当前 Member 不能自行编辑或删除帖子、评论；需要修正或移除时请联系 Admin。
 
-同一组织内，同一对成员同时只能有一个 pending Introduction，不论方向、类型或 Space。
+<!-- pagebreak -->
 
-### 8.2 请求内容与状态
+## 8. 处理 Mentoring 请求
 
-请求人需要填写 Purpose、Note 和 Suggested opening message。状态为：
+请求可能来自你的 People 资料页或 Mentor match。由帖子作者页面发起的请求始终属于 General Introduction。
 
-- `pending`：等待 Mentor；
-- `accepted`：同意并交换联系信息；
-- `declined`：拒绝，不交换联系信息；
-- `expired`：资格、账号或访问条件失效等情况下由系统过期。
+![查看并处理辅导请求](../assets/manuals/mentor-request-flow-zh-CN.png)
 
-### 8.3 Mentoring workspace
+收到请求后：
 
-账号级工作台 `/org/[slug]/mentoring` 汇总当前仍可访问 Space 的 incoming Mentoring requests，可按 All、Pending、Accepted、Declined、Expired 筛选，最多读取近期 40 条。
+1. 打开通知或 Mentoring 工作台。
+2. 记下请求来自哪个 Space。
+3. 阅读 Purpose、Note 和建议的开场信息。
+4. 判断请求是否符合你的专长、时间和边界。
+5. 打开来源 Space 中的 Introductions。
+6. 选择 Accept 或 Decline。
 
-工作台只显示本人收到的 Mentoring 请求，不显示其他 Mentor 队列，也不是 Admin 看板。实际 Accept/Decline 操作在请求来源 Space 的 Introductions 页面完成。
+Mentoring 工作台会汇总你仍可访问的各个 Space 的 incoming requests。最终 Accept 或 Decline 要在来源 Space 完成，让平台再次确认双方仍有权限。
 
-### 8.4 接受或拒绝
+请求状态很简单：
 
-1. 打开工作台，确认请求来自哪个 Space。
-2. 阅读 Purpose、Note 和开场建议。
-3. 进入来源 Space 的 Introductions。
-4. 选择 Accept 或 Decline。
-5. Accepted 后双方看到 Introduction email；WhatsApp 仅在持有人选择“接受后共享”时展示。
-6. 使用双方同意的外部渠道安排首次沟通。
+- Pending：等待你决定。
+- Accepted：双方可以看到获准共享的联系方式。
+- Declined：请求结束，不交换联系方式。
+- Expired：在完成决定前，访问权限或资格发生变化。
 
-平台没有内置聊天、视频、Calendar 或会议室。接受仅代表同意建立联系，不会创建长期辅导关系记录，也不会授予新 Space 权限。
+Accepted 后，双方都可以看到对方的 Introduction email。只有资料所有者选择“接受后共享”时，WhatsApp 才会显示。
 
-## 9. 辅导后的工作方式
+## 9. 在 WaveSparks 之外继续辅导
 
-当前产品不保存以下工作：
+Accept 表示同意联系，并允许交换联系方式。它不会在平台内创建一套持续管理的辅导计划。
 
-- 会议排期、提醒或签到；
-- Mentee caseload 看板；
-- 辅导目标、行动项和进度；
-- 会议纪要或附件；
-- 完成/终止辅导关系状态；
-- 星级评分、Testimonial 或 outcome 数据。
+使用邮箱、获授权共享的 WhatsApp 或双方同意的其他工具：
 
-建议 Mentor 在外部渠道中明确首次沟通范围、时区、会议频率、隐私边界和是否继续合作。不要在公共帖子中发布 Mentee 的敏感信息。
+1. 发送简短的自我介绍。
+2. 确认第一次沟通的主题和预期结果。
+3. 对齐时区、形式和会议时间。
+4. 约定保密与沟通边界。
+5. 第一次沟通后，再决定是否以及如何继续。
 
-平台内 accepted/declined 历史会保留在账号级 Inbox；即使后来失去来源 Space 权限，部分历史仍可查看。Pending/expired 通常要求仍可访问来源 Space。
+WaveSparks 当前不提供站内聊天、视频会议、日历预约、会议纪要、目标与行动跟进、Mentee 管理、评分或辅导成果报告。
 
-## 10. 通知和邮件
+## 10. 持续更新你的可用性
 
-Mentoring 使用通用 Introduction 通知类型，主要包括 requested、accepted、declined。还可能收到 Post mention、Comment mention、Admin note、Manual introduction 和 Membership approved。
+建议每周完成一次：
 
-- 新请求通常由 Resend 发到 Mentor 的 Introduction email。
-- 接受或拒绝后通常向请求人发送邮件。
-- 发送前会重新检查账号和 Space 权限。
-- Resend 未配置时，站内通知仍保留，邮件跳过并记录日志。
-- 初始成员邀请由 Clerk 发送，不是 Resend。
+1. 检查 Mentoring 工作台中的 Pending 请求。
+2. 在来源 Space 中完成回复。
+3. 检查 Mentor 主题、Offering 和 Availability。
+4. 如果目标发生变化，更新相应 Space 的匹配意向。
+5. 达到个人容量时，暂停新的请求。
 
-当前没有通知偏好中心、Digest、推送、Mentoring 专属预约提醒或逾期跟进，也没有 Mentor 可见的邮件重试入口。
+Max mentees 只是参考信息，不是系统强制上限。需要自行移除 Mentor match 或关闭 Accept introductions。
 
-## 11. 数据、分析与导出
+## 11. 了解哪些变化会影响使用
 
-Mentor 当前没有个人分析仪表盘或自助导出。没有 Mentee 列表 CSV、Mentoring 请求 CSV、匹配记录导出或个人成效报告。
+如果 Mentor 资格被撤销：
 
-组织 Admin 可以导出全体成员 Profile 与联系方式，并查看 Mentor Offering。请只填写完成社区运营所需的数据，并遵循所在组织的隐私政策。
+- Approved Mentor 标识和 Mentor 资料停止显示。
+- 不再收到 Mentor 匹配。
+- Pending Mentoring 请求会过期。
+- Mentoring 工作台不再可用。
+- 如果 Space 权限仍有效，普通 Member 功能可以继续使用。
 
-## 12. 资格、权限和账号变化
+如果某个 Space 权限失效，你不能进入该 Space，也不能处理其中的 Pending 请求。Accepted 或 Declined 历史可能保留，但不会恢复访问权限。
 
-### 12.1 Mentor 资格被撤销
+如果账号被删除，个人资料会匿名化，Pending 请求会过期，已有帖子和评论会保留并显示为 Former member。删除账号或退出 Space 目前不是自助操作，请联系 Admin。
 
-- 不再显示 Approved Mentor 标识和专属资料；
-- 不再具备 Mentor matching 资格；
-- Pending incoming Mentoring requests 自动变为 expired；
-- Mentoring workspace 不可访问；
-- 已 accepted/declined 的历史记录不会因此删除；
-- 普通 Member 权限是否保留，取决于账号和各 Space access。
+## 12. 常见问题处理
 
-### 12.2 Space 权限失效
+### 邀请链接打不开
 
-不能继续访问该 Space 的 Feed、People、Matches 和 pending 请求。已接受或拒绝的记录可能保留在账号历史中，但不会恢复 Space 权限。
+检查链接是否在 7 天有效期内，并确认使用了收到邀请的邮箱。需要时请 Admin 重发。
 
-### 12.3 Clerk 身份被删除
+### 已登录但看不到某个 Event
 
-`user.deleted` Webhook 成功后，本地 Profile 和联系方式被匿名化，账号设为停用，Mentor 状态恢复为 `not_mentor`，关注、收藏、通知和匹配等关联数据删除，pending Introduction 过期。已发布帖子和评论保留，但作者显示 Former member。
+请 Admin 确认你是否对该 Event 拥有 active access。Mentor 资格本身不会授予 Space 权限。
 
-应用没有自助退出 Space、删除本地账号或下载个人数据的按钮；需要时联系 Admin，并确认 Clerk 和本地 Webhook 两侧都已完成。
+### 看不到或无法保存 Mentor 设置
 
-## 13. 隐私与职业边界
+请 Admin 确认 Mentor 状态为 Approved，并且账号已经 connected。
 
-- Profile 和互动只向当前 Space 的有效成员开放；公开社交链接会显示在资料中。
-- Introduction email 与获授权 WhatsApp 只在 accepted 后向参与双方展示；组织 Admin 仍可为运营查看。
-- 头像使用公开资源 URL；不要上传证件、客户资料或保密文件。
-- 在接受请求前，先核对 Purpose、边界和可用时间；需要拒绝时可直接 Decline。
-- 辅导沟通发生在外部工具，组织应另行确定保密、记录、紧急事件和行为准则流程。
-- 当前没有举报或屏蔽入口；出现不当行为时联系 Admin。
+### 别人无法向我发送 Mentoring 请求
 
-## 14. Mentor 当前不具备的能力
+逐项检查：Member Profile 已完成、Accept introductions 已开启、Offering 包含 Mentor match、目标 Space 权限有效，并且该 Space 已开启 Matching。
 
-- 自助申请、认证或续期 Mentor；
-- 自动获得 Admin 权限；
-- 创建、编辑或管理 Event；
-- 邀请成员或管理参与者；
-- 项目 CRUD 或项目管理；
-- Mentoring 日程、会话、进度、容量强制执行；
-- 平台内聊天、通话或 Calendar 集成；
-- Mentor 星级、公开评价、证书或积分；
-- 个人分析和 Mentor 数据导出；
-- 自助编辑/删除帖子、自助退出 Space 或删除本地账号。
+### 能看到请求但不能处理
 
-## 15. 常见问题
+进入请求的来源 Space，在其 Introductions 页面操作。如果来源 Space 无法打开，请联系 Admin。
 
-### 我已经是 Approved Mentor，为什么看不到某个 Event？
+### 已达到 Max mentees 但仍收到请求
 
-Mentor 状态是全局资格，Space access 是独立授权。请让 Admin 检查该 Event 的 active access 和 lifecycle。
+Max mentees 不是自动上限。请移除 Mentor match 或关闭 Accept introductions。
 
-### 为什么别人不能给我发 Mentoring 请求？
+### 需要举报不当行为或移除内容
 
-检查账号 connected、Profile complete、`introOptIn`、`mentor_match` Offering、当前 Space access 和 Space Matching 是否都有效。
+联系 Admin，并提供 Space 名称和足以定位内容的信息。除非同时拥有 Admin 角色，否则 Mentor 没有内容处理权限。
 
-### Max mentees 达到上限后会自动停止吗？
+## 13. 完成设置前最后检查
 
-不会。该值当前用于展示和评分。请手动移除 `mentor_match` 或关闭接受 Introduction。
+- 我使用正确且已验证的邀请邮箱完成了连接。
+- 我的账号状态为 connected。
+- Member Profile 的 7 个必填项已经完成。
+- Mentor 状态为 Approved。
+- Mentor 主题、经验、Offering 和 Availability 准确。
+- 希望接收新请求时，Accept introductions 已开启。
+- 希望接收 Mentoring 请求时，Offering 包含 Mentor match。
+- 我对每个需要使用的 Space 都有 active access。
+- 每个 Space 的匹配意向和 opt-in 都已单独设置。
+- 我知道 Accept 和 Decline 要在请求来源 Space 中完成。
+- 我知道会议安排和辅导记录会在 WaveSparks 之外继续。
 
-### 为什么只能在 Space 中 Accept/Decline？
-
-Mentoring workspace 是跨 Space 汇总视图，最终操作保留在来源 Space，以便重新验证双方权限和请求上下文。
-
-### 接受后在哪里安排会议？
-
-使用交换的邮箱或获授权 WhatsApp，在外部工具中安排。平台当前不提供日历或会话管理。
-
-### Mentor 可以处理不当帖子吗？
-
-只有同时具有 Admin 角色时才可 moderation。否则请把内容和 Space 信息交给 Admin。
-
-## 16. Mentor 快速自检清单
-
-- 我的账号已 connected，Mentor 状态为 approved。
-- 我对目标 Space 有 active access。
-- Member Profile 七项完成条件已满足。
-- Mentor topics、阶段、Strengths、Offering、Availability 和 Capacity 准确。
-- 我希望接单时开启 `introOptIn` 并提供 `mentor_match`。
-- 每个参与 Matching 的 Space 都单独填写 intent 并 opt-in。
-- 我会定期检查 Mentoring workspace 和来源 Space Inbox。
-- 我理解 Accepted 后的安排、记录和成果跟进在平台外完成。
-- 暂停接单时，我会关闭对应 Offering 或 Introduction。
+当 Member Profile 已完成、Mentor 状态为 Approved、目标 Space 可见，并且辅导与匹配设置符合你的当前可用性时，你就可以开始了。

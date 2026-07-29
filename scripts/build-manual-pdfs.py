@@ -104,8 +104,8 @@ ROLE_SPECS: dict[str, RoleSpec] = {
         language="zh-CN",
         source_name="member-guide.zh-CN.md",
         output_name="wavesparks-member-user-manual-zh-CN.pdf",
-        title="WaveSparks Community Member 使用手册",
-        subtitle="成员全生命周期与功能指南",
+        title="Member 快速上手手册",
+        subtitle="从邀请邮件到开始参与的完整路径",
         audience="Member",
         accent=CYAN,
         toc_title="目录",
@@ -120,8 +120,8 @@ ROLE_SPECS: dict[str, RoleSpec] = {
         language="zh-CN",
         source_name="mentor-guide.zh-CN.md",
         output_name="wavesparks-mentor-user-manual-zh-CN.pdf",
-        title="WaveSparks Community Mentor 使用手册",
-        subtitle="导师全生命周期与功能指南",
+        title="Mentor 快速上手手册",
+        subtitle="从邀请邮件到处理首次导师请求",
         audience="Mentor",
         accent=GOLD,
         toc_title="目录",
@@ -135,9 +135,9 @@ ROLE_SPECS: dict[str, RoleSpec] = {
         key="admin",
         language="zh-CN",
         source_name="admin-guide.zh-CN.md",
-        output_name="wavesparks-admin-operations-manual-zh-CN.pdf",
-        title="WaveSparks Community Admin 运维手册",
-        subtitle="社区管理、平台治理与基础设施维护",
+        output_name="wavesparks-admin-user-manual-zh-CN.pdf",
+        title="Admin 管理者手册",
+        subtitle="面向公司经理的社区管理与日常运营指南",
         audience="Admin",
         accent=PURPLE,
         toc_title="目录",
@@ -145,15 +145,15 @@ ROLE_SPECS: dict[str, RoleSpec] = {
         version_caption="版本",
         updated_caption="更新日期",
         page_caption="第 {number} 页",
-        manual_keyword="运维手册",
+        manual_keyword="管理者手册",
     ),
     "member-en": RoleSpec(
         key="member",
         language="en",
         source_name="member-guide.en.md",
         output_name="wavesparks-member-user-manual-en.pdf",
-        title="WaveSparks Community Member User Manual",
-        subtitle="Complete member lifecycle and feature guide",
+        title="WaveSparks Community Member Quick-start Kit",
+        subtitle="From invitation email to active participation",
         audience="Member",
         accent=CYAN,
         toc_title="Contents",
@@ -168,8 +168,8 @@ ROLE_SPECS: dict[str, RoleSpec] = {
         language="en",
         source_name="mentor-guide.en.md",
         output_name="wavesparks-mentor-user-manual-en.pdf",
-        title="WaveSparks Community Mentor User Manual",
-        subtitle="Complete mentor lifecycle and feature guide",
+        title="WaveSparks Community Mentor Quick-start Kit",
+        subtitle="From invitation email to the first mentoring request",
         audience="Mentor",
         accent=GOLD,
         toc_title="Contents",
@@ -183,9 +183,9 @@ ROLE_SPECS: dict[str, RoleSpec] = {
         key="admin",
         language="en",
         source_name="admin-guide.en.md",
-        output_name="wavesparks-admin-operations-manual-en.pdf",
-        title="WaveSparks Community Admin Operations Manual",
-        subtitle="Community administration, governance, and infrastructure maintenance",
+        output_name="wavesparks-admin-user-manual-en.pdf",
+        title="WaveSparks Community Admin Manager Guide",
+        subtitle="Community administration and day-to-day operations for company managers",
         audience="Admin",
         accent=PURPLE,
         toc_title="Contents",
@@ -193,7 +193,7 @@ ROLE_SPECS: dict[str, RoleSpec] = {
         version_caption="Version",
         updated_caption="Updated",
         page_caption="Page {number}",
-        manual_keyword="Operations manual",
+        manual_keyword="Manager guide",
     ),
 }
 
@@ -625,11 +625,13 @@ def _split_front_matter(text: str) -> tuple[dict[str, str], str]:
     return values, text[closing + 5 :]
 
 
-def _first_h1(text: str) -> str | None:
-    for line in text.splitlines():
-        match = re.match(r"^#\s+(.+?)\s*$", line)
+def _declared_version(text: str) -> str | None:
+    """Read the human-facing Version/版本 line used by the manuals."""
+
+    for line in text.splitlines()[:16]:
+        match = re.match(r"^(?:Version|版本)\s*[:：]\s*([^|\s]+)", line.strip())
         if match:
-            return _plain_markdown(match.group(1))
+            return match.group(1).strip()
     return None
 
 
@@ -1038,6 +1040,12 @@ def _parse_markdown(text: str, source_path: Path, context: BuildContext) -> list
             index += 1
             continue
 
+        if stripped in {"<!-- pagebreak -->", "<!-- page-break -->"}:
+            flush_paragraph()
+            story.append(PageBreak())
+            index += 1
+            continue
+
         # Ignore standalone HTML comments used as authoring notes.
         if stripped.startswith("<!--") and stripped.endswith("-->"):
             flush_paragraph()
@@ -1077,9 +1085,9 @@ def _metadata_from_source(
 ) -> BuildMetadata:
     return BuildMetadata(
         role=spec,
-        title=front_matter.get("title") or _first_h1(markdown) or spec.title,
+        title=front_matter.get("title") or spec.title,
         subtitle=front_matter.get("subtitle") or spec.subtitle,
-        version=front_matter.get("version") or "1.0",
+        version=front_matter.get("version") or _declared_version(markdown) or "1.0",
         build_date=front_matter.get("date") or build_date,
         source=source,
         author=front_matter.get("author") or "WaveSparks Community",

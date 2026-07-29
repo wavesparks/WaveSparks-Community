@@ -9,9 +9,11 @@ Wavesparks Community is a private, invitation-only community platform for founde
 
 | Audience | English edition | Simplified Chinese edition |
 | --- | --- | --- |
-| Member | [Lifecycle manual](docs/manuals/member-guide.en.md) / [PDF](output/pdf/wavesparks-member-user-manual-en.pdf) | [Lifecycle manual](docs/manuals/member-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-member-user-manual-zh-CN.pdf) |
-| Mentor | [Lifecycle manual](docs/manuals/mentor-guide.en.md) / [PDF](output/pdf/wavesparks-mentor-user-manual-en.pdf) | [Lifecycle manual](docs/manuals/mentor-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-mentor-user-manual-zh-CN.pdf) |
-| Admin | [Operations and infrastructure manual](docs/manuals/admin-guide.en.md) / [PDF](output/pdf/wavesparks-admin-operations-manual-en.pdf) | [Operations and infrastructure manual](docs/manuals/admin-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-admin-operations-manual-zh-CN.pdf) |
+| Member | [Quick-start kit](docs/manuals/member-guide.en.md) / [PDF](output/pdf/wavesparks-member-user-manual-en.pdf) | [Quick-start kit](docs/manuals/member-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-member-user-manual-zh-CN.pdf) |
+| Mentor | [Quick-start kit](docs/manuals/mentor-guide.en.md) / [PDF](output/pdf/wavesparks-mentor-user-manual-en.pdf) | [Quick-start kit](docs/manuals/mentor-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-mentor-user-manual-zh-CN.pdf) |
+| Admin | [Manager guide](docs/manuals/admin-guide.en.md) / [PDF](output/pdf/wavesparks-admin-user-manual-en.pdf) | [Manager guide](docs/manuals/admin-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-admin-user-manual-zh-CN.pdf) |
+
+The six role manuals are intentionally nontechnical. Member and Mentor editions begin with the invitation email and work forward as action-oriented kick-start kits. The Admin edition is written for a company manager who uses the Admin interface and performs simple configuration. Deployment, credentials, database recovery, vendor consoles, and technical incident response belong in this README and should be handled by the designated technical owner.
 
 Additional technical documentation:
 
@@ -19,10 +21,11 @@ Additional technical documentation:
 - [Admin lifecycle guide](docs/admin-lifecycle-guide.md)
 - [AI matching engine](docs/ai-matching-engine.md)
 
-The six PDFs are generated from their corresponding Markdown sources. After changing manual content or screenshots, run:
+The six PDFs are generated from their corresponding Markdown sources. Flowchart PNGs are generated separately so the same visual source can be used in both languages. After changing a manual, screenshot, or flowchart definition, run:
 
 ```bash
 python3 -m pip install -r requirements-docs.txt
+python3 scripts/build-manual-flowcharts.py
 python3 scripts/build-manual-pdfs.py
 ```
 
@@ -437,27 +440,339 @@ pnpm readiness:prod
 
 `env:audit` verifies that development and production do not share a database, that development Clerk keys are test keys, and that production Clerk keys are live keys. After migrations, the full readiness check performs a read-only Space audit: every organization must have exactly one active Main Community; Space relationships must contain no duplicates or cross-organization references; and posts, follows, matches, feedback, introductions, and content notifications must not have a null `space_id`.
 
-## Vercel deployment and operations
+## Production operations and maintenance
 
-Recommended workflow:
+This section is the technical runbook. It is intended for the engineer or service owner responsible for GitHub, Vercel, Clerk, Neon, Resend, OpenAI, DNS, and incident response. Company managers should use the Admin Manager Guide instead of vendor consoles or command-line procedures. The runbook reflects the repository and provider documentation reviewed on July 29, 2026; recheck provider documentation before a high-impact production change.
 
-1. Configure Preview and Production Vercel environments separately. Never share Neon or Clerk resources between development and production.
-2. Confirm that `NEXT_PUBLIC_APP_URL` is the community app domain. Clerk application home, sign-in and sign-up redirects, and invitation callbacks must also target that domain.
-3. Use live keys in the Clerk production instance, configure custom-domain DNS and the `/api/webhooks/clerk` endpoint, and keep `force_organization_selection=false`.
-4. Enable `pgvector` in Neon. Dry-run the migration, then apply it using both production confirmation flags.
-5. Run `pnpm readiness:prod -- --env-only` first, then run the full `pnpm readiness:prod` after migrations.
-6. Deploy a Preview and smoke-test Member, Mentor, and Admin paths together with invitations, media, email, Cron, and permission boundaries.
-7. Resolve the release blockers in this README before promoting the verified build to Production.
-8. After release, inspect Vercel Runtime Logs and Cron results, Neon connections and storage, Clerk webhooks and invitation delivery, and Resend bounces and complaints.
+### Ownership and systems of record
 
-Environment variable changes affect new deployments only, so redeploy after each change. Use a staged database process of backward-compatible migration, application deployment, and cleanup migration. Rolling back the application does not roll back the database.
+| Area | System of record | Repository-specific boundary |
+| --- | --- | --- |
+| Source code and review | GitHub | Vercel Git integration builds the repository; there is no repository-owned GitHub Actions release gate |
+| Deployments, Functions, Cron, logs, and media | Vercel | The application region is fixed to `sin1`; Vercel Blob stores public and private media |
+| Identity, credentials, sessions, and identity invitations | Clerk | Clerk Organizations are not used and never grant application authorization |
+| Accounts, roles, Spaces, content, matching, and authorization | Neon PostgreSQL | Neon is the sole authority for organization and Space access |
+| Ordinary product notification email | Resend | Clerk, not Resend, sends application invitation email |
+| Semantic embeddings | OpenAI | Production uses `text-embedding-3-large`; failures use a lower-quality deterministic fallback |
 
-See the [Admin operations and infrastructure manual](docs/manuals/admin-guide.en.md) for routine maintenance, credential rotation, backup and restore, rollback, and incident-response procedures for every platform. Official references:
+Assign a named primary owner and backup owner for each vendor. Console access, emergency contacts, billing alerts, recovery objectives, and the location of the external incident log should be recorded outside this repository.
 
-- [Vercel Environment Variables](https://vercel.com/docs/environment-variables), [Runtime Logs](https://vercel.com/docs/logs/runtime), and [Cron Jobs](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
-- [Clerk Production](https://clerk.com/docs/guides/development/deployment/production), [API key rotation](https://clerk.com/docs/guides/secure/rotate-api-keys), and [Webhooks](https://clerk.com/docs/guides/development/webhooks/syncing)
-- [Neon branching](https://neon.com/docs/guides/branching-intro), [restore](https://neon.com/docs/guides/branch-restore), and [connection pooling](https://neon.com/docs/connect/connection-pooling)
-- [Resend domains](https://resend.com/docs/dashboard/domains/introduction), [API keys](https://resend.com/docs/dashboard/api-keys/introduction), and [email logs](https://resend.com/docs/dashboard/emails/introduction)
+### Release and migration runbook
+
+#### 1. Preflight
+
+1. Resolve every active P0 and P1 release blocker in this README.
+2. Confirm the source commit, target Vercel Project, Production domain, Clerk Production instance, Neon Production project and branch, and Resend Production domain.
+3. Confirm that Development, Preview, and Production do not share Clerk or Neon resources. Preview must never use the Production `DATABASE_URL`.
+4. Create or verify a usable Neon recovery point inside the current restore window. Record the branch, timestamp, owner, and rollback decision point.
+5. Review Production variables by name and scope. Never paste their values into a ticket, terminal transcript, PDF, pull request, or README.
+6. Run the local gates with the locked dependencies:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm env:audit
+pnpm readiness:prod -- --env-only
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+```
+
+`env:audit` verifies environment separation and Clerk key classes. The environment-only readiness check validates required configuration without querying Production data.
+
+#### 2. Database migration
+
+Start with the read-only dry run:
+
+```bash
+pnpm db:migrate -- --environment=production
+```
+
+After confirming the displayed database fingerprint and recovery point, an authorized operator applies the migration and performs the full data audit:
+
+```bash
+pnpm db:migrate -- --environment=production --apply --confirm-production
+pnpm readiness:prod
+```
+
+Production writes require both `--apply` and `--confirm-production`. Use expand, backfill, deploy, and cleanup phases for incompatible schema changes. Each intermediate schema must work with the adjacent application versions. Never rely on a Vercel rollback to reverse a Neon migration.
+
+#### 3. Preview and promotion
+
+1. Build a Vercel Preview from the exact candidate commit.
+2. Smoke-test invitation acceptance, Member Profile completion, Main and Event isolation, Mentor approval and request handling, Admin access, media, Resend notification email, both Cron routes, and Match recomputation using isolated Preview data.
+3. Confirm that the Preview has no Production secrets, database URL, Clerk instance, or email sender.
+4. Promote the verified artifact or deploy the reviewed commit to Production according to the team's release policy.
+5. Record the deployment URL, commit SHA, migration version, operator, and verification result.
+
+#### 4. Production verification
+
+Immediately after release:
+
+- verify the public application, a real Clerk sign-in, and a controlled invitation acceptance;
+- sample Home, Feed, People, Profile, Introductions, Matching, media upload and read, and the Admin console;
+- inspect Vercel Runtime Logs for 4xx, 5xx, timeout, webhook, email, database, and Blob errors;
+- confirm the next execution or a controlled invocation of each Cron path;
+- check Neon connections, query errors, compute and storage signals;
+- check Clerk webhook attempts and invitation delivery;
+- check Resend Logs for the controlled notification and for new failures, bounces, complaints, or suppressions.
+
+Do not mark a release complete until the current deployment, database schema, provider configuration, and smoke-test evidence agree.
+
+### Vercel operations
+
+#### Environment scopes and deployments
+
+- Keep Development, Preview, and Production variables separately scoped. Branch-specific Preview overrides are allowed, but they must never point to Production Clerk or Neon resources.
+- `NEXT_PUBLIC_*` values are bundled for the browser and are not secrets. All API keys, signing secrets, database credentials, Blob tokens, and Cron secrets must remain server-only.
+- A Vercel environment-variable change affects only new Deployments. Redeploy after every change, then verify that the new Deployment is serving traffic.
+- `vercel env pull` replaces the destination file. Preserve intentional local-only values separately and never commit the resulting `.env*.local` file.
+- The repository fixes the application region to `sin1` in `vercel.json`. Keep the Neon compute near the application unless a documented data-residency requirement takes precedence.
+- With Git integration, non-production branches should produce Preview Deployments. If a custom CI pipeline is added, pin the Vercel CLI, build before deploying, and test the exact prebuilt artifact before promotion.
+
+Useful inspection commands for a linked project:
+
+```bash
+vercel ls
+vercel inspect <deployment-url>
+vercel logs --environment production --level error --since 1h
+```
+
+The repository does not currently define an external CI release gate. Treat the quality and readiness commands above as mandatory operator gates until an equivalent protected workflow exists.
+
+#### Cron Jobs
+
+`vercel.json` defines two Production schedules in UTC:
+
+| UTC | Singapore time | Path | Responsibility |
+| --- | --- | --- | --- |
+| `08:00` daily | `16:00` | `/api/internal/matches/recompute` | Refresh eligible recommendations across organizations and Spaces |
+| `08:30` daily | `16:30` | `/api/internal/post-media/cleanup` | Remove expired media that was never attached to a post |
+
+Vercel invokes Cron routes with `GET`. Both routes require `Authorization: Bearer <CRON_SECRET>`. Vercel does not retry a failed Cron invocation, and duplicate or overlapping invocations are possible. Review each result in Runtime Logs by `requestPath`, keep handlers idempotent, and investigate before manually retrying a write. A Vercel rollback does not automatically update active Cron configuration; check the Cron settings separately after every rollback.
+
+When rotating `CRON_SECRET`, change the Vercel Production value, redeploy, verify both routes reject the old value and accept the scheduled request path, then record the rotation. Use a random server-only value; the repository recommends at least 32 characters.
+
+#### Runtime Logs, alerts, and retention
+
+- Start investigations in Runtime Logs. Filter by environment, status code, request path, request ID, and time window.
+- Review deployments, 5xx rates, Function duration, bandwidth, Blob usage, and Spend Management every operating day.
+- Configure appropriate Vercel alerts. Runtime Logs are not a permanent application audit trail.
+- If retention or cross-service correlation is required, configure a supported Log Drain or external error-tracking integration and verify its delivery. The repository currently contains no persistent external log-drain configuration.
+- Never log raw invitation tokens, secrets, passwords, verification codes, full Profile exports, or unnecessary personal data.
+
+#### Vercel Blob
+
+- Organization logos and avatars use public Blob URLs; do not store sensitive images there.
+- Post images and link-preview thumbnails use private Blob storage and are served through application routes that recheck Space access.
+- Media upload depends on `BLOB_READ_WRITE_TOKEN`. Text-only features continue if Blob is unavailable.
+- Confirm the daily cleanup Cron and Blob usage. Database moderation state and Blob retention are separate concerns and must both satisfy the organization's retention policy.
+- Rotate the Blob token in this order: provision the replacement, update the correct Vercel scope, redeploy, test upload and authorized read, revoke the old token, and test again.
+
+#### Rollback
+
+Use `vercel rollback` or promote a known-good eligible Deployment when application code is causing an incident. Before and after rollback:
+
+1. capture the failing deployment, time, symptoms, and relevant logs;
+2. verify that the target Deployment's environment-variable snapshot and application code are compatible with the current Neon schema;
+3. perform the rollback and check its status;
+4. verify sign-in and the affected user path;
+5. inspect Production error logs and check Cron Jobs independently;
+6. deploy a forward fix and restore the normal promotion path after the incident.
+
+A rollback changes the served application artifact. It does not undo database writes or schema changes, and an older Deployment can contain stale configuration. Use Neon recovery or a forward database repair only after a separate data-impact decision.
+
+#### General secret rotation pattern
+
+For a provider that supports overlapping credentials:
+
+1. create a new narrowly scoped credential and leave the old one valid;
+2. update only the correct Vercel environment scope;
+3. redeploy;
+4. exercise a real server-side request and confirm new-key usage in both Vercel and provider logs;
+5. revoke the old credential;
+6. test again and update the external credential inventory.
+
+For a credential that cannot overlap, schedule a maintenance window and prepare rollback before revocation. Never expose a secret through a `NEXT_PUBLIC_*` variable.
+
+Official references: [Environment Variables](https://vercel.com/docs/environment-variables), [Deployments](https://vercel.com/docs/deployments), [Runtime Logs](https://vercel.com/docs/logs/runtime), [Cron Jobs](https://vercel.com/docs/cron-jobs/manage-cron-jobs), [Rollback](https://vercel.com/docs/deployments/rollback-production-deployment), and [Vercel Blob](https://vercel.com/docs/vercel-blob).
+
+### Clerk operations
+
+#### Project boundary and production setup
+
+The project uses `@clerk/nextjs` 7. Clerk manages Users, verified email addresses, credentials, Sessions, and Application Invitations. Neon remains the authority for roles, organization membership, account status, and Space access. Clerk Organizations are intentionally unused, and Clerk organization events must never grant permissions.
+
+Production setup requirements:
+
+1. Use a dedicated Clerk Production instance with `pk_live_*` and `sk_live_*` keys. Do not reuse Development or Preview identities.
+2. Configure the Production domain, DNS, application home, sign-in, sign-up, allowed redirect URLs, and invitation callback for the community application domain.
+3. Enable Restricted sign-up so an uninvited person cannot create an account through the normal sign-up UI.
+4. Configure `/api/webhooks/clerk` as a public HTTPS webhook endpoint and subscribe to `user.created`, `user.updated`, and `user.deleted`.
+5. Set the Production webhook signing secret in Vercel and redeploy.
+6. Test a complete invitation, identity update, deletion/anonymization, webhook failure, and replay before launch.
+
+Normal invitations must originate in Wavesparks Admin. The application creates a one-time local invitation and a Clerk Application Invitation with `expiresInDays: 7`; Clerk sends the email. Creating an invitation directly in Clerk does not create the Neon account, role, or Space entitlement chain.
+
+#### Webhook behavior and recovery
+
+The webhook verifies the Clerk signature, requires `svix-id`, and records that event ID for idempotency. `user.created` and `user.updated` synchronize only identities already bound by the one-time invitation transaction; they never claim an account by email. `user.deleted` triggers local anonymization. Organization events are ignored.
+
+Clerk webhooks are asynchronous and eventually consistent. For a failed delivery:
+
+1. inspect the Clerk endpoint's Message Attempts and the corresponding Vercel Runtime Logs;
+2. fix signature, route, deployment, or database errors;
+3. replay the failed message from Clerk;
+4. confirm a 2xx response and the intended local result;
+5. confirm that a duplicate replay does not repeat the mutation.
+
+For invitation trouble, inspect Wavesparks invitation state and Clerk Invitations/Application Logs. A provider send success does not prove inbox delivery. Investigate invitation email in Clerk, not Resend.
+
+For suspected identity compromise, suspend the account in Wavesparks to remove application access immediately, then revoke Clerk Sessions or block the User as required. Removing only one side is incomplete.
+
+#### Credential rotation
+
+Clerk supports multiple active Secret Keys. Create a named replacement, update `CLERK_SECRET_KEY` in the correct Vercel environment, redeploy, test middleware and a backend Clerk request, confirm the replacement's last-used activity, then delete the old key.
+
+Webhook signing secrets are issued per endpoint. Create a replacement endpoint with the same URL and three User events, update `CLERK_WEBHOOK_SIGNING_SECRET`, redeploy, send and verify a test event on the new endpoint, then delete the old endpoint. Expect the old endpoint's deliveries to fail verification during the brief overlap. Do not delete the old endpoint before the new endpoint is live.
+
+The Publishable Key is designed for browser use and is not a secret. Rotate the Secret Key and webhook signing secret after exposure, relevant staff departure, or according to company policy.
+
+Official references: [Production deployment](https://clerk.com/docs/guides/development/deployment/production), [Application invitations](https://clerk.com/docs/guides/users/inviting), [Restricted sign-up](https://clerk.com/docs/guides/secure/restricting-access), [Webhooks](https://clerk.com/docs/guides/development/webhooks/overview), and [API key rotation](https://clerk.com/docs/guides/secure/rotate-api-keys).
+
+### Neon PostgreSQL operations
+
+#### Connection model and least privilege
+
+The application reads one variable, `DATABASE_URL`. Normal Drizzle queries use the Neon HTTP driver. Transactions and migrations use `postgres-js` with a single connection, and migrations require the `vector` extension. The current code does not separate runtime and migration variables or roles, so genuine least-privilege separation requires a code and deployment change.
+
+Use a pooled `-pooler` connection string for Vercel serverless runtime traffic. Use a direct connection for controlled migrations, dumps, and tools that require direct PostgreSQL semantics. Because both paths are named `DATABASE_URL`, the Vercel Production value and the authorized migration shell must be managed separately and verified before every command. Never let Preview point to the Production branch.
+
+Keep the Neon compute geographically close to Vercel `sin1` where organizational requirements allow. Confirm TLS requirements and the database fingerprint before every Production write.
+
+#### Migration, branches, and recovery
+
+- Create an isolated branch from the intended Production point before a material migration and validate the schema diff, migration, readiness audit, and application there.
+- Confirm the Production restore window before release. A branch name alone is not proof that the required recovery point remains restorable.
+- Record a timestamp and recovery decision owner before each Production migration.
+- Test restore procedures on an isolated branch at least quarterly. Record measured recovery time and acceptable data-loss window.
+- Delete temporary recovery and test branches when policy allows, after confirming they are no longer needed and considering storage cost and retention.
+
+For a data incident:
+
+1. stop or minimize new writes when safe and record the suspected event time;
+2. preserve logs and identify the affected tables, Spaces, and users;
+3. use Neon Time Travel or a point-in-time branch to inspect the candidate state without overwriting Production;
+4. decide between a targeted forward repair and a branch restore, explicitly accounting for valid writes after the restore point;
+5. validate the repaired or restored state and the application on an isolated endpoint;
+6. cut over only with database-owner and business-owner approval;
+7. run `pnpm readiness:prod`, smoke tests, and reconciliation checks after recovery.
+
+Do not assume that a Vercel application rollback, Neon branch creation, or successful connection proves data correctness.
+
+#### Monitoring and credential rotation
+
+Review CPU, memory, compute active time, database size, storage growth, client and server connections, pooler activity, query latency, cache behavior, deadlocks, and errors. Watch the configured restore window and branch growth. Correlate database latency with the Vercel region and Runtime Logs.
+
+Prefer a new database role over resetting a password in place: create the role, grant only required privileges, update the Vercel Production value and authorized migration environment, redeploy, verify runtime reads plus a controlled transaction and migration dry run, then revoke the old role. The current shared runtime/migration role is a known operational limitation, not a recommended end state.
+
+Official references: [Connection pooling](https://neon.com/docs/connect/connection-pooling), [Branching](https://neon.com/docs/guides/branching-intro), and [Branch restore](https://neon.com/docs/guides/branch-restore).
+
+### Resend operations
+
+#### Current application boundary
+
+Resend sends ordinary product notifications such as Introduction requested, accepted, or declined. Clerk sends identity invitations. Notification email runs asynchronously through Next.js `after()`. If Resend is unconfigured, the application logs `email skipped: provider unconfigured`; in-app notifications continue.
+
+The current implementation has important limits:
+
+- send failures are written to Vercel Runtime Logs only;
+- there is no Resend webhook, delivery-state table, outbound audit, or Admin retry interface;
+- the low-level sender supports an idempotency key, but current product call sites do not supply one;
+- delivery, bounce, complaint, and suppression investigation therefore depends on Resend Logs plus Vercel logs.
+
+Do not describe a missing product email as proof that the in-app action failed. Check the in-app notification and database result first.
+
+#### Domain, sender, and API Key
+
+1. Use a dedicated sending subdomain to isolate reputation.
+2. Add and verify the exact SPF and DKIM records supplied by Resend.
+3. Set `RESEND_FROM_EMAIL` to an address on the verified domain.
+4. Add DMARC with monitoring policy `p=none`, verify every legitimate sender, then tighten to `quarantine` or `reject` according to company policy.
+5. Give the application API Key Sending access restricted to the sending domain. Do not use a Full-access key for routine sends.
+6. Store `RESEND_API_KEY` only as a server-side secret in the correct Vercel scope, then redeploy and send a controlled notification.
+
+#### Delivery operations
+
+Review failed, bounced, complained, and suppressed messages and recent volume every operating day:
+
+- **Failed:** correlate the Resend entry with Vercel time, route, and error logs; check domain, key, quota, and request validity.
+- **Bounced:** correct the recipient only when a valid replacement is known; do not repeatedly retry a hard bounce.
+- **Complained:** stop sending to the recipient and investigate consent and message expectations.
+- **Suppressed:** find whether a prior hard bounce or complaint caused suppression and resolve the root cause before any manual removal.
+- **Invitation missing:** use Clerk and Wavesparks invitation records, not Resend.
+
+If the product later implements Resend webhooks, verify signatures against the raw body, deduplicate events, tolerate at-least-once and out-of-order delivery, retain only necessary data, and add deterministic idempotency keys to retryable sends. Resend retains an idempotency key for 24 hours.
+
+For API Key rotation, create a new domain-scoped Sending key, update the Production Vercel variable, redeploy, send a controlled notification, filter Resend Logs by the new key, delete the old key, and test once more. Resend keys do not expire automatically.
+
+Official references: [Domains](https://resend.com/docs/dashboard/domains/introduction), [DMARC](https://resend.com/docs/dashboard/domains/dmarc), [API Keys](https://resend.com/docs/dashboard/api-keys/introduction), [Key handling](https://resend.com/docs/knowledge-base/how-to-handle-api-keys), [Suppressions](https://resend.com/docs/dashboard/emails/email-suppressions), and [Idempotency](https://resend.com/docs/dashboard/emails/idempotency-keys).
+
+### Technical incidents and offboarding
+
+| Symptom | Primary evidence | First technical action |
+| --- | --- | --- |
+| Broad sign-in failure | Clerk Application Logs, Vercel Runtime Logs, current Deployment | Confirm Clerk Production keys, domain and Deployment; do not bypass identity binding by email |
+| Invitation failure | Wavesparks invitation record, Clerk Invitations and Logs | Confirm seven-day state, callback URL, restricted sign-up and exact email; resend through Admin only |
+| Webhook lag or failure | Clerk Message Attempts, `svix-id`, Vercel logs | Fix the endpoint or signing secret, then replay and verify idempotency |
+| Database errors or missing data | Neon metrics and logs, Vercel request IDs, migration history | Stop unsafe writes, identify the recovery point, validate on an isolated branch |
+| Product email failure | In-app notification, Resend Logs, Vercel email logs | Distinguish application completion from delivery and handle bounce or suppression safely |
+| Media failure | Blob usage, token scope, cleanup logs, object visibility | Test authorized upload/read and verify public versus private storage behavior |
+| Cron failure | Vercel Cron status and request-path logs | Identify dependency failure; retry only after confirming idempotency and no overlapping run |
+| Cross-Space exposure or privacy incident | Exact URLs, membership and Space IDs, logs, data snapshot | Restrict affected access, preserve evidence, stop further exposure, escalate immediately |
+
+For a compromised Member account, suspend it in Wavesparks first, then revoke or block Clerk Sessions, inspect affected content and Introductions, and record the case externally. For an administrator departure, confirm another working Admin, remove Wavesparks Admin permission, revoke Clerk Sessions, remove GitHub and all vendor-console access, rotate any exposed secrets, and review recent deployments and Profile exports. The application does not provide a complete central audit log, so maintain a separate incident and privileged-change record.
+
+### Recurring technical maintenance
+
+#### Daily on operating days
+
+- Verify the expected Vercel Production Deployment and review new 5xx or timeout errors.
+- Check both Cron paths, Clerk failed webhook attempts, Resend failures/bounces/complaints/suppressions, and Neon errors or capacity anomalies.
+- Review usage and spend anomalies across Vercel Functions and Blob, Neon, Clerk, Resend, and OpenAI.
+
+#### Weekly
+
+- Sample an invited sign-up, Space isolation, media upload/read, and a product notification in a non-Production environment.
+- Review Match run degradation, Blob cleanup, stale Preview resources, and vendor-console access lists.
+- Reconcile application Admins with privileged GitHub, Vercel, Clerk, Neon, and Resend users.
+
+#### Monthly
+
+- Run `pnpm readiness:prod` and review dependency/security updates, alert delivery, log retention, restore-window coverage, spend controls, unused API Keys, branches, deployments, and exports.
+- Test the Production support escalation path without exposing secrets or personal data.
+- Review the known limitations in this README and assign owners for unresolved P0/P1 risks.
+
+#### Quarterly
+
+- Perform an isolated Neon restore drill and record actual recovery time and data-loss exposure.
+- Rehearse rotation of Clerk, Neon, Resend, Blob, and Cron credentials.
+- Run tabletop exercises for account compromise, administrator departure, database recovery, and cross-Space data exposure.
+- Reconfirm vendor plan limits, regions, retention, recovery objectives, emergency contacts, and billing alerts.
+
+### Production acceptance checklist
+
+- The first Admin can complete the supported invitation and Clerk binding path; the documented P0 is closed by code and tests.
+- All routes authorize the Admin by Clerk User ID and shared viewer context; the documented email-authorization P1 is closed.
+- Development, Preview, and Production use isolated Clerk and Neon resources, and Production contains no E2E bypass.
+- `SPACE_SCOPED_READS_ENABLED=true`; environment audit, Production readiness, typecheck, lint, tests, and build pass.
+- A verified Neon recovery point exists before migration, and the post-migration data audit passes.
+- Clerk live keys, Restricted sign-up, redirect URLs, Application Invitations, and all three User webhook events are verified.
+- The Resend sending domain passes SPF and DKIM, DMARC is monitored, and the key has domain-scoped Sending access.
+- Both Vercel Cron paths, Runtime Logs, alerts, retention strategy, and spend controls are reviewed.
+- Event-only, Main-only, multi-Event, Admin, Mentor, Suspended, and Archived scenarios pass without cross-Space leakage.
+- Application rollback and Neon restore are rehearsed as separate operations.
+- Primary and backup owners, privileged-console users, and emergency contacts are current.
 
 ## Security, privacy, and deletion
 

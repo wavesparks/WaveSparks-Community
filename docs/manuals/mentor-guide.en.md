@@ -1,299 +1,262 @@
-# WaveSparks Community Mentor User Manual
+# WaveSparks Community Mentor Kick-start Kit
 
-Version: 1.0
-Audit baseline: Codebase and current interface as of July 29, 2026
-Intended audience: WaveSparks Community Mentors approved by an organization
+Version: 1.1 | Updated: July 29, 2026 | For: Organization-approved Mentors
 
-> Mentor is a separate approval status layered on top of Member identity; it is not an Admin role. Except where this manual says otherwise, Mentors follow the same access, Profile, content, and privacy rules as Members.
+This guide gets you from the invitation email to your first mentoring conversation. It focuses on what to do, in the order you will do it.
 
-## 1. The Mentor Role and End-to-End Journey
+> A Mentor is also a Member. Mentor approval adds mentoring features, but it does not make you an Admin or automatically give you access to every Space.
 
-A WaveSparks Mentor is an organization-approved member who can participate in authorized Spaces, present professional expertise, appear in Mentor matching, and receive Mentoring introductions.
+## Your first 20 minutes
 
-The platform supports discovery, matching, requests, consent, and contact exchange. Mentoring logistics, communication, meeting notes, goal tracking, and outcome evaluation take place in external tools.
+Use this checklist the first time you join:
 
-A typical lifecycle is:
+1. Open the invitation email within 7 days.
+2. Sign up or sign in with the exact invited email address.
+3. Confirm that your account is connected and your expected Space appears.
+4. Complete the 7 required Member Profile items.
+5. Confirm that your Mentor status is Approved.
+6. Add your Mentor topics, experience, offers, and availability.
+7. Turn on Accept introductions and include Mentor match in Offering.
+8. Set your matching intent in each Space where you want suggestions.
 
-1. An Admin creates or maintains the member record and grants `approved` Mentor status.
-2. The Mentor accepts the seven-day invitation and connects an account using the corresponding verified email address.
-3. The Mentor completes the Member Profile and Mentor-specific details.
-4. The Mentor opts in to introductions and adds `mentor_match` to Offering.
-5. In an authorized Space, the Mentor participates in the community, publishes content, and configures matching intent.
-6. Members discover the Mentor and send General or Mentoring introductions.
-7. The Mentor reviews the queue in the Mentoring workspace, then accepts or declines in the source Space.
-8. After acceptance, both people exchange contact details and continue mentoring outside the platform.
-9. The Mentor pauses new requests when needed and keeps profile information and history current.
-10. The Mentor exits the relevant experiences if approval is revoked, Space access ends, or the account is deleted.
+![From invitation to mentoring readiness](../assets/manuals/mentor-kickstart-flow-en.png)
 
-![Mentor workspace](../assets/manuals/mentor-workspace.png)
+## 1. Open the invitation email
 
-## 2. Identity, Permissions, and Access Requirements
+Your organization Admin invites you to WaveSparks by email.
 
-The system separates permissions into three dimensions:
+1. Find the invitation email in your inbox.
+2. Open the invitation link within 7 days.
+3. Sign up if you are new, or sign in if you already have an account.
+4. Use the exact email address that received the invitation.
+5. Complete email verification when prompted.
+6. Continue to the organization page.
 
-- Organization role: `member` or `org_admin`;
-- Mentor status: `not_mentor`, `needs_review`, or `approved`;
-- Space permission: whether the person has `active` access to a specific Space.
+If the link has expired, the email address is wrong, or the invitation is missing, contact your organization Admin. The Admin can check the invitation and send a new one.
 
-Global Mentor capabilities require both `mentor_status = approved` and a `connected` account. Accessing a specific Space still requires active access to that Space, and the Space lifecycle must be `upcoming`, `active`, or `ended`.
+Do not create a second account with another email. The invited, verified email is what connects your sign-in to your organization record.
 
-An Approved Mentor does not automatically become an Admin. Mentor approval does not allow someone to create Events, invite members, approve accounts, export profiles, view organization-wide analytics, or moderate content. An Admin who wants to post or participate in Matching as a regular member must also explicitly join the relevant Space.
+## 2. Confirm your account, Mentor status, and Space access
 
-## 3. Receiving Mentor Approval and Accepting an Invitation
+Three separate things control what you can do:
 
-There is currently no self-service Mentor application or automatic certification flow. An Admin can grant Approved Mentor status while inviting a member or change the Mentor status after the member connects.
+- Member Profile: your shared personal profile must be complete before you can fully participate.
+- Mentor status: your organization must set it to Approved before Mentor features are available.
+- Space access: an Admin must add you to each Main Space or Event you should enter.
 
-The standard invitation flow is:
+These are independent. For example, an Approved Mentor may still be unable to see an Event if the Admin has not added them to that Event.
 
-1. An Admin creates a managed member, selects Member or Approved Mentor, and assigns at least one Space.
-2. Clerk sends the identity invitation; the link remains valid for seven days.
-3. The invitee opens `/org/[slug]/accept-invitation` and signs up or signs in.
-4. The invitee uses the exact email address from the invitation and verifies it.
-5. After successful verification, the account changes from invited to connected.
+After signing in:
 
-A new invitation cannot initially set the member to `needs_review`. A user cannot join a Space independently, promote themselves to Mentor, or bypass server-side eligibility checks by changing client-side fields.
+1. Open My Spaces.
+2. Check for the Main Space and any Event you expect to join.
+3. Open one Space and confirm that its Home page loads.
+4. Open your Profile settings and look for Mentor settings.
+5. If a Space or Mentor setting is missing, ask your Admin to check your approval and access.
 
-## 4. Completing the Profile and Mentor Details
+Mentor approval does not provide Admin controls. You cannot invite members, manage Events, export profiles, or moderate content unless you separately have an Admin role.
 
-One global Profile is shared across all Spaces. Profile completion requires at least:
+## 3. Complete the Member Profile first
 
-- Preferred name;
-- Headline;
-- Bio;
-- Current focus;
-- At least one Looking for type;
-- At least one Skill tag;
-- Introduction email.
+Your Member Profile is global: the same profile appears in every Space you can access.
 
-A Mentor should also maintain:
+Complete all 7 required items:
 
-- Mentoring topics;
-- Startup stages served;
-- Functional strengths;
-- Mentoring offers;
-- Availability;
-- Max mentees, from 0 to 100;
-- Mentorship preferences;
-- Whether introductions are accepted;
-- Whether WhatsApp is shared after acceptance.
+1. Preferred name.
+2. Headline.
+3. Bio.
+4. Current focus.
+5. At least one Looking for type.
+6. At least one Skill tag.
+7. Introduction email.
 
-![Mentor Profile settings](../assets/manuals/mentor-profile-settings.png)
+Keep the profile short and useful. State what you know, what you are working on, and what kind of people you hope to meet.
 
-Mentor-specific fields are saved only after the server confirms Approved status. The Introduction email in the Profile is used as an introduction contact; changing it does not change the Clerk sign-in email.
+Your Introduction email is shared with the other participant only after you accept an introduction. Changing it does not change the email you use to sign in.
 
-## 5. Accepting or Pausing New Mentoring Requests
+Until the 7 items are complete, you can explore some areas, but actions such as People, Matches, posting, commenting, following, saving, and requesting introductions remain limited.
 
-Receiving new Mentoring requests requires all of the following:
+## 4. Add your Mentor details
 
-- Mentor status is approved;
-- Account status is connected;
-- `introOptIn` is enabled;
-- Global Offering includes `mentor_match`;
-- Access to the target Space is active;
-- The Profile and matching intent for that Space meet the relevant entry requirements.
+Once your Mentor status is Approved, complete the Mentor section of Profile settings.
 
-Ways to pause:
+Add or review:
 
-- Turn off "Accept introductions" to pause all new General and Mentoring introductions.
-- Remove `mentor_match` from Offering to pause new Mentor matches and direct Mentoring requests while retaining ordinary introductions if desired.
+- Mentoring topics.
+- Startup stages you can support.
+- Functional strengths.
+- The mentoring help you offer.
+- Availability.
+- Max mentees, from 0 to 100.
+- Mentorship preferences.
+- Whether to share WhatsApp after an introduction is accepted.
 
-`maxMentees` and Availability currently inform profile display and matching scores; they are not enforced capacity limits. There is no separate vacation, full-capacity, or waitlist status. When personal capacity is reached, manually pause the relevant Offering or introductions.
+Use specific phrases. For example, "B2B sales discovery for early-stage founders" is more helpful than "business advice."
 
-## 6. Participating in a Space
+If the Mentor fields do not save, first ask your Admin to confirm that your Mentor status is Approved. There is no self-service Mentor application or approval button.
 
-My Spaces shows the Main Space, Your events, and Past events. Inside a specific Space, Mentors have the same community capabilities as Members:
+Max mentees and Availability help people understand your capacity and can influence matching. They do not automatically stop new requests when you become full.
 
-- Browse Feed, People, Matches, Knowledge, Opportunities, and Introductions;
-- Publish a General update, Question, Resource, Announcement, Opportunity, Looking for cofounder, or Looking for mentor post;
-- Comment and use `@mention`;
-- Follow members and save posts;
-- Search for members and view profiles;
-- Request a General introduction.
+## 5. Turn on mentoring requests
 
-When publishing an Opportunity, an Approved Mentor can apply the Mentor source label. The People page displays the Approved Mentor badge and Mentor expertise information.
+Two global settings must be on if you want to receive Mentoring requests:
 
-Content limits are the same as for Members: titles are limited to 160 characters, post bodies to 10,000 characters, and comments to 2,000 characters. A post can include up to four JPG, PNG, or WebP images, each no larger than 5 MB.
+1. Turn on Accept introductions.
+2. Add Mentor match to Offering.
 
-Members and Mentors currently cannot edit or delete their own posts or comments. The product also has no likes, reporting, blocking, direct messages, or standalone Project management. Admins handle content moderation.
+They do different jobs:
 
-## 7. Mentor Matching
+- Accept introductions allows new General and Mentoring introduction requests.
+- Mentor match makes you available for Mentor matching and direct Mentoring requests.
 
-Matching is scoped independently to each Space. On a Space's Matches page, a Mentor completes:
+To pause every new introduction, turn off Accept introductions.
 
-- Current goal;
-- Looking for;
-- What I can offer;
-- Include me in match suggestions.
+To pause only Mentor matching and Mentoring requests, remove Mentor match from Offering. General introductions can remain available.
 
-The intent is complete only when Current goal is present and at least one of Looking for or Offer is filled in.
+## 6. Set matching intent in each Space
 
-![Mentor matching](../assets/manuals/mentor-matches.png)
+Matching settings are separate for every Space. Completing them in the Main Space does not enroll you in an Event.
 
-Eligibility as a Mentor match candidate normally also requires:
+For each Space where you want suggestions:
 
-- Approved Mentor status and a connected account;
-- Active access to the current Space;
-- A complete global Profile;
-- A complete matching intent for the current Space, with Matching opt-in enabled;
-- Both `introOptIn` and the `mentor_match` Offering enabled;
-- Matching enabled for the current Space by an Admin;
-- A Space that is not archived.
+1. Open the Space.
+2. Select Matches.
+3. Enter your Current goal.
+4. Add at least one Looking for or What I can offer item.
+5. Turn on Include me in match suggestions.
+6. Review the resulting matches.
 
-The 1-100 Fit index shown on a match card combines semantic similarity, Skills, startup stage, Availability, working style, location, and other factors. A Mentor's stage experience, Availability, and Capacity contribute to the result. The score is not a probability of success, public reputation, service-quality rating, or mentee review.
+Matching must also be enabled for that Space by an Admin.
 
-A suggestion can be marked Helpful or Not relevant. Not relevant hides the result and retains the dismissal. This feedback is not a public review and does not immediately retrain matching weights.
+The Fit index from 1 to 100 combines profile, intent, skills, experience, availability, and other signals. It is a discovery aid, not a success probability, public rating, or quality score.
 
-## 8. Mentoring Introductions
+Use Helpful when a suggestion is useful. Use Not relevant to hide a poor suggestion. This feedback is private and is not a review of the other person.
 
-### 8.1 Request Sources
+## 7. Take a quick tour
 
-A Mentoring request can originate from:
+The main areas you will use are:
 
-- An Approved Mentor's profile on the People page, with Mentoring selected;
-- A `mentor_match` match card.
+- My Spaces: Main Space, current Events, and past Events you can access.
+- Feed: updates, questions, resources, announcements, and opportunities.
+- People: member profiles and Approved Mentor badges.
+- Matches: Space-specific suggestions and introduction actions.
+- Introductions: requests for the current Space.
+- Mentoring: one view of your incoming Mentoring requests across accessible Spaces.
 
-An introduction initiated from a post author is always General and cannot be presented as Mentoring.
+As a Mentor, you can participate like any other Member: post, comment, mention people, follow members, save posts, and request introductions after your Member Profile is complete.
 
-The server revalidates that both people share the Space, permissions remain valid, profiles are complete, the recipient is still an Approved Mentor, introductions are still accepted, and `mentor_match` is still offered. A person cannot send a request to themselves.
+Keep confidential client or mentee information out of posts and comments. Members cannot edit or delete their own posts or comments in the current product, so ask an Admin if something must be corrected or removed.
 
-Within an organization, the same pair of members can have only one pending Introduction at a time, regardless of direction, type, or Space.
+<!-- pagebreak -->
 
-### 8.2 Request Content and Statuses
+## 8. Handle a Mentoring request
 
-The requester provides a Purpose, Note, and Suggested opening message. A request has one of these statuses:
+You may receive a request from your People profile or a Mentor match. A request started from a post is always a General introduction.
 
-- `pending`: waiting for the Mentor;
-- `accepted`: approved, with contact details exchanged;
-- `declined`: refused, without exchanging contact details;
-- `expired`: made ineligible by account, access, qualification, or other eligibility changes.
+![How to review and respond to a mentoring request](../assets/manuals/mentor-request-flow-en.png)
 
-### 8.3 Mentoring Workspace
+When a request arrives:
 
-The account-level workspace at `/org/[slug]/mentoring` aggregates incoming Mentoring requests from Spaces that remain accessible. It supports All, Pending, Accepted, Declined, and Expired filters and loads up to 40 recent records.
+1. Open the notification or the Mentoring workspace.
+2. Note the source Space.
+3. Read the Purpose, Note, and suggested opening message.
+4. Decide whether the request fits your expertise, time, and boundaries.
+5. Open Introductions inside the source Space.
+6. Select Accept or Decline.
 
-The workspace shows only Mentoring requests received by the signed-in Mentor. It does not reveal other Mentors' queues and is not an Admin dashboard. The actual Accept or Decline action takes place on the Introductions page in the request's source Space.
+The Mentoring workspace gathers incoming requests from the Spaces you can still access. The final Accept or Decline action happens in the source Space so the platform can check that both people still have access.
 
-### 8.4 Accepting or Declining
+Request statuses are simple:
 
-1. Open the workspace and confirm which Space the request came from.
-2. Read the Purpose, Note, and suggested opening message.
-3. Open Introductions in the source Space.
-4. Select Accept or Decline.
-5. After acceptance, both people can see each other's Introduction email. WhatsApp appears only if its owner opted to share it after acceptance.
-6. Use a mutually agreed external channel to arrange the first conversation.
+- Pending: waiting for your decision.
+- Accepted: both participants can see the allowed contact details.
+- Declined: the request ends without sharing contact details.
+- Expired: access or eligibility changed before a decision was completed.
 
-The platform has no built-in chat, video, Calendar, or meeting room. Acceptance means consenting to make contact; it does not create a persistent mentoring-relationship record or grant access to another Space.
+After acceptance, both people can see each other's Introduction email. WhatsApp appears only when its owner chose to share it after acceptance.
 
-## 9. Working After the Introduction
+## 9. Continue the mentoring conversation outside WaveSparks
 
-The current product does not store or manage:
+Acceptance gives both people permission and contact information to connect. It does not create a managed mentoring program inside the platform.
 
-- Meeting schedules, reminders, or attendance;
-- A mentee caseload dashboard;
-- Mentoring goals, action items, or progress;
-- Meeting notes or attachments;
-- A completed or terminated mentoring-relationship status;
-- Star ratings, Testimonials, or outcome data.
+Use email, WhatsApp when shared, or another agreed tool to:
 
-Mentors should use external channels to agree on the scope of the first conversation, time zone, meeting frequency, privacy boundaries, and whether to continue. Do not publish sensitive mentee information in public posts.
+1. Send a short introduction.
+2. Confirm the topic and expected outcome of the first conversation.
+3. Agree on time zone, format, and meeting time.
+4. Set confidentiality and communication boundaries.
+5. Decide after the first meeting whether and how to continue.
 
-Accepted and declined history remains in the account-level Inbox. Some historical records can remain visible after access to the source Space is lost. Pending and expired records generally require continued access to the source Space.
+WaveSparks does not currently provide in-platform chat, video meetings, calendar booking, session notes, goals, action tracking, caseload management, ratings, or mentoring outcome reports.
 
-## 10. Notifications and Email
+## 10. Keep your availability current
 
-Mentoring uses the general Introduction notification types, primarily requested, accepted, and declined. A Mentor may also receive Post mention, Comment mention, Admin note, Manual introduction, and Membership approved notifications.
+A useful weekly routine is:
 
-- New requests are normally sent through Resend to the Mentor's Introduction email.
-- Acceptance or decline normally triggers an email to the requester.
-- Account and Space access are rechecked before sending.
-- If Resend is not configured, the in-app notification remains available while email is skipped and logged.
-- Initial member invitations are sent by Clerk, not Resend.
+1. Check the Mentoring workspace for Pending requests.
+2. Respond in the source Space.
+3. Review your Mentor topics, offers, and availability.
+4. Update matching intent in Spaces where your goals changed.
+5. Pause new requests if you have reached your personal capacity.
 
-There is currently no notification-preference center, Digest, push notification, Mentoring-specific scheduling reminder, or overdue follow-up. Mentors also have no email retry control.
+The Max mentees value is informative, not an enforced limit. You must pause requests yourself by removing Mentor match or turning off Accept introductions.
 
-## 11. Data, Analytics, and Exports
+## 11. Know what changes can affect access
 
-Mentors currently have no personal analytics dashboard or self-service export. There is no Mentee list CSV, Mentoring-request CSV, match-history export, or personal outcome report.
+If Mentor approval is removed:
 
-Organization Admins can export all member Profiles and contact information and can view Mentor Offering data. Enter only the data needed for community operations and follow the organization's privacy policy.
+- Your Approved Mentor badge and Mentor details stop appearing.
+- You stop receiving Mentor matches.
+- Pending Mentoring requests expire.
+- The Mentoring workspace is no longer available.
+- Your ordinary Member access can continue in Spaces where it is still active.
 
-## 12. Changes to Approval, Access, and Account Status
+If access to one Space ends, you cannot enter that Space or act on its pending requests. Accepted or declined history may remain visible, but it does not restore access.
 
-### 12.1 Mentor Approval Is Revoked
+If your account is deleted, your profile is anonymized and pending requests expire. Existing posts and comments remain under Former member. Ask an Admin for account deletion or help leaving a Space; these actions are not self-service.
 
-- The Approved Mentor badge and Mentor-specific details are no longer displayed;
-- The person is no longer eligible for Mentor matching;
-- Pending incoming Mentoring requests automatically become expired;
-- The Mentoring workspace becomes inaccessible;
-- Accepted and declined history is not deleted solely because approval changed;
-- Ordinary Member access remains only where account and Space access still permit it.
+## 12. Troubleshooting
 
-### 12.2 Space Access Ends
+### I cannot open the invitation
 
-The Mentor can no longer access that Space's Feed, People, Matches, or pending requests. Accepted or declined records can remain in account history, but they do not restore Space access.
+Check that it is less than 7 days old and that you are using the invited email. Ask the Admin to resend it if needed.
 
-### 12.3 Clerk Identity Is Deleted
+### I signed in but cannot see an Event
 
-After the `user.deleted` Webhook succeeds, the local Profile and contact details are anonymized, the account is deactivated, Mentor status returns to `not_mentor`, related follow, save, notification, and match data is deleted, and pending Introductions expire. Existing posts and comments remain, but their author is displayed as Former member.
+Ask the Admin to confirm your active access to that specific Event. Mentor approval alone does not grant Space access.
 
-The application has no self-service control for leaving a Space, deleting the local account, or downloading personal data. Contact an Admin when needed, and confirm that deletion completed in both Clerk and the local Webhook flow.
+### I cannot see or save Mentor settings
 
-## 13. Privacy and Professional Boundaries
+Ask the Admin to confirm that your Mentor status is Approved and your account is connected.
 
-- Profiles and interactions are available only to active members of the current Space; public social links appear on the Profile.
-- Introduction email and authorized WhatsApp details are shown only to the two participants after acceptance. Organization Admins can still access these details for operations.
-- Avatars use public asset URLs. Do not upload identity documents, client data, or confidential files.
-- Before accepting, review the Purpose, boundaries, and available time. Use Decline when the request is not appropriate.
-- Mentoring communication takes place in external tools. The organization should separately define confidentiality, recordkeeping, incident response, and code-of-conduct processes.
-- There is currently no reporting or blocking interface. Contact an Admin about inappropriate behavior.
+### People cannot send me Mentoring requests
 
-## 14. Capabilities Mentors Do Not Currently Have
+Check all of the following: your Member Profile is complete, Accept introductions is on, Offering includes Mentor match, your target Space access is active, and the Space allows matching.
 
-- Self-service Mentor application, approval, or renewal;
-- Automatic Admin privileges;
-- Event creation, editing, or management;
-- Member invitations or participant management;
-- Project CRUD or project management;
-- Mentoring schedules, sessions, progress tracking, or enforced capacity;
-- In-platform chat, calls, or Calendar integration;
-- Mentor ratings, public reviews, certificates, or points;
-- Personal analytics or Mentor data exports;
-- Self-service editing or deletion of posts, leaving a Space, or deleting a local account.
+### I can see a request but cannot respond
 
-## 15. Frequently Asked Questions
+Open the request's source Space and use its Introductions page. If the Space is unavailable, contact the Admin.
 
-### I am already an Approved Mentor. Why can I not see an Event?
+### I reached my Max mentees value but still receive requests
 
-Mentor status is a global qualification, while Space access is granted independently. Ask an Admin to check your active access to the Event and its lifecycle state.
+This value is not an automatic limit. Remove Mentor match or turn off Accept introductions.
 
-### Why can other people not send me a Mentoring request?
+### I need to report inappropriate behavior or remove content
 
-Confirm that the account is connected, the Profile is complete, `introOptIn` is enabled, Offering includes `mentor_match`, current Space access is active, and Matching is enabled for the Space.
+Contact an Admin with the Space name and enough detail to identify the content. Mentors do not receive moderation controls unless they separately have an Admin role.
 
-### Does reaching Max mentees automatically stop new requests?
+## 13. Before you finish setup
 
-No. That value currently informs display and scoring. Manually remove `mentor_match` or turn off acceptance of introductions.
+- My invitation was accepted with the correct verified email.
+- My account is connected.
+- My 7 required Member Profile items are complete.
+- My Mentor status is Approved.
+- My Mentor topics, experience, offers, and availability are accurate.
+- Accept introductions is on when I want new requests.
+- Offering includes Mentor match when I want Mentoring requests.
+- I have active access to every Space I expect to use.
+- My matching intent and opt-in are set separately in each Space.
+- I know that Accept and Decline happen in the request's source Space.
+- I know that meetings and mentoring records continue outside WaveSparks.
 
-### Why can I Accept or Decline only inside the Space?
-
-The Mentoring workspace is an aggregate view across Spaces. Final actions remain in the source Space so the system can revalidate both participants' permissions and the request context.
-
-### Where do I schedule a meeting after accepting?
-
-Use the exchanged email address or authorized WhatsApp details and arrange the meeting through an external tool. The platform currently does not provide calendar or session management.
-
-### Can a Mentor moderate inappropriate posts?
-
-Only if the Mentor also has an Admin role. Otherwise, send the content and Space details to an Admin.
-
-## 16. Mentor Quick Self-Check
-
-- My account is connected and my Mentor status is approved.
-- I have active access to the target Space.
-- I satisfy all seven Member Profile completion requirements.
-- My Mentor topics, stages, Strengths, Offering, Availability, and Capacity are accurate.
-- When I want to receive requests, I enable `introOptIn` and offer `mentor_match`.
-- I complete intent and opt in independently for every Space where I want to participate in Matching.
-- I regularly check the Mentoring workspace and the source Space Inbox.
-- I understand that scheduling, recordkeeping, and outcome tracking happen outside the platform after acceptance.
-- When I want to pause new requests, I disable the relevant Offering or introductions.
+You are ready when your Profile is complete, your Mentor status is Approved, your target Space is visible, and your mentoring and matching settings reflect your current availability.

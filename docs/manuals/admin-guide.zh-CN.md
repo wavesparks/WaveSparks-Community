@@ -1,646 +1,432 @@
-# WaveSparks Community Admin 使用与运维手册
+# WaveSparks Community 管理者快速上手指南
 
-版本：1.0
-审计基线：2026-07-29 代码、当前界面与供应商官方文档
-适用角色：WaveSparks Community 组织管理员、发布负责人和一线运维
+版本：1.1
 
-> 本手册区分“当前代码已经实现”“供应商控制台操作”和“发布前必须修复/补建”。执行生产变更前先确认目标环境、恢复点和授权人，绝不在工单、聊天或截图中粘贴密钥。
+适用对象：通过 Admin 后台运营 WaveSparks Community 的公司经理和项目负责人。
 
-## 1. 管理员定位与完整生命周期
+这是一份产品运营指南，重点说明日常设置、成员管理、Event 运营、内容治理和数据查看。部署、登录系统、数据库、邮件服务、恢复和服务维护等技术内容统一放在项目 `README.md` 中，并由指定的技术负责人处理。
 
-Admin 负责社区账户、Space、内容、介绍、匹配和日常运营；Vercel、Clerk、Neon、Resend 分别承载部署、身份、数据和产品邮件。
+## 1. 你的职责是什么
 
-标准运营生命周期：
+作为 Admin，你负责从邀请到持续参与的完整成员体验。主要工作包括：
 
-1. 解决首个 Admin 身份连接阻断，建立可审计的生产管理员。
-2. 配置生产域名、环境变量、Clerk Webhook、Neon 数据库、Resend 域名和 Vercel Blob。
-3. 运行环境审计、迁移、数据审计、测试和部署验证。
-4. 设置社区名称、Logo、说明和邀请指引。
-5. 创建 Event，设置生命周期、时间、参与者和 Matching。
-6. 单人邀请或批量导入成员，并跟进邀请接受。
-7. 独立管理角色、Mentor designation、账号状态和各 Space 权限。
-8. 运营 Profile、帖子、Introduction、Matching 和 Analytics。
-9. 处理账号停用、内容审核、安全事件和数据匿名化。
-10. 每日检查部署、Cron、邮件和 Webhook；定期轮换密钥、恢复演练和容量复盘。
+- 保持组织信息和邀请说明准确；
+- 邀请正确的人，并分配正确的 Space 访问权限；
+- 创建、发布、运营和关闭 Event；
+- 根据公司审核结果批准或取消 Mentor 资格；
+- 管理 Profile 和社区内容；
+- 查看 Introduction 请求和 Matching 质量；
+- 查看活跃趋势，并跟进日常运营问题。
 
-![Admin Overview](../assets/manuals/admin-overview.png)
+你不需要维护网站托管、登录基础设施、数据库或邮件投递服务。如果问题无法在 Admin 后台解决，请记录受影响人员的邮箱、Space、发生时间和截图，然后联系技术负责人。
 
-## 2. 上线前必须解决的已知风险
+### 四类控制需要分别检查
 
-以下不是可忽略的文档备注，而是当前代码审计确认的生产风险。
+一个人的访问能力由四类独立设置共同决定：
 
-### 2.1 P0：全新生产库的首个 Admin 无法按现有脚本完成连接
-
-`scripts/bootstrap-production.ts` 会创建 `org_admin` membership，但没有显式写入 `accountStatus`，因此采用 `invited` 默认值；脚本也不会创建本地一次性 Invitation、发送 Clerk Application Invitation 或写入 `clerkUserId`。
-
-生产认证只按 Clerk User ID 连接本地身份，明确禁止按邮箱自动认领。因此全新库执行 `db:bootstrap` 后，首个 Admin 不能只靠同邮箱 Clerk 登录进入后台。
-
-发布要求：
-
-- 在代码中补齐正式的首管邀请/绑定方案，并增加自动化测试；
-- 不得临时开启“按邮箱自动绑定”；
-- 不得手工把数据库记录标成 connected 而不绑定 Clerk ID；
-- 不得使用 Preview Accounts 作为生产管理员；
-- 修复合入、迁移、演练并由第二人复核后，才能声明首管开通完成。
-
-### 2.2 P1：部分管理 Route Handler 仍按邮箱授权
-
-以下入口与 Clerk-ID 身份不变量不一致，发布前应统一改用服务端 Viewer Context/Clerk ID：
-
-- Profile CSV 导出；
-- 组织 Logo 上传；
-- Member import 解析；
-- 交互式 Matching recompute；
-- Preview accounts provisioning。
-
-Profile CSV 还应增加 `Cache-Control: no-store` 和导出审计。修复前应限制后台访问面、避免共享 Admin 账号，并在每次敏感操作后检查日志和数据结果。
-
-### 2.3 P1：Preview Accounts API 不应存在于生产操作路径
-
-`POST /api/internal/preview-accounts` 当前没有明确的 production/E2E guard，可写入四个 connected QA 账号，其中包含 Admin。它不是生产工具；发布前应禁用、移除或增加严格的非生产保护。
-
-### 2.4 P1/P2：尚未落地的控制
-
-- Schema 虽有 reports/admin_actions，但当前没有举报队列或中央 Admin Audit Log。
-- App 内 Suspend 不会自动撤销 Clerk Session；凭据泄露时必须在 Clerk 另行处置。
-- 没有 GitHub Actions 发布 Gate、Sentry/OTel、Log Drain 或代码化告警。
-- Neon 恢复流程和演练记录未代码化；运行时与迁移共用数据库凭据。
-- Resend 没有 Webhook、投递状态表或 Admin 重试界面。
-
-手册后续提供人工控制流程，但不得把这些描述为已经自动化。
-
-## 3. 权限与责任边界
-
-Admin 入口要求账号 `connected`，并拥有 `org_admin` 或 `platform_owner`。当前没有“只管理成员”“只审核内容”等细粒度 Admin 角色，两者均是完整管理权限。
-
-权限分为独立维度：
-
-- Account permission：Member 或 Administrator；
-- Mentor designation：not_mentor、needs_review、approved；
-- Account status：invited、connected、suspended、deprovisioned；
-- Space entitlement：active、waitlist、rejected、suspended、removed；
-- Space lifecycle：draft、upcoming、active、ended、archived。
-
-Approved Mentor 不会自动获得 Admin。Admin 可以审计全部 Space，但如果要作为社交参与者出现在 People、发布内容、参与匹配或发起人工 Introduction，仍需显式加入对应 Space。
-
-Admin 不能撤销自己的有效 Admin 权限；修改其他管理员时必须二次确认。建议始终保留两个独立、受 MFA 保护的管理员，避免单点失联。
-
-## 4. 后台页面与职责
-
-| 页面 | 主要能力 | 关键注意事项 |
+| 控制项 | 常见状态 | 决定什么 |
 | --- | --- | --- |
-| Overview | Connected accounts、完整 Profile、已接受 Introduction、本周发帖人数、近期活动 | 是运营摘要，不是监控告警 |
-| Members | 单人邀请、CSV/XLSX 导入、邀请重试/撤销、角色、Mentor、账号与 Space 状态 | 四个权限维度必须分别判断 |
-| Community & events | Main Community、Event 创建/更新/归档/恢复、Participants、Content、Matching | ended 仍可互动，archived 才停止访问 |
-| Profiles | 查看完整资料与联系方式、Featured/Stale、CSV 导出 | 敏感数据；当前缺少中央导出审计 |
-| Posts | Hide/Unhide、Feature、Lock comments、Archive、图片/链接/评论审核 | 当前无用户举报入口 |
-| Requests | 按状态/来源/Space 审查，人工创建 Introduction | Admin 自己必须有来源 Space access |
-| Matches | 重算、匹配类型/方向/权重/最低分、匿名反馈和运行记录 | 配置变更后检查结果与反馈 |
-| Analytics | 账号、Profile、Introduction、Teams formed、活动趋势 | 当前是基础快照，不是完整 BI |
-| Settings | 名称、Logo、Tagline、社区说明、邀请指引 | Logo 为公开 Blob |
+| 账号权限 | Member 或 Administrator | 是否可以进入 Admin 后台 |
+| Mentor 资格 | Not a mentor、Needs review 或 Approved | 是否可以作为 Mentor 被发现和匹配 |
+| 账号状态 | Invited、Connected、Suspended 或 Deprovisioned | 是否可以使用整个组织 |
+| Space 权限 | Active、Waitlist、Rejected、Suspended 或 Removed | 是否可以进入某个 Community 或 Event |
 
-## 5. 成员与邀请全流程
+修改其中一项不会自动修改其他项。例如，批准 Mentor 不会让对方成为 Admin；加入 Event 也不会自动加入 Main Community。
 
-### 5.1 单人邀请
+## 2. 登录后的前 30 分钟
 
-1. 打开 Members → Invite people → One person。
-2. 输入准确邮箱和可选姓名。
-3. 选择 Member 或 Administrator。
-4. 独立选择 Not a mentor 或 Approved mentor；邀请时不能制造 needs_review。
-5. Member 必须选择目标 Main Community/Event 及初始 Space access。
-6. Administrator 可不选 Space；只有需要参与社交时才添加。
-7. 提交后检查行级 Invitation 状态，不把“Clerk 接受发送请求”当作送达证明。
+在邀请大批成员之前，先完成以下快速设置：
 
-WaveSparks 先创建本地一次性邀请，只把 token 哈希保存到 Neon，再让 Clerk 发送 Application Invitation。Clerk 只建立/登录身份，不创建 Clerk Organization、角色或社区权限。用户必须在 7 天内用匹配且已验证的邮箱接受。
+1. 打开邀请邮件，使用被邀请的同一个邮箱登录。
+2. 确认主导航中出现 **Admin**。
+3. 打开 **Admin -> Overview**，查看当前账号数、完整 Profile 数、Introduction 和近期活动。
+4. 打开 **Admin -> Settings**，确认组织名称、Logo、Tagline、介绍和邀请说明。
+5. 打开 **Admin -> Community & events**，了解 Main Community 和已有 Event。
+6. 邀请一个测试 Member，把对方加入测试或 Draft Event，确认预期权限有效。
+7. 保存负责本项目的技术负责人的姓名和联系方式。
 
-邀请状态：
+![Admin 概览](../assets/manuals/admin-overview.png)
 
-- pending：可用，等待接受；
-- accepted：本地身份连接完成；
-- revoked：已撤销；
-- expired：超过有效期；
-- failed：本地或 Clerk 发送失败。
+### 认识 Admin 导航
 
-重发会生成新的有效票据；撤销后旧链接不可再用。邀请邮件问题查 Clerk，不查 Resend。
+| 页面 | 主要用途 |
+| --- | --- |
+| Overview | 快速查看运营概况和近期活动 |
+| Members | 邀请、导入、权限、Mentor 资格、账号状态和 Space 权限 |
+| Community & events | Main Community 和 Event 设置、Participants、Content 与 Matching |
+| Profiles | Profile 审核、Featured 或 Needs review，以及 CSV 导出 |
+| Posts | 内容治理和精选内容 |
+| Requests | 查看 Introduction，以及创建人工 Introduction |
+| Matches | 查看匹配、反馈、配置和刷新结果 |
+| Analytics | 查看成员与参与度趋势 |
+| Settings | 设置组织信息和邀请说明 |
 
-### 5.2 批量导入
+## 3. 完成组织基础设置
 
-支持 `.csv`、`.xlsx` 或粘贴 CSV：
+打开 **Admin -> Settings**，从 Member 的视角检查每个字段。
 
-1. 上传或粘贴数据。
-2. 映射必需 Email 和可选 Name。
-3. 选择唯一目标 Space 与初始 access。
-4. 在 Preview 中修正/移除问题行。
-5. 确认 Invite N people。
-6. 查看逐行结果，只重试 failed 行。
+### 名称和 Tagline
 
-限制：2MB、首个工作表、最多 20 列、100 个非空数据行。选择文件不会发送邀请；文件只在内存解析，不保留。批量导入固定创建 Member + Not a mentor，不能批量授予 Admin 或 Mentor approval。
+使用正式的组织或项目名称。Tagline 应简短，让新成员一眼知道社区的目的。
 
-现有 Profile 和全局角色不会被覆盖。导入只在安全时增加目标 Space entitlement。重复邮箱首条生效；无效行不阻塞有效行。
+### Logo
 
-![Members 管理](../assets/manuals/admin-members.png)
+上传当前批准使用的 Logo。保存后打开成员页面，确认它在页面的明暗区域都清晰可见。
 
-### 5.3 账号状态与安全动作
+### About 或社区介绍
 
-- invited：身份未连接，不能进入任何 Space。
-- connected：可按各 Space entitlement 使用。
-- suspended：可逆的全局安全阻断，覆盖所有 Space。
-- deprovisioned：组织不再配置该账号，所有 Space 阻断。
+建议说明：
 
-只影响某个 Event 时使用 Space-level suspended/removed；涉及凭据泄露、严重违规或全局离职时使用 Account suspend/deprovision。
+- 社区面向谁；
+- 成员可以在这里做什么；
+- 期望遵守哪些行为规范；
+- 遇到问题去哪里求助。
 
-安全事件中，App suspend 只阻止应用授权，不撤销现有 Clerk Session。必须同时在 Clerk 撤销 Session/封锁身份，并根据情况轮换密钥。
+### 邀请说明
 
-### 5.4 Mentor designation
+用一段简短文字告诉收件人：必须使用被邀请的同一个邮箱，在七天内接受邀请，并在互动前先完成 Profile。
 
-Mentor designation 是服务资格，不是管理权限。Needs review 用于待核验遗留信号；Approve 后才进入 Mentor 发现和匹配。Revoke 会让 pending Mentoring request 过期并停止新 Mentor discovery/matching，但保留私有 Mentor Profile 和 accepted/declined 历史。
+每次修改后都要保存，并从成员页面检查结果。如果显示已保存但成员端没有变化，请记录修改内容并联系技术负责人。
 
-## 6. Community 与 Event 生命周期
+## 4. 邀请和引导 Member
 
-每个组织恰好有一个 Main Community，可有多个 Event。Main 永久、邀请制、始终 active，不能 ended 或 archived。
+### 单人邀请
 
-Event 状态：
+1. 打开 **Admin -> Members -> Invite people -> One person**。
+2. 输入准确邮箱，并尽量填写姓名。
+3. 选择 **Member** 或 **Administrator**。
+4. 单独选择 **Not a mentor** 或 **Approved mentor**。
+5. 如果邀请 Member，选择 Main Community 或 Event，以及初始 Space 权限。
+6. 复核选择后发送邀请。
+7. 在 Members 中确认这一行的邀请状态。
 
-- draft：仅 Admin 设置，参与者不可进入；
-- upcoming：active 参与者可在开始前进入；
-- active：正常读写和匹配；
-- ended：显示 Past event，但当前仍可读写和匹配；
-- archived：对参与者隐藏，访问与匹配停止，数据保留。
+收件人必须在七天内接受邀请，并使用完全一致且已验证的邮箱。如果邀请过期，请重新发送。重新发送会生成新的有效邀请；撤销后旧链接不能再使用。
 
-![Community 与 Events](../assets/manuals/admin-spaces.png)
+Administrator 应逐个邀请。Administrator 可以不属于任何 Space，但如果需要出现在 People、发布内容、参与 Matching，或在某个 Space 创建人工 Introduction，就必须明确加入该 Space。
 
-### 6.1 创建和发布 Event
+### 批量导入成员
 
-1. 在 Community & events 新建 Event。
-2. 填写名称、Slug、描述、标签、时间与 Matching 设置。
-3. 保持 draft 完成内容和权限核对。
-4. 通过单人邀请或 Event 内 Add participants 配置 roster。
-5. 切换为 upcoming/active 后，用真实 Member 测试访问。
-6. 活动结束可先设 ended 保留互动；需要真正关闭访问时再 archive。
+当一批 Member 需要相同的初始 Space 权限时，可以使用批量导入。
 
-### 6.2 Add to Main Community
+1. 打开 **Admin -> Members -> Invite people -> Import**。
+2. 上传 CSV 或 XLSX 文件，或粘贴 CSV 数据。
+3. 映射必填的 **Email** 字段和可选的 **Name** 字段。
+4. 选择一个目标 Space 和一种初始权限。
+5. 在 Preview 中检查并修正或移除无效行。
+6. 确认 **Invite N people**。
+7. 查看每一行结果，只重试失败的行。
 
-从 Event 选择合格参与者并 Add N to Main Community。该动作：
+导入限制：
 
-- 立即创建 active Main entitlement；
-- 对已在 Main 的成员幂等；
-- 保留原 Event 权限；
-- 不复制帖子、关注、匹配、反馈或 Introduction；
-- 对冲突逐行报告。
+- 文件最大 2 MB；
+- XLSX 只读取第一个工作表；
+- 最多 20 列；
+- 最多 100 行非空数据；
+- 重复邮箱以第一次出现为准。
 
-不得假设参加 Event 就自动加入 Main，也不得用数据复制模拟“升级”。
+选择文件不会立即发送邀请，只有最终确认后才会发送。批量导入固定创建 **Member + Not a mentor**，不能批量授予 Admin 权限或批准 Mentor。已有 Profile 和全局账号权限不会被覆盖。
 
-## 7. 内容、Profile、Introduction 与 Matching 运营
+![成员管理](../assets/manuals/admin-members.png)
 
-### 7.1 Profile
+### 跟进新成员进度
 
-Profiles 可查看成员完整资料、运营联系方式、Featured/Stale 队列并导出 CSV。导出前确认目的、最小接收人和安全存储位置；下载后按组织保留策略删除本地副本。
+在 Members 列表中区分：
 
-当前导出缺少完整中央审计且部分授权逻辑需要修复。上线前修复后，再将其纳入定期运营。
+- **Invited**：邀请已发出，但账号连接尚未完成；
+- **Connected**：对方已经成功登录并连接；
+- **Suspended**：整个组织范围内的可恢复暂停；
+- **Deprovisioned**：组织不再为此账号提供访问。
 
-### 7.2 内容审核
+如果 Connected Member 能打开组织却看不到某个 Space，请单独检查该 Space 权限。如果能阅读但不能发帖、评论、关注、收藏、查看 People、使用 Matches 或处理请求，请让对方先完成七项必填 Profile 内容。
 
-Posts 支持：
+## 5. 安全管理角色、Mentor 和访问权限
 
-- Hide/Unhide；
-- Feature/Unfeature；
-- Lock/Unlock comments；
-- Archive/Reopen；
-- Remove/Restore 图片、链接预览和评论。
+### 账号权限
 
-操作前记录 Post/Comment ID、Space、原因和处理人。当前没有可用的 Reports 队列和不可抵赖 Admin Audit Log，重要事件应在外部工单记录证据与决策。
+只有确实需要完整 Admin 后台的人才应获得 Administrator 权限。目前没有“只管邀请”或“只管内容”等受限 Admin 角色。Admin 不能取消自己的有效 Admin 权限。
 
-### 7.3 Introduction
+修改另一位 Admin 前：
 
-Requests 可按状态、来源和 Space 筛选。人工 Introduction 要求 Admin 本人有该 Space access；候选人需是当前有效、完成 Profile 的参与者。填写 Who is asking、Who should they meet、Purpose、Note 和 Suggested first message。
+1. 确认对方身份；
+2. 向有权限的经理确认变更要求；
+3. 确保至少还有另一位可用 Admin；
+4. 在公司的变更记录中写明原因。
 
-Admin 可查看联系方式，但不应绕过双方同意流程公开给第三方。Introduction 不授予新 Space 权限。
+### Mentor 资格
 
-### 7.4 Matching
+Mentor 资格是一种服务身份，不是管理权限。
 
-![匹配管理](../assets/manuals/admin-matches.png)
+- **Not a mentor**：不会作为 Mentor 提供给成员；
+- **Needs review**：等待组织审核；
+- **Approved**：当 Mentor 设置和 Space 权限也符合要求时，可以进入 Mentor 发现和匹配。
 
-Matching 按 Space 运行。候选人必须 connected、Space active、Profile complete、Space intent complete 且 opt-in；ended Event 继续匹配，archived 停止。
+取消 Approved 会停止新的 Mentor 发现与匹配，并让待处理的 Mentoring 请求过期，但不会删除已经接受或拒绝的历史记录。
 
-后台可以：
+### 账号状态与 Space 权限
 
-- 查看 Strong/Good 和各 Match type；
-- 创建/更新 Match type，最多 12 个启用项；
-- 配置方向、最低分和六项权重，权重合计 100；
-- 触发全量刷新；
-- 查看匿名 Helpful/Not relevant 反馈及近期运行。
+当决定适用于整个组织时，使用账号状态：
 
-变更前记录当前配置，先在开发或隔离数据验证；生产刷新后抽查不同 Space、不同类型、Mentor gate、被隐藏和 dismissed 项。Fit index 是匹配程度，不是成功概率或声望。
+- **Suspended**：可恢复的全局暂停；
+- **Deprovisioned**：组织不再提供该账号。
 
-## 8. 系统架构与权威来源
+当决定只影响某个 Community 或 Event 时，使用 Space 权限：
 
-| 领域 | 权威系统 | 说明 |
+- **Active**：在 Space 生命周期允许时可以参与；
+- **Waitlist** 和 **Rejected**：不能进入；
+- **Suspended**：暂时阻止进入该 Space；
+- **Removed**：结束该 Space 权限。
+
+如果怀疑账号安全问题，请立即在 WaveSparks 中暂停账号，然后联系技术负责人进一步处理登录会话。
+
+## 6. 创建和运营 Event
+
+每个组织有一个长期存在的 Main Community，也可以建立多个 Event。Event 采用邀请制，且权限与 Main Community 相互独立。
+
+![Admin Event 发布流程](../assets/manuals/admin-event-launch-flow-zh-CN.png)
+
+### Event 生命周期
+
+| 状态 | Member 看到什么 | 管理者应在何时使用 |
 | --- | --- | --- |
-| 代码与部署 | GitHub + Vercel | 当前无 GitHub Actions gate，主要依赖 Vercel Git 集成与人工检查 |
-| 身份、凭证、Session、身份邀请 | Clerk | 不使用 Clerk Organizations |
-| 组织、角色、邀请授权、Space、内容、匹配 | Neon/Postgres | 应用授权唯一权威 |
-| 普通产品邮件 | Resend | Invitation 邮件不走 Resend |
-| 头像、Logo、帖子媒体 | Vercel Blob | Avatar/Logo public；Post media private |
-| 语义 Embedding | OpenAI | `text-embedding-3-large`，1024 维；失败有本地确定性 fallback |
+| Draft | Participants 无法进入 | 私下搭建和检查 |
+| Upcoming | Active participants 可以进入 | 在正式开始前开放 |
+| Active | 正常参与 | 项目或活动进行中 |
+| Ended | 仍可阅读、发帖和匹配 | 活动结束但继续交流 |
+| Archived | 对参与者隐藏且不可进入 | 停止访问但保留数据 |
 
-应用部署区域在 `vercel.json` 固定为 `sin1`。应选择接近的 Neon 区域，但代码无法证明控制台实际区域。
+重要：**Ended 不会停止互动。** 只有在需要停止访问和 Matching 时才使用 **Archived**。
 
-## 9. 环境变量管理
+### 创建并发布
 
-| 变量 | 用途 | 生产要求 |
-| --- | --- | --- |
-| `NEXT_PUBLIC_APP_URL` | Canonical App URL 与邀请返回 | HTTPS、社区应用域名，不是营销站 |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk 浏览器端 | `pk_live_` |
-| `CLERK_SECRET_KEY` | Clerk 服务端 | Secret，不得公开 |
-| `CLERK_JWT_KEY` | Clerk JWT 验证辅助 | 按部署配置 |
-| `CLERK_WEBHOOK_SIGNING_SECRET` | Webhook 签名 | `whsec_` |
-| `NEXT_PUBLIC_CLERK_*_URL` | 登录/注册路径 | `/org/wavesparks/...` 或 HTTPS |
-| `DATABASE_URL` | Neon Postgres | 非 localhost；环境隔离 |
-| `SPACE_SCOPED_READS_ENABLED` | Space 隔离开关 | 必须明确为 `true`，否则 fail closed |
-| `OPENAI_API_KEY` | Matching embeddings | Secret |
-| `RESEND_API_KEY` | 产品通知邮件 | Domain-scoped Sending access |
-| `RESEND_FROM_EMAIL` | 发件人 | 已验证域名 |
-| `CRON_SECRET` | Cron Bearer auth | 随机、建议至少 32 字符 |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob | Secret；缺失时媒体上传不可用 |
-| `WAVESPARK_ADMIN_EMAILS` | Bootstrap 目标邮箱 | 当前首管流程有 P0，修复前不能视为可登录账号 |
-| `E2E_CLERK_*` | Clerk E2E 测试账号 | 不等同于本地 E2E bypass |
+1. 打开 **Admin -> Community & events**，创建 Event。
+2. 填写名称、Slug、介绍、Tags 和时间。
+3. 准备期间保持 **Draft**。
+4. 决定是否启用 Matching，并检查相关设置。
+5. 通过单人邀请、批量导入或 Event 的 Participants 区域添加参与者。
+6. 如果某位 Admin 需要参与互动或创建人工 Introduction，也要把其作为参与者加入 Event。
+7. 复核内容、参与者权限、日期和邀请说明。
+8. 将 Event 改为 **Upcoming** 或 **Active**。
+9. 正式通知成员前，用真实 Member 账号测试访问。
 
-生产不得设置 `E2E_LOCAL_AUTH_ENABLED` 或 `E2E_LOCAL_AUTH_SECRET`。开发、Preview、Production 必须分开配置 Clerk、Neon 和其他 Secret。
+![Community 和 Event](../assets/manuals/admin-spaces.png)
 
-Vercel 环境变量变更只作用于后续 Deployment；修改后必须 Redeploy，再验证运行实例使用新值。不要在 Git、README、PDF、终端录屏或 PR 中写真实值。
+### 运营进行中的 Event
 
-## 10. 发布与数据库迁移 Runbook
+Event 期间：
 
-### 10.1 发布前
+- 检查参与者权限和邀请失败；
+- 查看 Profile 完成情况，帮助无法互动的 Member；
+- 查看 Posts 和需要处理的内容；
+- 留意待处理 Introduction；
+- 抽样查看 Matches，以及匿名的 Helpful 或 Not relevant 反馈；
+- 把 Analytics 当作方向性概览，而不是完整的报表系统。
 
-1. 解决第 2 章 P0/P1 阻断，并通过代码审查。
-2. 确认 Git 分支、目标 Vercel Project 和 Production Domain。
-3. 在 Neon 建立可恢复时间点/分支，记录时间和负责人。
-4. 检查 Vercel Production 环境变量完整且无 Preview/Dev 凭据。
-5. 本地或受控 CI 运行：
+### 结束、保留或关闭
 
-```bash
-pnpm install --frozen-lockfile
-pnpm env:audit
-pnpm readiness:prod -- --env-only
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-```
+正式活动已经结束，但希望 Member 继续阅读、发帖和匹配时，选择 **Ended**。需要停止参与者访问时，选择 **Archived**。
 
-`env:audit` 要求开发库名为 `wavespark_dev`、开发使用 Clerk test keys、生产使用 live keys，并检查 Development/Production 不指向同一数据库。
+如果希望部分 Event 参与者进入长期 Main Community，使用 **Add N to Main Community**。这会创建 Active Main 权限并保留原 Event 权限，但不会复制 Posts、关注、Matches、反馈或 Introductions。
 
-### 10.2 迁移
+加入 Event 永远不会自动获得 Main 权限。
 
-先 dry run：
+<!-- pagebreak -->
 
-```bash
-pnpm db:migrate -- --environment=production
-```
+## 7. 审核 Profile 并保护个人信息
 
-确认输出的主机/数据库和恢复点，再由授权人执行：
+在 **Admin -> Profiles** 中可以查看完整 Profile、联系方式、Featured 内容和需要关注的 Profile。
 
-```bash
-pnpm db:migrate -- --environment=production --apply --confirm-production
-pnpm readiness:prod
-```
+良好的管理习惯：
 
-Migration 会创建 `vector` extension 并执行 Drizzle migrations。Production 写入必须同时带 `--apply` 和 `--confirm-production`。Readiness 全量检查还会审计每个组织恰好一个 Main Space、重复/孤儿关系和 Space-scoped 数据完整性。
+1. 只有明确的运营目的才打开 Profile；
+2. 使用现有控制项处理资格或审核状态；
+3. 用一致且有记录的规则选择 Featured Profile；
+4. 不要把联系方式复制到非正式消息中；
+5. 只在必要时导出 CSV，并存放在公司批准的位置；
+6. 按公司保留政策删除临时副本。
 
-### 10.3 部署与验证
+Admin 可以看到敏感 Profile 和联系方式，这项权限只用于社区运营，不代表可以在未经同意时向他人披露。
 
-1. 让 Vercel 创建 Preview Deployment。
-2. 用隔离 Preview 数据验证登录、Space 边界和关键功能；Preview 不得连接 Production `DATABASE_URL`。
-3. 部署/Promote Production。
-4. 检查首页、Admin、真实 Clerk 登录、受邀用户接受流程。
-5. 抽查 Feed、People、Profile、媒体、Introduction、Matching。
-6. 在 Vercel Runtime Logs 检查 4xx/5xx、Webhook、邮件和 Blob 错误。
-7. 检查两个 Cron 路径和最近状态。
+## 8. 管理社区内容
 
-应用回滚不会回滚 Neon schema。包含不兼容数据库变更时，采用向后兼容的扩展/迁移、先 Schema 后代码、验证后再删除旧字段；不要把 Vercel Rollback 当作数据库恢复。
+打开 **Admin -> Posts**，可以：
 
-## 11. Vercel 使用与维护
+- Hide 或 Unhide Post；
+- Feature 或 Unfeature；
+- Lock 或 Unlock comments；
+- Archive 或 Reopen；
+- Remove 或 Restore 图片、链接预览或 Comment。
 
-### 11.1 当前用途
+执行重要治理动作前，请在公司的工单或事件记录中保存 Post 或 Comment ID、Space、原因和决策人。当前产品没有成员举报队列，也没有完整的中央 Admin 操作日志。
 
-- 托管 Next.js 16 应用，区域 `sin1`；
-- 管理 Production/Preview/Development 环境变量；
-- 执行 Cron；
-- 提供 Runtime Logs/Observability；
-- 承载 Vercel Blob。
+建议处理顺序：
 
-Cron 使用 UTC：
+1. 保留足够证据；
+2. 如果可能继续造成影响，先 Hide 或 Lock；
+3. 确认适用的社区规范；
+4. 决定 Restore、Archive 或继续 Hide；
+5. 通过公司认可的渠道说明结果；
+6. 只有问题影响整个组织时才暂停账号。
 
-- `0 8 * * *` → `/api/internal/matches/recompute`，新加坡时间 16:00；
-- `30 8 * * *` → `/api/internal/post-media/cleanup`，新加坡时间 16:30。
+## 9. 查看 Introduction 请求
 
-两者使用 `CRON_SECRET` Bearer 校验，仅应在 Production 执行。
+在 **Admin -> Requests** 中可按状态、来源和 Space 筛选 Introduction。
 
-### 11.2 日常检查
+创建人工 Introduction 时：
 
-- Deployments：Production 是否为预期 commit、构建是否成功；
-- Runtime Logs：按 `requestPath` 检查 Cron、Webhook、邮件、Blob 和 5xx；
-- Cron Jobs：最近调用 HTTP 状态、耗时和失败；
-- Usage/Spend：Functions、Bandwidth、Blob 存储与请求；
-- Alerts：建议启用 5xx、用量和 Spend Management；
-- Observability：按保留要求配置 Log Drain；当前仓库没有持久化告警。
+1. 确认你自己拥有来源 Space 的权限；
+2. 确认双方都是当前参与者，并完成 Profile；
+3. 选择谁提出请求，以及希望认识谁；
+4. 填写目的、清晰说明和建议的第一条消息；
+5. 发送前再次复核。
 
-### 11.3 环境变量与密钥轮换
+Introduction 不会赋予另一个 Space 的访问权限。只有请求被接受后，联系方式才会向双方显示。不要向第三方披露任一方联系方式，也不要绕过双方同意。
 
-通用顺序：
+Pending 请求可能变为 Accepted、Declined 或 Expired。接受后，WaveSparks 不提供站内聊天、日程预约或会面管理。
 
-1. 在第三方创建新 Secret/Key，保留旧值暂时有效。
-2. 更新 Vercel 的正确 Environment scope。
-3. Redeploy。
-4. 用实际请求和日志确认新值生效。
-5. 撤销旧值，再做一次验证。
+<!-- pagebreak -->
 
-不要只修改 Vercel 后等待旧实例自动更新。不要把敏感 Secret 放到 `NEXT_PUBLIC_*`。
+## 10. 监督 Matching，但不要频繁调整
 
-### 11.4 回滚
+![Matching 管理](../assets/manuals/admin-matches.png)
 
-可在 Vercel 回滚/Promote 已知良好 Deployment，但必须：
+Matching 在每个 Space 内独立运行。候选人必须满足：账号 Connected、Space 权限 Active、Profile 完整、Space intent 完整，并主动开启 Matching。
 
-- 检查该 Deployment 捕获的环境变量版本；
-- 确认它兼容当前 Neon schema；
-- 回滚后单独检查 Cron Jobs；
-- 记录事故时间、commit、影响与恢复结果。
+在 **Admin -> Matches** 中可以：
 
-官方资料：
+- 按 Match type 查看 Strong 和 Good matches；
+- 查看匿名 Helpful 或 Not relevant 反馈；
+- 查看近期 Matching runs；
+- 创建或调整 Match types；
+- 修改方向、最低分和权重；
+- 启动完整刷新。
 
-- https://vercel.com/docs/environment-variables
-- https://vercel.com/docs/environment-variables/rotating-secrets
-- https://vercel.com/docs/cron-jobs/manage-cron-jobs
-- https://vercel.com/docs/logs/runtime
-- https://vercel.com/docs/deployments/rollback-production-deployment
-- https://vercel.com/docs/alerts
-- https://vercel.com/docs/spend-management
-- https://vercel.com/docs/regions
-- https://vercel.com/docs/vercel-blob
+Fit index 只是相关性信号，不是成功概率、个人价值排名或信誉分。
 
-## 12. Clerk 使用与维护
+修改设置前：
 
-### 12.1 当前边界
+1. 记录当前配置；
+2. 明确要解决的问题；
+3. 尽量只做最小修改；
+4. 在活跃度较低的时间刷新；
+5. 抽样检查不同 Member 类型和 Space；
+6. 观察反馈后再决定是否继续调整。
 
-Clerk 管理 User、验证邮箱、凭证、Session 和 Application Invitation。WaveSparks 不使用 Clerk Organizations；组织、角色、Membership 和 Space entitlement 全在 Neon。
+最多可启用 12 个 Match types。每个 Match type 的六项权重合计必须为 100。Ended Event 仍继续 Matching，Archived Event 则停止。
 
-普通邀请必须从 WaveSparks Admin 发起。直接在 Clerk Dashboard 创建 Invitation 只会创建身份，不会创建本地授权链。
+## 11. 用 Overview 和 Analytics 辅助决策
 
-Webhook endpoint：`/api/webhooks/clerk`，订阅：
+Overview 快速展示 Connected 账号、完整 Profile、已接受 Introduction、每周发帖人数和近期活动。Analytics 提供账号、Profile、Introduction、Teams formed 和活跃度趋势。
 
-- `user.created`；
-- `user.updated`；
-- `user.deleted`。
+可以用这些页面回答：
 
-Webhook 验证签名并按 `svix-id` 去重。Created/Updated 只更新已绑定身份，Deleted 匿名化本地用户。Clerk Organization 事件不会授予权限。
+- 被邀请者是否顺利完成连接？
+- Member 是否在完成 Profile？
+- Introduction 是否被接受？
+- 活动是否集中在某个 Space？
+- Event 或一次通知后，参与度是否变化？
 
-### 12.2 初始配置
+这些数字是运营概览，不是完整的商业分析系统，也不应单独用于人员绩效评价。
 
-- Production 使用 Clerk live keys，与 Development test instance 分离；
-- 配置 Production domain/DNS 和允许的 Redirect URL；
-- 保持 Restricted sign-up，使注册只在有效邀请上下文开放；
-- 创建公开 HTTPS Webhook endpoint，选择三个 User events；
-- 把 Signing Secret 配到 Vercel Production 并 Redeploy；
-- 用测试账号验证邀请、接受、update、delete 和失败重放；
-- 本项目不应启用 Clerk Organization selection，保持应用自己的组织模型。
+## 12. 简单的运营节奏
 
-### 12.3 日常与故障处理
+### Active Event 期间每天
 
-- 邀请未到：检查 Clerk Invitations、Application Logs、收件地址和邮件服务状态；
-- 接受失败：核对邀请状态、7 天有效期、已验证邮箱、Clerk User ID 绑定；
-- Webhook 失败：查看 Attempts、响应码和 Vercel 对应日志，修复后 Replay；
-- 身份泄露：WaveSparks suspend + Clerk revoke sessions/block user；
-- 删除未同步：确认 `user.deleted` 已投递且签名 Secret 正确，再检查本地匿名化。
-
-Webhook 是异步、最终一致的。处理器必须保持幂等；不要把它当成用户请求内的即时事务。
-
-### 12.4 零停机轮换
-
-Clerk Secret Key：
-
-1. 创建第二把有效 Key。
-2. 更新 Vercel Production 并 Redeploy。
-3. 从 Clerk last-used/Application Logs 和真实请求确认新 Key。
-4. 删除旧 Key。
-
-Webhook Secret：
-
-1. 创建新的 Webhook endpoint/Secret。
-2. 更新 Vercel 并 Redeploy。
-3. 发送测试事件，验证签名和去重。
-4. 删除旧 endpoint。
-
-官方资料：
-
-- https://clerk.com/docs/guides/development/deployment/production
-- https://clerk.com/docs/guides/secure/rotate-api-keys
-- https://clerk.com/docs/guides/users/inviting
-- https://clerk.com/docs/guides/secure/restricting-access
-- https://clerk.com/docs/guides/development/webhooks/overview
-- https://clerk.com/docs/guides/development/webhooks/syncing
-- https://clerk.com/docs/guides/dashboard/logs/application-logs
-- https://clerk.com/docs/guides/secure/session-options
-
-## 13. Neon 使用与维护
-
-### 13.1 当前边界
-
-代码只读取 `DATABASE_URL`。常规查询使用 Neon HTTP driver；事务和迁移使用 `postgres-js` 单连接。Migration 需要 `vector` extension。
-
-运行时与 Migration 当前共用一个数据库凭据，没有最小权限角色拆分。仓库没有 Neon Branch、Snapshot、恢复或告警自动化。
-
-### 13.2 连接选择
-
-Serverless 运行时优先使用带 `-pooler` 的 pooled endpoint，减少并发连接压力；迁移、`pg_dump` 或需要直接连接语义的工具使用 direct endpoint。变更前核对 Neon 官方建议和项目连接模式。
-
-### 13.3 迁移、分支与恢复
-
-- 每次 Production migration 前创建 Point-in-time branch/snapshot，并记录恢复点；
-- 在隔离 Branch 验证 Schema diff、Migration 和应用兼容性；
-- 每季度在隔离 Branch 做恢复演练，记录 RTO/RPO；
-- 按套餐配置 Restore window，重要 Production branch 可启用保护和 Scheduled snapshots；
-- Preview database 必须隔离，绝不能复用 Production `DATABASE_URL`；
-- Vercel 应用回滚不能替代 Neon PITR。
-
-恢复时先冻结写入并记录时间点，在隔离 Branch 验证数据与应用，再决定切换连接或执行前滚修复。涉及不可逆数据变更时由数据库负责人和业务负责人共同批准。
-
-### 13.4 日常监控
-
-检查：
-
-- CPU、RAM、数据库体积和 Compute 活跃时间；
-- Client/Server connections 与 Pooler 指标；
-- Cache hit、查询延迟、Deadlock 和错误；
-- Branch/Storage 增长、Restore window；
-- Vercel 与 Neon 区域延迟；
-- Readiness 的 Space 数据完整性结果。
-
-### 13.5 凭据轮换
-
-优先创建新 Database role，复制必要 Grants，更新 Vercel、Redeploy 并验证，再撤销旧 Role。直接 Reset password 会立即使旧连接失效。当前运行时与迁移共用凭据；要真正实施最小权限拆分，需要代码和部署配置改造。
-
-官方资料：
-
-- https://neon.com/docs/manage/projects
-- https://neon.com/docs/guides/branching-intro
-- https://neon.com/docs/connect/connection-pooling
-- https://neon.com/docs/guides/schema-diff
-- https://neon.com/docs/manage/endpoints/
-- https://neon.com/docs/changelog
-
-## 14. Resend 使用与维护
-
-### 14.1 当前边界
-
-Resend 只发送普通产品通知，例如 Introduction requested/accepted/declined。成员邀请邮件由 Clerk 发送。
-
-当前实现使用 Next `after()` 异步发送：
-
-- 未配置时只记录 provider unconfigured，站内通知继续；
-- 失败只写 Vercel console；
-- 没有 Webhook、投递/退信/投诉状态表、出站审计或 Admin 重试入口；
-- 底层支持 Idempotency key，但现有产品调用没有传入。
-
-因此 Resend Dashboard/Logs 是当前邮件投递运维的主要依据。
-
-### 14.2 域名与 API Key
-
-- 推荐使用独立发送子域隔离信誉；
-- 配置并验证 SPF、DKIM；
-- 先用 DMARC `p=none` 观察，再按组织策略逐步收紧；
-- API Key 使用 Domain-scoped Sending access，不授予 Full access；
-- `RESEND_FROM_EMAIL` 必须属于已验证域名。
-
-### 14.3 日常检查与处置
-
-每日检查 failed、bounced、complained、suppressed 和最近发送量：
-
-- Failed：结合 Vercel 日志定位配置、额度或收件地址；
-- Bounced：修正地址后再发，避免重复硬退信；
-- Complained：停止发送并检查同意依据；
-- Suppressed：先解决根因，不要反复解除 suppression；
-- 未收到 Invitation：转查 Clerk，不在 Resend 寻找。
-
-如需要可审计投递，应新增 Resend Webhook：验证签名、按 `svix-id` 去重，容忍 at-least-once 和乱序投递，并存储最小必要状态。对可重试业务邮件应实际传入 Idempotency key；Resend 的去重窗口为 24 小时。
-
-### 14.4 零停机轮换
-
-1. 创建新的 Domain-scoped Sending Key。
-2. 更新 Vercel Production 环境变量。
-3. Redeploy 并发送受控测试通知。
-4. 在 Resend Logs 按 Key/邮件验证。
-5. 删除旧 Key，再确认发送成功。
-
-官方资料：
-
-- https://resend.com/docs/dashboard/api-keys/introduction
-- https://resend.com/docs/knowledge-base/how-to-handle-api-keys
-- https://resend.com/docs/dashboard/domains/introduction
-- https://resend.com/docs/dashboard/domains/dmarc
-- https://resend.com/docs/dashboard/emails/introduction
-- https://resend.com/docs/dashboard/emails/email-suppressions
-- https://resend.com/docs/webhooks/introduction
-- https://resend.com/docs/webhooks/verify-webhooks-requests
-- https://resend.com/docs/dashboard/emails/idempotency-keys
-
-## 15. Vercel Blob 与媒体维护
-
-- Avatar/Organization Logo 使用 public Blob URL，请勿上传敏感图像；
-- Post 图片和链接预览使用 private Blob，经应用鉴权读取；
-- 帖子最多 4 张图，每张 5MB，JPG/PNG/WebP；最长边处理到 2400px；
-- `BLOB_READ_WRITE_TOKEN` 缺失时媒体上传不可用，文本功能仍可用；
-- 每日清理 Cron 处理孤儿媒体，失败目前只留 Runtime Log。
-
-每日检查 Blob 用量和 Cleanup Cron；内容下架要确认数据库 moderation 状态和 Blob 生命周期符合保留策略。轮换 Token 使用“新值 → Vercel → Redeploy → 上传/读取验证 → 撤销旧值”。
-
-## 16. 安全事件与离职 Runbook
-
-### 16.1 成员账号异常
-
-1. 在 Members 全局 Suspend，记录原因。
-2. 如果怀疑身份泄露，在 Clerk 撤销全部 Session/封锁用户。
-3. 检查近期 Admin/Runtime/Application Logs；当前没有完整应用审计，需要结合外部工单。
-4. 根据影响处理 Space、Invitation、内容和 Introduction。
-5. 确认恢复条件后再分别解除 Clerk 与 App 侧限制。
-
-### 16.2 管理员离职
-
-1. 先确认至少另一名可登录管理员。
-2. 在 WaveSparks 撤销其 Admin 或 deprovision。
-3. 在 Clerk 撤销 Session/禁用身份。
-4. 移除 GitHub、Vercel、Neon、Resend 和 Clerk 控制台权限。
-5. 轮换其可能接触的 Secret，并检查最近 Deployment/Export/变更。
-6. 在外部审计记录完成时间和复核人。
-
-### 16.3 用户删除
-
-Clerk `user.deleted` Webhook 成功后，本地资料和联系方式匿名化，账号停用，关注、收藏、匹配和通知等关联数据删除，pending Introduction 过期；历史帖子和评论保留为 Former member。
-
-删除前告知数据保留规则。仅在 Clerk 删除而 Webhook 失败时，本地数据不会自动完成匿名化，必须修复并 Replay。
-
-## 17. 周期性维护清单
-
-### 每日
-
-- Vercel Production Deployment、5xx 和 Runtime Logs；
-- 两个 Cron 的 HTTP 状态与路径日志；
-- Clerk Invitation/Webhook failures；
-- Resend failed/bounced/complained/suppressed；
-- Neon 错误、连接和容量异常；
-- Pending Invitation、Introduction 和内容运营队列。
+- 查看新邀请和失败行；
+- 处理权限问题和 Profile 未完成问题；
+- 查看紧急内容治理事项；
+- 检查待处理 Introduction；
+- 记录需要技术支持的重复问题。
 
 ### 每周
 
-- 抽查 Space access 隔离、ended/archived 状态；
-- 检查成员导入失败、Stale Profiles、Matching 运行与反馈；
-- 检查 Blob/Functions/Database/Email 用量；
-- 复核 Admin 和第三方控制台访问名单。
+- 检查 Member、Mentor 和 Admin 权限；
+- 检查 Event 参与者和生命周期状态；
+- 抽样查看 Posts、Matches 和反馈；
+- 查看需要关注的 Profiles；
+- 查看 Overview 和 Analytics 趋势；
+- 跟进未解决的支持事项。
 
 ### 每月
 
-- 运行 Production readiness 数据审计；
-- 复核依赖更新、安全公告、告警与 Spend；
-- 测试受邀注册、Webhook、邮件、媒体和 Matching 核心路径；
-- 清理不再需要的 Preview Deployment/Branch 和导出文件。
+- 确认组织信息和邀请说明仍然准确；
+- 查看不活跃或已离开的账号，移除不再需要的权限；
+- 检查谁仍需要 Administrator 权限；
+- 复核 Featured Profiles 和内容；
+- 按政策删除不再需要的本地导出；
+- 与技术负责人回顾重复出现的服务问题。
 
-### 每季度
+### 每次 Event 前后
 
-- Neon 隔离恢复演练；
-- Clerk、Resend、Blob、Cron 等 Secret 轮换演练；
-- Admin 离职与安全事件桌面演练；
-- 复核 RTO/RPO、数据保留和供应商套餐限制。
+发布前确认内容、参与者、生命周期、Matching、日期和测试账号访问。结束后决定保留 Ended 还是改为 Archived，并决定哪些参与者需要明确加入 Main。
 
-## 18. 故障速查
+## 13. 管理者故障排查
 
-| 症状 | 优先检查 |
+![Admin 支持判断流程](../assets/manuals/admin-support-flow-zh-CN.png)
+
+| 现象 | 可先在 Admin 后台检查什么 |
 | --- | --- |
-| Bootstrap Admin 无法登录 | 当前 P0 首管连接缺口；不要使用邮箱回退，先部署正式修复 |
-| Connected 用户只有 My Spaces | 目标 Space 是否 active entitlement |
-| Event 用户看不到 Main | 正常；需显式 Add to Main |
-| Ended Event 仍可发帖 | 当前设计；要停止访问请 Archive |
-| Admin 不在 People/Matching | Admin 是否显式加入该 Space |
-| 用户能读不能互动 | Profile 七项完成条件 |
-| 无匹配 | Profile、Space intent、opt-in、配置、候选数量、lifecycle |
-| 邀请未到 | Clerk Invitation/Application Logs，不是 Resend |
-| 产品通知未到 | 站内通知、Resend Logs、Vercel Runtime Logs、目标 Space access |
-| Webhook 不同步 | Clerk Attempts/Replay、签名 Secret、Vercel 日志、幂等记录 |
-| 媒体上传失败 | Blob Token、大小/类型、用量和 Runtime Logs |
-| Cron 失败 | Vercel Cron、`CRON_SECRET`、requestPath 日志、数据库/OpenAI/Blob |
-| App 回滚后仍报 DB 错 | 旧代码与当前 Neon schema 是否兼容；必要时 PITR/前滚修复 |
+| 没有收到邀请 | 核对邮箱和邀请状态，只重发一次，并让对方检查垃圾邮件 |
+| 邀请已过期 | 发送新邀请，旧链接不能复用 |
+| Connected 用户只看到 My Spaces | 确认目标 Space 权限为 Active |
+| Event 参与者看不到 Main | 这是正常行为，需要明确使用 Add to Main Community |
+| 用户可以阅读但无法互动 | 让对方完成全部七项必填 Profile 内容 |
+| Admin 没出现在 People 或 Matches | 把 Admin 作为参与者加入该 Space |
+| Approved Mentor 无法被发现 | 检查 Connected、Approved、Active Space、Mentor opt-in 和 `mentor_match` offer |
+| 没有 Matches | 检查 Profile、Space intent、opt-in、候选人数、Match 设置和 Event 生命周期 |
+| Ended Event 仍能发帖 | 这是正常行为；需要停止访问时改为 Archived |
+| 某条内容不应继续收到回复 | 根据情况 Lock comments、Hide 或 Archive |
+| 某个指标看起来不对 | 检查筛选条件和时间，并与 Members、Requests 或 Posts 列表对照 |
 
-## 19. 发布验收清单
+### 何时联系技术负责人
 
-- 首个 Admin 通过正式邀请/绑定流程连接，P0 已由代码和测试关闭。
-- 邮箱授权 Route Handler 和 Preview Accounts P1 已处理。
-- Development/Preview/Production 的 Clerk、Neon、Resend 和 Blob 完全隔离。
-- `SPACE_SCOPED_READS_ENABLED=true`，E2E bypass 未出现在生产。
-- Environment audit、Production readiness、typecheck、lint、test、build 全部通过。
-- Migration 前有可验证恢复点，Migration 后数据审计通过。
-- Clerk live keys、Restricted sign-up、Redirect 和三个 User Webhook 正确。
-- Resend 域名 SPF/DKIM 正常，发送 Key 最小权限。
-- Vercel 两个 Cron、Runtime Logs、Alerts/Spend 配置核对。
-- Event-only、Main-only、多 Event、Admin、Mentor、Suspended、Archived 场景通过。
-- Feed、People、Posts、Notifications、Introductions、Matches 无跨 Space 泄漏。
-- Vercel rollback 与 Neon restore 均完成独立演练。
-- 管理员、控制台 Owner 和紧急联系人名单已双人复核。
+| 情况 | 需要提供的信息 |
+| --- | --- |
+| 所有人都无法登录，或登录反复失败 | 受影响邮箱、时间、浏览器、截图，以及是否影响所有用户 |
+| 确认邮箱后重发仍持续失败 | 收件人邮箱、邀请状态、时间和截图 |
+| 设置或权限已保存但没有生效 | 执行的动作、人员或 Space、预期结果、实际结果和时间 |
+| 页面报错、无法加载或超时 | 页面地址、刚刚执行的动作、时间、截图和受影响人数 |
+| 产品通知反复收不到 | 收件人、通知类型、Space、大致时间，以及站内通知是否存在 |
+| 数据疑似丢失、重复或出现在错误 Space | 具体记录、受影响人员、Space、截图和首次发现时间 |
+| 怀疑安全或隐私事件 | 在安全的情况下先暂停权限，保留证据，记录时间和范围，立即升级 |
+
+不要在支持消息中分享密码、邀请链接、数据导出或服务密钥。除非技术负责人明确授权并完成培训，否则不要尝试命令行、数据库、部署或服务后台操作。
+
+## 14. 管理者检查清单
+
+### 新 Member
+
+- 邮箱和姓名正确；
+- Member 或 Administrator 权限正确；
+- Mentor 资格已单独确认；
+- 初始 Space 和权限正确；
+- 已检查邀请状态；
+- 已发送 Profile 完成说明。
+
+### Event 发布
+
+- Event 名称、介绍、Tags 和日期已复核；
+- 完成设置前一直保持 Draft；
+- 参与者和权限已检查；
+- 需要参与的 Admin 已加入；
+- Matching 选择和设置已检查；
+- 已用真实 Member 测试访问；
+- 已改为 Upcoming 或 Active；
+- 已告知成员支持联系方式。
+
+### Event 结束
+
+- 已决定使用 Ended 还是 Archived；
+- Member 清楚是否还能继续互动；
+- 需要的参与者已明确加入 Main；
+- 已检查未完成 Introduction 和内容治理事项；
+- 如公司需要，已保存 Analytics 概览。
+
+### Admin 交接
+
+- 另一位经授权的 Admin 已经可用；
+- 已说明组织和 Event 当前状态；
+- 已交接未完成邀请、请求、内容事件和支持问题；
+- 本地导出已按政策移交或删除；
+- 已通知技术负责人。
+
+当权限分配清晰、Event 发布前完成真实测试，并且 Member 收到明确的下一步说明时，WaveSparks 的运营效果最好。技术运行与维护请由技术负责人参考项目 `README.md`。
