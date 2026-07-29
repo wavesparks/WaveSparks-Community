@@ -75,7 +75,7 @@ export default async function AcceptInvitationPage({
           Back to home
         </LinkButton>
         <Card className="space-y-6">
-          <BrandLogo className="h-8 w-fit" />
+          <BrandLogo className="w-[13.7rem]" />
           <SectionHeading
             eyebrow="Personal invitation"
             level={1}

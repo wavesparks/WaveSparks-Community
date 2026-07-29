@@ -154,6 +154,7 @@ import {
   previewMemberImportAction,
   retryMemberInvitationsAction,
   resendMembershipInvitationAction,
+  updatePostContentAction,
   updatePostModerationAction,
   updateMentorDesignationAction,
   updateMembershipAction,
@@ -162,6 +163,8 @@ import {
 import {
   createComment,
   createCohort,
+  createEventSpace,
+  createRichPostInSpace,
   getMembershipById,
   getProfileByMembershipId,
   getSpaceMembership,
@@ -174,8 +177,8 @@ import {
 } from "@/server/store";
 import { getNotificationViews } from "@/server/view-models";
 
-async function setAdminViewer() {
-  const membership = (await getMembershipById("mem_avery"))!;
+async function setViewer(membershipId: string, canAdmin: boolean) {
+  const membership = (await getMembershipById(membershipId))!;
   const user = (await getUserById(membership.userId))!;
   const profile = await getProfileByMembershipId(membership.id);
 
@@ -184,13 +187,17 @@ async function setAdminViewer() {
     user,
     membership,
     profile,
-    canAdmin: true,
+    canAdmin,
     isApprovedMentor: membership.mentorStatus === "approved",
     canMentor: membership.mentorStatus === "approved",
-    scopes: ["org:admin", "org:member"],
+    scopes: canAdmin ? ["org:admin", "org:member"] : ["org:member"],
   };
 
   return membership;
+}
+
+async function setAdminViewer(membershipId = "mem_avery") {
+  return setViewer(membershipId, true);
 }
 
 function formDataFromEntries(entries: Record<string, string>) {
@@ -1400,6 +1407,173 @@ describe("admin server actions", () => {
 
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/matches");
     expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/admin/matches");
+  });
+
+  it("lets an admin edit another member's post without Space membership", async () => {
+    const space = await createEventSpace({
+      orgId: seedOrganization.id,
+      name: "Admin edit without access",
+      lifecycle: "active",
+    });
+    await grantSpaceMembership({
+      orgId: seedOrganization.id,
+      spaceId: space.id,
+      membershipId: "mem_jules",
+      joinedVia: "direct",
+    });
+    const post = await createRichPostInSpace(
+      {
+        orgId: seedOrganization.id,
+        spaceId: space.id,
+        authorMembershipId: "mem_jules",
+        type: "general_update",
+        title: "",
+        body: "Original member post",
+        tags: ["original"],
+        relatedStartupName: "Original venture",
+        relatedRolesNeeded: ["Original role"],
+        status: "closed",
+        featured: true,
+        hidden: false,
+        commentsLocked: true,
+      },
+      { images: [], mentions: [] },
+    );
+    const governanceBefore = structuredClone(post);
+    await setAdminViewer("mem_maya");
+    await expect(getSpaceMembership(space.id, "mem_maya")).resolves.toBeUndefined();
+    const formData = formDataFromEntries({
+      type: "opportunity",
+      opportunity_source: "mentor",
+      title: "Mentor office hours",
+      body: "A mentor-authored opportunity edited by a non-mentor admin.",
+      tags: "mentor, office hours",
+      related_startup_name: "Community mentors",
+      related_roles_needed: "Founder, Operator",
+    });
+
+    await expect(
+      updatePostContentAction("wavesparks", post.id, formData),
+    ).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavesparks/admin/posts?status=post_content_updated",
+    );
+
+    expect(getStore().posts.find((candidate) => candidate.id === post.id)).toMatchObject({
+      type: "opportunity",
+      opportunitySource: "mentor",
+      title: "Mentor office hours",
+      body: "A mentor-authored opportunity edited by a non-mentor admin.",
+      tags: ["mentor", "office hours"],
+      relatedStartupName: "Community mentors",
+      relatedRolesNeeded: ["Founder", "Operator"],
+      id: governanceBefore.id,
+      orgId: governanceBefore.orgId,
+      spaceId: governanceBefore.spaceId,
+      authorMembershipId: governanceBefore.authorMembershipId,
+      visibility: governanceBefore.visibility,
+      status: governanceBefore.status,
+      featured: governanceBefore.featured,
+      hidden: governanceBefore.hidden,
+      commentsLocked: governanceBefore.commentsLocked,
+      createdAt: governanceBefore.createdAt,
+    });
+    expect(afterMock).toHaveBeenCalledTimes(1);
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/feed");
+    expect(revalidatePathMock).toHaveBeenCalledWith("/org/wavesparks/opportunities");
+    expect(revalidatePathMock).toHaveBeenCalledWith(
+      `/org/wavesparks/s/${space.slug}/feed`,
+    );
+    expect(revalidatePathMock).toHaveBeenCalledWith(
+      `/org/wavesparks/s/${space.slug}/opportunities`,
+    );
+  });
+
+  it("forces resource roles empty and clears opportunity provenance", async () => {
+    await setAdminViewer();
+    const post = getStore().posts.find(
+      (candidate) => candidate.type === "opportunity",
+    )!;
+    const formData = formDataFromEntries({
+      type: "resource",
+      opportunity_source: "official",
+      title: "Updated resource",
+      body: "A reusable guide.",
+      tags: "guide, operations",
+      related_startup_name: "",
+      related_roles_needed: "This must be discarded",
+    });
+
+    await expect(
+      updatePostContentAction("wavesparks", post.id, formData),
+    ).rejects.toThrow(
+      "NEXT_REDIRECT:/org/wavesparks/admin/posts?status=post_content_updated",
+    );
+    expect(getStore().posts.find((candidate) => candidate.id === post.id)).toMatchObject({
+      type: "resource",
+      opportunitySource: undefined,
+      relatedRolesNeeded: [],
+    });
+    expect(afterMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects non-admins, cross-organization targets, and invalid post edits", async () => {
+    const post = getStore().posts.find((candidate) => candidate.spaceId)!;
+    const original = structuredClone(post);
+    const validForm = formDataFromEntries({
+      type: "general_update",
+      title: "",
+      body: "Unauthorized edit",
+    });
+
+    await setViewer("mem_jules", false);
+    await expect(
+      updatePostContentAction("wavesparks", post.id, validForm),
+    ).rejects.toThrow("Unauthorized.");
+
+    await setAdminViewer();
+    viewerRef.current = {
+      ...viewerRef.current!,
+      org: { ...viewerRef.current!.org, id: "org_other" },
+    };
+    await expect(
+      updatePostContentAction("other-org", post.id, validForm),
+    ).rejects.toThrow("Unauthorized.");
+
+    await setAdminViewer();
+    const invalidType = formDataFromEntries({
+      type: "not_a_post_type",
+      title: "Invalid",
+      body: "Invalid",
+    });
+    await expect(
+      updatePostContentAction("wavesparks", post.id, invalidType),
+    ).rejects.toThrow();
+    const forgedImage = formDataFromEntries({
+      type: "general_update",
+      title: "",
+      body: "",
+      images: JSON.stringify([
+        { id: "img_forged", alt: "Forged", position: 0 },
+      ]),
+    });
+    await expect(
+      updatePostContentAction("wavesparks", post.id, forgedImage),
+    ).rejects.toThrow("Add some text, a link, or an image");
+    const invalidSource = formDataFromEntries({
+      type: "opportunity",
+      opportunity_source: "forged",
+      title: "Invalid source",
+      body: "Invalid source",
+    });
+    await expect(
+      updatePostContentAction("wavesparks", post.id, invalidSource),
+    ).rejects.toThrow("valid opportunity source");
+
+    expect(getStore().posts.find((candidate) => candidate.id === post.id)).toEqual(
+      original,
+    );
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+    expect(afterMock).not.toHaveBeenCalled();
   });
 
   it("moderates opportunity posts with detail and opportunity list revalidation", async () => {

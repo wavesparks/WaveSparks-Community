@@ -10,9 +10,13 @@ vi.mock("@/actions/member", () => ({
 
 import { MatchCard } from "@/components/community/match-card";
 import { MemberDirectoryCard } from "@/components/community/member-directory-card";
-import type { MatchCardView, MemberDirectoryProfileView } from "@/lib/domain";
+import type {
+  MatchCardView,
+  MemberDirectoryCompleteProfileView,
+} from "@/lib/domain";
 
-const profile: MemberDirectoryProfileView = {
+const profile: MemberDirectoryCompleteProfileView = {
+  profileStatus: "complete",
   acceptingMentoringRequests: false,
   affiliationLabel: "Participant",
   bio: "Building better tools for community organizers.",
@@ -89,6 +93,34 @@ describe("member experience copy", () => {
     expect(document.querySelector('input[name="suggested_first_message"]')).toBeNull();
     expect(screen.getByText("Not added yet")).toBeInTheDocument();
   });
+
+  it.each(["missing", "incomplete"] as const)(
+    "renders a safe %s profile placeholder without social actions",
+    (profileStatus) => {
+      render(
+        <MemberDirectoryCard
+          profile={{
+            profileStatus,
+            membershipId: `membership-${profileStatus}`,
+            displayName: "Taylor Member",
+            photo: "",
+            affiliationLabel: "Participant",
+          }}
+          returnPath="/org/wavesparks/s/event-alpha/people"
+          slug="wavesparks"
+          spaceId="space-event-alpha"
+          spaceSlug="event-alpha"
+          viewerMembershipId="membership-viewer"
+        />,
+      );
+
+      expect(screen.getByText("Taylor Member")).toBeInTheDocument();
+      expect(screen.getByText(/still setting up their profile/i)).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "View profile" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Follow/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /introduction/i })).not.toBeInTheDocument();
+    },
+  );
 
   it("shows an approved mentor badge independently from affiliation", () => {
     render(

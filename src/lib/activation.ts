@@ -13,6 +13,21 @@ export interface ProfileReadiness {
   isReady: boolean;
 }
 
+export function formatProfileReadinessFieldList(
+  fields: ProfileReadinessField[],
+  options: { continueSentence?: boolean } = {},
+) {
+  return fields
+    .map((field, index) => {
+      if (index === 0 && !options.continueSentence) {
+        return field.label;
+      }
+
+      return `${field.label.charAt(0).toLocaleLowerCase("en")}${field.label.slice(1)}`;
+    })
+    .join(", ");
+}
+
 export interface StatusBannerCopy {
   title: string;
   body: string;
@@ -368,6 +383,11 @@ export function getStatusBannerCopy(status?: string): StatusBannerCopy | null {
       return {
         title: "Post settings saved",
         body: "The post settings are saved and the feed is up to date.",
+      };
+    case "post_content_updated":
+      return {
+        title: "Post content saved",
+        body: "The post content is updated across its community or event.",
       };
     case "post_media_moderation_updated":
       return {

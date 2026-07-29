@@ -11,6 +11,7 @@ const requiredEnv = [
 
 const optionalButExpectedEnv = [
   "BLOB_READ_WRITE_TOKEN",
+  "POST_MEDIA_READ_WRITE_TOKEN",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
 ] as const;

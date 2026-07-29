@@ -60,6 +60,7 @@ import type {
   Comment,
   LimitedProfileCard,
   MatchCardView,
+  MemberDirectoryCompleteProfileView,
   MemberDirectoryFilters,
   MemberDirectoryProfileView,
   MemberActivationState,
@@ -160,6 +161,11 @@ export interface AdminPostModerationPostView {
   title: string;
   body: string;
   type: PostType;
+  updatedAt: string;
+  opportunitySource?: OpportunitySource;
+  tags: string[];
+  relatedStartupName?: string;
+  relatedRolesNeeded: string[];
   featured: boolean;
   hidden: boolean;
   commentsLocked: boolean;
@@ -523,12 +529,13 @@ function toMemberDirectoryProfileView(input: {
   profileLinks: ProfileLink[];
   following: boolean;
   introStatus?: IntroStatus;
-}): MemberDirectoryProfileView {
+}): MemberDirectoryCompleteProfileView {
   const isApprovedMentor = input.membership.mentorStatus === "approved";
   const acceptingMentoringRequests =
     isApprovedMentor && input.profile.offeringMatchTypes.includes("mentor_match");
   return {
     ...toLimitedProfileCard(input.profile, input.membership),
+    profileStatus: "complete",
     isApprovedMentor,
     acceptingMentoringRequests,
     openToIntroductions: input.profile.introOptIn,
@@ -560,6 +567,27 @@ function toMemberDirectoryProfileView(input: {
     profileLinks: input.profileLinks,
     isFollowing: input.following,
     ...(input.introStatus ? { introStatus: input.introStatus } : {}),
+  };
+}
+
+function directoryPlaceholderDisplayName(record: ActiveSpaceMemberRecord) {
+  return (
+    record.profile?.preferredName.trim() ||
+    record.profile?.fullName.trim() ||
+    record.user?.name.trim() ||
+    "Community member"
+  );
+}
+
+function toMemberDirectoryPlaceholderView(
+  record: ActiveSpaceMemberRecord,
+): MemberDirectoryProfileView {
+  return {
+    profileStatus: record.profile ? "incomplete" : "missing",
+    membershipId: record.membership.id,
+    displayName: directoryPlaceholderDisplayName(record),
+    photo: "",
+    affiliationLabel: publicAffiliationLabel(record.membership),
   };
 }
 
@@ -660,6 +688,42 @@ function profileCanAppearInSpaceDirectory(profile?: Profile) {
   return Boolean(profile?.onboardingComplete);
 }
 
+function directoryPlaceholderMatchesFilters(
+  record: ActiveSpaceMemberRecord,
+  filters: MemberDirectoryFilters,
+) {
+  if (filters.mentorStatus && record.membership.mentorStatus !== filters.mentorStatus) {
+    return false;
+  }
+
+  if (
+    filters.affiliation &&
+    (filters.affiliation === "mentor"
+      ? record.membership.mentorStatus !== "approved"
+      : record.membership.affiliationType !== filters.affiliation)
+  ) {
+    return false;
+  }
+
+  if (filters.stage || filters.industry || filters.need || filters.skill) {
+    return false;
+  }
+
+  const query = normalized(filters.q);
+  if (!query) {
+    return true;
+  }
+
+  return [
+    directoryPlaceholderDisplayName(record),
+    publicAffiliationLabel(record.membership),
+    record.membership.mentorStatus === "approved" ? "approved mentor" : "",
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(query);
+}
+
 export async function getMemberDirectoryViewsForOrg(
   org: Organization,
   options: MemberDirectoryViewOptions,
@@ -728,20 +792,38 @@ export async function getMemberDirectoryViewsForSpace(
   const records = (await listActiveSpaceMemberRecords(spaceId))
     .filter((record) => record.membership.orgId === org.id)
     .filter(
-      (record): record is ActiveSpaceMemberRecord & { profile: Profile } =>
-        Boolean(
-          record.profile &&
-            profileCanAppearInSpaceDirectory(record.profile) &&
-            directoryProfileMatchesFilters(record.profile, record.membership, filters),
-        ),
+      (record) =>
+        record.profile && profileCanAppearInSpaceDirectory(record.profile)
+          ? directoryProfileMatchesFilters(record.profile, record.membership, filters)
+          : directoryPlaceholderMatchesFilters(record, filters),
     )
     .sort((left, right) => {
-      const featuredDelta =
-        Number(Boolean(right.profile.featured)) - Number(Boolean(left.profile.featured));
-      return featuredDelta || right.profile.lastActiveAt.localeCompare(left.profile.lastActiveAt);
+      const leftComplete = profileCanAppearInSpaceDirectory(left.profile);
+      const rightComplete = profileCanAppearInSpaceDirectory(right.profile);
+      const readinessDelta = Number(rightComplete) - Number(leftComplete);
+      if (readinessDelta) {
+        return readinessDelta;
+      }
+
+      if (leftComplete && rightComplete) {
+        const featuredDelta =
+          Number(Boolean(right.profile?.featured)) - Number(Boolean(left.profile?.featured));
+        return (
+          featuredDelta ||
+          (right.profile?.lastActiveAt ?? "").localeCompare(left.profile?.lastActiveAt ?? "")
+        );
+      }
+
+      return directoryPlaceholderDisplayName(left).localeCompare(
+        directoryPlaceholderDisplayName(right),
+      );
     });
   const limitedRecords = options.limit ? records.slice(0, options.limit) : records;
-  const membershipIds = limitedRecords.map((record) => record.membership.id);
+  const completeRecords = limitedRecords.filter(
+    (record): record is ActiveSpaceMemberRecord & { profile: Profile } =>
+      Boolean(record.profile && profileCanAppearInSpaceDirectory(record.profile)),
+  );
+  const membershipIds = completeRecords.map((record) => record.membership.id);
   const [followedMembershipIds, introStatusByReceiver, profileLinksByProfileId] =
     await Promise.all([
       listFollowedMembershipIdsForMembershipInSpace(
@@ -754,19 +836,23 @@ export async function getMemberDirectoryViewsForSpace(
         options.viewerMembershipId,
         membershipIds,
       ),
-      listProfileLinksByProfileIds(limitedRecords.map((record) => record.profile.id)),
+      listProfileLinksByProfileIds(completeRecords.map((record) => record.profile.id)),
     ]);
   const followedIds = new Set(followedMembershipIds);
 
-  return limitedRecords.map((record) =>
-    toMemberDirectoryProfileView({
+  return limitedRecords.map((record) => {
+    if (!record.profile || !profileCanAppearInSpaceDirectory(record.profile)) {
+      return toMemberDirectoryPlaceholderView(record);
+    }
+
+    return toMemberDirectoryProfileView({
       profile: record.profile,
       membership: record.membership,
       profileLinks: profileLinksByProfileId.get(record.profile.id) ?? [],
       following: followedIds.has(record.membership.id),
       introStatus: introStatusByReceiver.get(record.membership.id),
-    }),
-  );
+    });
+  });
 }
 
 export async function getMemberDirectoryProfileView(input: {
@@ -1613,6 +1699,11 @@ export async function getAdminPostModerationDashboard(
       title: post.title,
       body: post.body,
       type: post.type,
+      updatedAt: post.updatedAt,
+      opportunitySource: post.opportunitySource,
+      tags: post.tags,
+      relatedStartupName: post.relatedStartupName,
+      relatedRolesNeeded: post.relatedRolesNeeded,
       featured: post.featured,
       hidden: post.hidden,
       commentsLocked: post.commentsLocked,

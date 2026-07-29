@@ -13,6 +13,7 @@ import {
   getPostByIdInSpace,
   getPostThreadRecordForSpace,
   getProfileByMembershipId,
+  getStore,
   grantSpaceMembership,
   listFollowedMembershipIdsForMembershipInSpace,
   listIntroRequestsForMembershipInSpace,
@@ -130,6 +131,60 @@ describe("Space-scoped content and social data", () => {
       expect.arrayContaining(["mem_jules", "mem_kai"]),
     );
     expect(peopleA.map((profile) => profile.membershipId)).not.toContain("mem_marcus");
+  });
+
+  it("lists every active connected Space member with safe profile placeholders", async () => {
+    const event = await createTestSpace("Complete People Directory");
+    await Promise.all([
+      grant(event.id, "mem_jules"),
+      grant(event.id, "mem_tom"),
+      grant(event.id, "mem_priya"),
+      grant(event.id, "mem_leila"),
+      grant(event.id, "mem_marcus"),
+      grant(event.id, "mem_kai"),
+    ]);
+
+    const store = getStore();
+    store.profiles = store.profiles.filter(
+      (profile) => profile.membershipId !== "mem_tom",
+    );
+    const incompleteProfile = store.profiles.find(
+      (profile) => profile.membershipId === "mem_priya",
+    )!;
+    incompleteProfile.onboardingComplete = false;
+    store.memberships.find((membership) => membership.id === "mem_leila")!.accountStatus =
+      "invited";
+    store.memberships.find((membership) => membership.id === "mem_marcus")!.accountStatus =
+      "suspended";
+    await setSpaceMembershipAccessStatus({
+      orgId: seedOrganization.id,
+      spaceId: event.id,
+      membershipId: "mem_kai",
+      accessStatus: "removed",
+    });
+
+    const people = await getMemberDirectoryViewsForSpace(event.id, seedOrganization, {
+      viewerMembershipId: "mem_jules",
+    });
+
+    expect(people).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ membershipId: "mem_jules", profileStatus: "complete" }),
+        expect.objectContaining({
+          membershipId: "mem_tom",
+          displayName: "Tom Alvarez",
+          profileStatus: "missing",
+        }),
+        expect.objectContaining({
+          membershipId: "mem_priya",
+          displayName: "Priya",
+          profileStatus: "incomplete",
+        }),
+      ]),
+    );
+    expect(people.map((person) => person.membershipId)).not.toEqual(
+      expect.arrayContaining(["mem_leila", "mem_marcus", "mem_kai"]),
+    );
   });
 
   it("keeps follows and saved-post reads inside their explicit Space", async () => {

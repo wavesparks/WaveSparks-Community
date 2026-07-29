@@ -208,7 +208,7 @@ export function MySpacesView({
     >
       <header className="border-b border-[var(--line)] bg-[var(--surface)]">
         <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 px-4 py-3 sm:px-6 lg:px-8">
-          <BrandLogo className="h-8 max-w-[160px]" />
+          <BrandLogo className="w-[160px]" />
           <p className="hidden border-l border-[var(--line)] pl-3 text-sm font-semibold text-[var(--ink-soft)] sm:block">
             Home
           </p>

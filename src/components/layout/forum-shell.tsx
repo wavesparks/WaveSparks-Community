@@ -99,7 +99,7 @@ export function ForumShell({
             className="flex min-w-0 shrink-0 items-center gap-3"
             href={`/org/${org.slug}/feed`}
           >
-            <BrandLogo className="h-8 shrink-0" />
+            <BrandLogo className="w-[13.7rem] shrink-0" />
             <div className="hidden min-w-0 xl:block">
               <p className="truncate text-xs font-semibold uppercase text-[var(--accent)]">
                 Community
