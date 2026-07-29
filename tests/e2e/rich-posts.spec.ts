@@ -171,6 +171,21 @@ test.describe("rich post lifecycle", () => {
         .locator('img[alt^="E2E rich image"]')
         .evaluateAll((images) => images.map((image) => image.getAttribute("alt"))),
     ).toEqual([secondAlt, firstAlt]);
+    const firstImagePreview = card.getByRole("button", {
+      name: `Open image 1 of 2: ${secondAlt}`,
+    });
+    const previewBounds = await firstImagePreview.boundingBox();
+    expect(previewBounds).not.toBeNull();
+    expect(previewBounds!.height).toBeLessThanOrEqual(160);
+    await firstImagePreview.click();
+    const imageDialog = page.getByRole("dialog", { name: "Image preview" });
+    await expect(imageDialog).toBeVisible();
+    await expect(imageDialog.getByRole("img", { name: secondAlt })).toBeVisible();
+    await imageDialog.getByRole("button", { name: "Next image" }).click();
+    await expect(imageDialog.getByRole("img", { name: firstAlt })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(imageDialog).not.toBeVisible();
+    await expect(firstImagePreview).toBeFocused();
 
     const postHref = await card
       .getByRole("link", { name: "Open thread", exact: true })
