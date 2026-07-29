@@ -283,6 +283,9 @@ describe("status banners", () => {
     expect(getStatusBannerCopy("post_moderation_updated")).toMatchObject({
       title: "Post settings saved",
     });
+    expect(getStatusBannerCopy("post_content_updated")).toMatchObject({
+      title: "Post content saved",
+    });
     expect(getStatusBannerCopy("comment_moderation_updated")).toMatchObject({
       title: "Comment settings saved",
     });

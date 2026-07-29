@@ -250,11 +250,14 @@ Admin 可以看到敏感 Profile 和联系方式，这项权限只用于社区�
 
 打开 **Admin -> Posts**，可以：
 
+- 编辑 Post 的标题、正文、类型、来源、Tag、关联 Startup 和所需角色；
 - Hide 或 Unhide Post；
 - Feature 或 Unfeature；
 - Lock 或 Unlock comments；
 - Archive 或 Reopen；
 - Remove 或 Restore 图片、链接预览或 Comment。
+
+Admin 编辑会保留已有图片及其审核状态。正文发生变化时，已有 `@` mention 会转为普通文本；只有首个外部链接保持不变时，链接预览才会保留。当前产品没有 Post 修订历史，因此重要修改前应先记录原文。
 
 执行重要治理动作前，请在公司的工单或事件记录中保存 Post 或 Comment ID、Space、原因和决策人。当前产品没有成员举报队列，也没有完整的中央 Admin 操作日志。
 

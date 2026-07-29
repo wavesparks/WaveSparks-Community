@@ -101,7 +101,7 @@ WaveSparks does not provide event tickets, RSVP, check-in, payments, or self-ser
 Inside a Space, confirm its name in the Space switcher, then explore:
 
 - **Feed:** Updates, questions, resources, announcements, and requests.
-- **People:** Complete profiles of active members in this Space.
+- **People:** Active members in this Space. Members still setting up their Profile appear with limited information and no Profile actions.
 - **Matches:** Suggestions based on your Profile and Space-specific intent.
 - **Knowledge:** Resources, featured content, discussions, and saved posts.
 - **Opportunities:** Opportunity and collaboration posts.

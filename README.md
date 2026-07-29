@@ -119,7 +119,7 @@ The Admin console lives at `/org/:slug/admin` and covers accounts, invitations, 
 | Members | Search and filter accounts; invite one person; import CSV, XLSX, or pasted rows in bulk; inspect row-level results; retry or revoke invitations; and change roles, mentor qualifications, account states, and Space access |
 | Community & Events | Manage the permanent Main Community; create, update, end, archive, or restore Events; maintain participant lists; explicitly run Add to Main Community; and inspect Space-level activity and matching audits |
 | Profiles | Inspect complete member Profiles and private contact details, flag Profile status, and export CSV |
-| Posts | Moderate posts and comments across Spaces; archive or restore posts; and remove or restore comments, images, and link previews |
+| Posts | Edit post copy and classification across Spaces; archive or restore posts; and moderate comments, images, and link previews |
 | Requests | Inspect introductions by Space and source, and create manual introductions for eligible members |
 | Matches | Inspect recommendations; manually refresh at organization level while relevant Profile changes trigger smaller recomputations; configure match categories, direction, minimum score, and weights; and review anonymized feedback and run history |
 | Analytics | Review community metrics for connected accounts, complete Profiles, introductions, teams, and related activity |
@@ -135,7 +135,7 @@ The following capabilities are not implemented, and neither product nor operatio
 - Event RSVP, check-in, or ticketing.
 - Direct messages, post likes, user reporting, or blocking.
 - Member self-service for leaving a Space, deleting an account, or exporting personal data.
-- Author self-service for editing or deleting published posts or comments; Admins currently archive, remove, or restore them.
+- Author self-service for editing or deleting published posts or comments. Admins may edit post copy and classification or archive, remove, and restore content, but there is no post revision history.
 - Automatic copying of posts, follows, matches, feedback, or introductions between Events and the Main Community.
 - Automatic rejection of mentoring requests based on mentor capacity.
 - Resend webhook ingestion, delivery-state synchronization, or in-product email alerts.

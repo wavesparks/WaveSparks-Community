@@ -124,7 +124,7 @@ export default async function OnboardingPage({
           ) : null}
           <SectionHeading
             title={viewer.profile ? "Edit your profile" : "Complete your profile"}
-            description="These details appear everywhere you participate. You can set different goals, needs, offers, and matching preferences for each community or event."
+            description="These details appear everywhere you participate. You can set different goals, needs, offers, and matching preferences for Wavesparks Community and each programme or cohort you join."
           />
           <OnboardingForm
             action={action}

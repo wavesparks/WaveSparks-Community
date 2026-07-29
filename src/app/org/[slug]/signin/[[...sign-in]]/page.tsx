@@ -35,7 +35,7 @@ export default async function SignInPage({
         <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
           <Card className="ws-hero-art min-h-[430px] overflow-hidden border-0 p-0 text-[var(--surface)]">
             <div className="flex min-h-[430px] flex-col justify-between p-6 sm:p-7">
-              <BrandLogo className="h-8 w-fit" tone="light" />
+              <BrandLogo className="w-[13.7rem]" tone="light" />
               <div>
                 <SectionHeading
                   description="Use the email address that received your Wavesparks invitation."

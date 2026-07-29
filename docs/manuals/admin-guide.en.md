@@ -250,11 +250,14 @@ Admins can see sensitive Profile and contact information. This permission is for
 
 Open **Admin -> Posts** to:
 
+- edit a Post's title, details, type, source, tags, related startup, and roles needed;
 - hide or unhide a Post;
 - feature or unfeature it;
 - lock or unlock comments;
 - archive or reopen it;
 - remove or restore an image, link preview, or comment.
+
+An Admin edit keeps existing images and their moderation state. If the details change, existing `@` mentions become plain text. A link preview remains only when the first external link is unchanged. Record the original copy before a material edit because the current product has no Post revision history.
 
 Before a material moderation action, record the Post or Comment ID, Space, reason, and decision maker in your normal company ticket or case log. The current product does not provide a member report queue or a complete central Admin audit log.
 

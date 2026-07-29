@@ -20,6 +20,34 @@ afterEach(() => {
 });
 
 describe("OnboardingForm", () => {
+  it("uses programme or cohort language and sentence case for missing fields", () => {
+    render(
+      <OnboardingForm
+        action={vi.fn()}
+        links={[]}
+        matchTypeConfigs={seedMatchTypeConfigs}
+        profile={{
+          ...seedProfiles[0],
+          preferredName: "",
+          headline: "",
+          bio: "",
+          currentFocus: "",
+          seekingMatchTypes: [],
+          skillTags: [],
+          emailForIntro: "",
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText(/each programme or cohort/i)).toHaveLength(2);
+    expect(document.body.textContent).not.toContain("each Event");
+    expect(
+      screen.getByText(
+        "Preferred name, one-line introduction, about you, what you’re exploring, matching intent, skills or learning interests, email for accepted introductions",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("uses one inclusive bio and asks interest-led experience questions", () => {
     render(
       <OnboardingForm
@@ -169,7 +197,7 @@ describe("OnboardingForm", () => {
       ),
     );
     expect(
-      screen.getByText("Add Matching intent before completing your profile."),
+      screen.getByText("Add matching intent before completing your profile."),
     ).toBeInTheDocument();
     expect(document.getElementById("matching_intent_group")).toHaveFocus();
     expect(action).not.toHaveBeenCalled();

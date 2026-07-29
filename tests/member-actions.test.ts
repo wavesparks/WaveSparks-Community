@@ -30,6 +30,7 @@ vi.mock("@/lib/auth", () => ({
 
 import {
   createPostAction,
+  createPostInSpaceAction,
   followMembershipAction,
   requestIntroAction,
   respondIntroAction,
@@ -319,6 +320,34 @@ describe("member server actions", () => {
     await Promise.all(backgroundTasks.map((task) => task()));
     expect(hasPostAnalytics()).toBe(true);
     expect(getStore().matchRuns).not.toHaveLength(0);
+  });
+
+  it("drops submitted Roles needed values from resource posts", async () => {
+    await setViewer("mem_jules");
+    const mainSpace = getStore().spaces.find((space) => space.kind === "main")!;
+    const formData = formDataFromEntries({
+      type: "resource",
+      title: "Resource without role targeting",
+      body: "A useful guide for the community.",
+      images: "[]",
+      mentions: "[]",
+      related_roles_needed: "design, GTM",
+    });
+
+    await expect(
+      createPostInSpaceAction(
+        "wavesparks",
+        mainSpace.id,
+        "mem_jules",
+        formData,
+      ),
+    ).rejects.toThrow(/NEXT_REDIRECT:.*\/knowledge\?status=post_created/);
+
+    expect(
+      getStore().posts.find(
+        (post) => post.title === "Resource without role targeting",
+      )?.relatedRolesNeeded,
+    ).toEqual([]);
   });
 
   it("refreshes profile activation surfaces after follow and unfollow actions", async () => {

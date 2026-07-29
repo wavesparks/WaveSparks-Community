@@ -101,7 +101,7 @@ WaveSparks 不提供活动票务、RSVP、签到、支付或自助加入、退�
 进入 Space 后，先在 Space switcher 确认名称，再浏览：
 
 - **Feed：** 动态、问题、资源、公告和需求；
-- **People：** 当前 Space 中资料完整的有效成员；
+- **People：** 当前 Space 中的有效成员；仍在设置 Profile 的成员只显示有限信息，且没有 Profile 操作入口；
 - **Matches：** 根据 Profile 与当前 Space intent 生成的建议；
 - **Knowledge：** 资源、精选内容、讨论和收藏；
 - **Opportunities：** 机会与合作类帖子；
