@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the three WaveSparks Chinese manuals as polished PDF files.
+"""Build the WaveSparks English and Chinese manuals as polished PDF files.
 
 The renderer intentionally supports the small, predictable Markdown subset used by
 the project manuals: headings, paragraphs, lists, block quotes, fenced code,
@@ -83,41 +83,117 @@ MONO_FONT = "WaveMono"
 @dataclass(frozen=True)
 class RoleSpec:
     key: str
+    language: str
     source_name: str
     output_name: str
     title: str
     subtitle: str
     audience: str
     accent: colors.Color
+    toc_title: str
+    audience_caption: str
+    version_caption: str
+    updated_caption: str
+    page_caption: str
+    manual_keyword: str
 
 
 ROLE_SPECS: dict[str, RoleSpec] = {
-    "member": RoleSpec(
+    "member-zh-CN": RoleSpec(
         key="member",
+        language="zh-CN",
         source_name="member-guide.zh-CN.md",
         output_name="wavesparks-member-user-manual-zh-CN.pdf",
         title="WaveSparks Community Member 使用手册",
         subtitle="成员全生命周期与功能指南",
         audience="Member",
         accent=CYAN,
+        toc_title="目录",
+        audience_caption="适用角色",
+        version_caption="版本",
+        updated_caption="更新日期",
+        page_caption="第 {number} 页",
+        manual_keyword="使用手册",
     ),
-    "mentor": RoleSpec(
+    "mentor-zh-CN": RoleSpec(
         key="mentor",
+        language="zh-CN",
         source_name="mentor-guide.zh-CN.md",
         output_name="wavesparks-mentor-user-manual-zh-CN.pdf",
         title="WaveSparks Community Mentor 使用手册",
         subtitle="导师全生命周期与功能指南",
         audience="Mentor",
         accent=GOLD,
+        toc_title="目录",
+        audience_caption="适用角色",
+        version_caption="版本",
+        updated_caption="更新日期",
+        page_caption="第 {number} 页",
+        manual_keyword="使用手册",
     ),
-    "admin": RoleSpec(
+    "admin-zh-CN": RoleSpec(
         key="admin",
+        language="zh-CN",
         source_name="admin-guide.zh-CN.md",
         output_name="wavesparks-admin-operations-manual-zh-CN.pdf",
         title="WaveSparks Community Admin 运维手册",
         subtitle="社区管理、平台治理与基础设施维护",
         audience="Admin",
         accent=PURPLE,
+        toc_title="目录",
+        audience_caption="适用角色",
+        version_caption="版本",
+        updated_caption="更新日期",
+        page_caption="第 {number} 页",
+        manual_keyword="运维手册",
+    ),
+    "member-en": RoleSpec(
+        key="member",
+        language="en",
+        source_name="member-guide.en.md",
+        output_name="wavesparks-member-user-manual-en.pdf",
+        title="WaveSparks Community Member User Manual",
+        subtitle="Complete member lifecycle and feature guide",
+        audience="Member",
+        accent=CYAN,
+        toc_title="Contents",
+        audience_caption="Audience",
+        version_caption="Version",
+        updated_caption="Updated",
+        page_caption="Page {number}",
+        manual_keyword="User manual",
+    ),
+    "mentor-en": RoleSpec(
+        key="mentor",
+        language="en",
+        source_name="mentor-guide.en.md",
+        output_name="wavesparks-mentor-user-manual-en.pdf",
+        title="WaveSparks Community Mentor User Manual",
+        subtitle="Complete mentor lifecycle and feature guide",
+        audience="Mentor",
+        accent=GOLD,
+        toc_title="Contents",
+        audience_caption="Audience",
+        version_caption="Version",
+        updated_caption="Updated",
+        page_caption="Page {number}",
+        manual_keyword="User manual",
+    ),
+    "admin-en": RoleSpec(
+        key="admin",
+        language="en",
+        source_name="admin-guide.en.md",
+        output_name="wavesparks-admin-operations-manual-en.pdf",
+        title="WaveSparks Community Admin Operations Manual",
+        subtitle="Community administration, governance, and infrastructure maintenance",
+        audience="Admin",
+        accent=PURPLE,
+        toc_title="Contents",
+        audience_caption="Audience",
+        version_caption="Version",
+        updated_caption="Updated",
+        page_caption="Page {number}",
+        manual_keyword="Operations manual",
     ),
 }
 
@@ -199,7 +275,9 @@ class ManualDocTemplate(BaseDocTemplate):
         canvas.setAuthor(meta.author)
         canvas.setSubject(meta.subtitle)
         canvas.setCreator("WaveSparks Markdown PDF Builder (ReportLab)")
-        canvas.setKeywords(f"WaveSparks, Community, {meta.role.audience}, 使用手册")
+        canvas.setKeywords(
+            f"WaveSparks, Community, {meta.role.audience}, {meta.role.manual_keyword}"
+        )
 
         if doc.page == 1:
             canvas.setFillColor(INK)
@@ -238,7 +316,7 @@ class ManualDocTemplate(BaseDocTemplate):
             canvas.drawRightString(
                 PAGE_WIDTH - RIGHT_MARGIN,
                 8.2 * mm,
-                f"第 {doc.page - 1} 页",
+                meta.role.page_caption.format(number=doc.page - 1),
             )
         canvas.restoreState()
 
@@ -619,9 +697,12 @@ def _cover_story(context: BuildContext) -> list[Flowable]:
         HRFlowable(width="38%", thickness=2, color=meta.role.accent, hAlign="LEFT"),
         Spacer(1, 8 * mm),
         Paragraph(
-            f"适用角色：{html.escape(meta.role.audience)}<br/>"
-            f"版本：{html.escape(meta.version)}<br/>"
-            f"更新日期：{html.escape(meta.build_date)}",
+            f"{html.escape(meta.role.audience_caption)}: "
+            f"{html.escape(meta.role.audience)}<br/>"
+            f"{html.escape(meta.role.version_caption)}: "
+            f"{html.escape(meta.version)}<br/>"
+            f"{html.escape(meta.role.updated_caption)}: "
+            f"{html.escape(meta.build_date)}",
             context.styles["cover_meta"],
         ),
         PageBreak(),
@@ -637,7 +718,7 @@ def _toc_story(context: BuildContext) -> list[Flowable]:
     ]
     toc.dotsMinLevel = 0
     return [
-        Paragraph("目录", context.styles["toc_title"]),
+        Paragraph(html.escape(context.metadata.role.toc_title), context.styles["toc_title"]),
         HRFlowable(width="100%", thickness=0.8, color=RULE, spaceAfter=10),
         toc,
         PageBreak(),
@@ -788,19 +869,22 @@ def _image_flowables(
     source_path: Path,
     context: BuildContext,
 ) -> list[Flowable]:
+    is_english = context.metadata.role.language == "en"
     # Strip an optional Markdown image title: path "title".
     target = re.sub(r'\s+["\'][^"\']*["\']\s*$', "", raw_target.strip())
     if re.match(r"^https?://", target, flags=re.I):
         warning = f"remote image skipped (download it into the repo first): {target}"
         context.warnings.append(warning)
-        return [_quote_flowable([f"图片未嵌入：{alt or target}"], context)]
+        label = "Image not embedded" if is_english else "图片未嵌入"
+        return [_quote_flowable([f"{label}: {alt or target}"], context)]
 
     image_path = Path(target)
     if not image_path.is_absolute():
         image_path = (source_path.parent / image_path).resolve()
     if not image_path.is_file():
         context.warnings.append(f"image not found: {image_path}")
-        return [_quote_flowable([f"图片缺失：{alt or target}"], context)]
+        label = "Image missing" if is_english else "图片缺失"
+        return [_quote_flowable([f"{label}: {alt or target}"], context)]
 
     try:
         image = Image(str(image_path))
@@ -813,7 +897,8 @@ def _image_flowables(
         image._restrictSize(max_width, max_height)
     except Exception as exc:
         context.warnings.append(f"cannot load image {image_path}: {exc}")
-        return [_quote_flowable([f"图片无法读取：{alt or image_path.name}"], context)]
+        label = "Image could not be loaded" if is_english else "图片无法读取"
+        return [_quote_flowable([f"{label}: {alt or image_path.name}"], context)]
 
     caption = alt.strip() or image_path.stem.replace("-", " ")
     return [
@@ -970,7 +1055,7 @@ def _resolve_source(input_dir: Path, spec: RoleSpec) -> Path:
     exact = input_dir / spec.source_name
     if exact.is_file():
         return exact
-    candidates = sorted(input_dir.glob(f"*{spec.key}*.zh-CN.md"))
+    candidates = sorted(input_dir.glob(f"*{spec.key}*.{spec.language}.md"))
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
@@ -1038,27 +1123,34 @@ def _default_build_date() -> str:
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build WaveSparks Member, Mentor, and Admin Chinese PDF manuals.",
+        description="Build WaveSparks Member, Mentor, and Admin PDF manuals.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--input-dir",
         type=Path,
         default=DEFAULT_INPUT_DIR,
-        help="directory containing *-guide.zh-CN.md manuals",
+        help="directory containing the English and Chinese manual sources",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
-        help="directory for the three stable PDF artifacts",
+        help="directory for the six stable PDF artifacts",
     )
     parser.add_argument(
         "--roles",
         nargs="+",
-        choices=tuple(ROLE_SPECS),
-        default=list(ROLE_SPECS),
+        choices=("member", "mentor", "admin"),
+        default=["member", "mentor", "admin"],
         help="manual roles to build",
+    )
+    parser.add_argument(
+        "--languages",
+        nargs="+",
+        choices=("en", "zh-CN"),
+        default=["en", "zh-CN"],
+        help="manual languages to build",
     )
     parser.add_argument(
         "--date",
@@ -1086,24 +1178,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     failures: list[str] = []
     built: list[Path] = []
 
-    for role_key in args.roles:
-        spec = ROLE_SPECS[role_key]
-        try:
-            source = _resolve_source(input_dir, spec)
-            destination = output_dir / spec.output_name
-            warnings = build_manual(
-                spec,
-                source=source,
-                destination=destination,
-                build_date=args.date,
-                strict=args.strict,
-            )
-            built.append(destination)
-            print(f"built {role_key}: {destination}")
-            for warning in warnings:
-                print(f"warning ({role_key}): {warning}", file=sys.stderr)
-        except Exception as exc:
-            failures.append(f"{role_key}: {exc}")
+    for language in args.languages:
+        for role_key in args.roles:
+            spec_key = f"{role_key}-{language}"
+            spec = ROLE_SPECS[spec_key]
+            try:
+                source = _resolve_source(input_dir, spec)
+                destination = output_dir / spec.output_name
+                warnings = build_manual(
+                    spec,
+                    source=source,
+                    destination=destination,
+                    build_date=args.date,
+                    strict=args.strict,
+                )
+                built.append(destination)
+                print(f"built {role_key} ({language}): {destination}")
+                for warning in warnings:
+                    print(
+                        f"warning ({role_key}, {language}): {warning}",
+                        file=sys.stderr,
+                    )
+            except Exception as exc:
+                failures.append(f"{role_key} ({language}): {exc}")
 
     if failures:
         for failure in failures:

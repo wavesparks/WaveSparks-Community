@@ -1,202 +1,202 @@
 # Wavesparks Community
 
-Wavesparks Community 是一个面向创业者、导师与运营团队的私密邀请制社区平台。它把长期主社区（Main Community）和每一场独立活动（Event）建模为边界清晰的 `Space`，并在每个 Space 内提供内容、成员发现、AI 匹配、引荐和运营管理能力。
+Wavesparks Community is a private, invitation-only community platform for founders, mentors, and operations teams. It models the long-running Main Community and every standalone Event as a clearly bounded `Space`, then provides content, member discovery, AI-powered matching, introductions, and operations tooling inside each Space.
 
 > [!IMPORTANT]
-> 当前代码尚不能直接视为“可安全上线”。首次生产环境引导存在管理员账号无法完成 Clerk 绑定的 P0 问题，且 5 个路由仍按邮箱而非 `clerk_user_id` 做管理员授权，属于必须处理的 P1 风险。详见[上线阻断项与已知风险](#上线阻断项与已知风险)。在这些问题修复并回归验证前，不应开放生产流量。
+> The current codebase must not yet be treated as production-safe. The first-production-environment bootstrap has a P0 issue that prevents the initial administrator account from completing its Clerk binding, and five routes still authorize administrators by email instead of `clerk_user_id`, which is a P1 risk. See [Release blockers and known risks](#release-blockers-and-known-risks). Do not open the application to production traffic until these issues are fixed and regression-tested.
 
-## 文档导航
+## Documentation
 
-| 读者 | 在线源文档 | 可下载 PDF |
+| Audience | English edition | Simplified Chinese edition |
 | --- | --- | --- |
-| Member（成员） | [Member 全生命周期使用手册](docs/manuals/member-guide.zh-CN.md) | [Member 使用手册 PDF](output/pdf/wavesparks-member-user-manual-zh-CN.pdf) |
-| Mentor（导师） | [Mentor 全生命周期使用手册](docs/manuals/mentor-guide.zh-CN.md) | [Mentor 使用手册 PDF](output/pdf/wavesparks-mentor-user-manual-zh-CN.pdf) |
-| Admin（管理员） | [Admin 运营与基础设施手册](docs/manuals/admin-guide.zh-CN.md) | [Admin 运营手册 PDF](output/pdf/wavesparks-admin-operations-manual-zh-CN.pdf) |
+| Member | [Lifecycle manual](docs/manuals/member-guide.en.md) / [PDF](output/pdf/wavesparks-member-user-manual-en.pdf) | [Lifecycle manual](docs/manuals/member-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-member-user-manual-zh-CN.pdf) |
+| Mentor | [Lifecycle manual](docs/manuals/mentor-guide.en.md) / [PDF](output/pdf/wavesparks-mentor-user-manual-en.pdf) | [Lifecycle manual](docs/manuals/mentor-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-mentor-user-manual-zh-CN.pdf) |
+| Admin | [Operations and infrastructure manual](docs/manuals/admin-guide.en.md) / [PDF](output/pdf/wavesparks-admin-operations-manual-en.pdf) | [Operations and infrastructure manual](docs/manuals/admin-guide.zh-CN.md) / [PDF](output/pdf/wavesparks-admin-operations-manual-zh-CN.pdf) |
 
-补充技术文档：
+Additional technical documentation:
 
-- [现有用户生命周期说明](docs/user-lifecycle-guide.md)
-- [现有管理员生命周期说明](docs/admin-lifecycle-guide.md)
-- [AI 匹配引擎说明](docs/ai-matching-engine.md)
+- [User lifecycle guide](docs/user-lifecycle-guide.md)
+- [Admin lifecycle guide](docs/admin-lifecycle-guide.md)
+- [AI matching engine](docs/ai-matching-engine.md)
 
-三份 PDF 由同名 Markdown 源文件生成。修改手册内容或截图后执行：
+The six PDFs are generated from their corresponding Markdown sources. After changing manual content or screenshots, run:
 
 ```bash
 python3 -m pip install -r requirements-docs.txt
 python3 scripts/build-manual-pdfs.py
 ```
 
-使用 Python 3.11+；渲染依赖固定在 `requirements-docs.txt`。提交前应以 `--strict` 重新生成三份 PDF，并检查页数、可检索文字、目录/页码以及所有页面的渲染结果：
+Use Python 3.11 or newer. Rendering dependencies are pinned in `requirements-docs.txt`. Before committing, regenerate all manuals with `--strict`, then check page counts, searchable text, tables of contents, page numbers, and every rendered page:
 
 ```bash
 python3 scripts/build-manual-pdfs.py --strict
 ```
 
-## 产品模型
+## Product model
 
-### 核心原则
+### Core principles
 
-- **只接受个人邀请**：没有公开注册、共享邀请码或匿名社区 Feed。
-- **身份与授权分离**：Clerk 管身份、凭证和会话；Wavesparks/Neon 管账号、角色、邀请和 Space 权限。
-- **主社区与活动独立**：参加 Event 不会自动进入 Main Community，进入 Main 也不会获得任何 Event 权限。
-- **一个全局档案，多份 Space 意图**：核心 Profile 跨 Space 复用；目标、需求、可提供内容与匹配开关按 Space 单独保存。
-- **数据默认按 Space 隔离**：帖子、成员目录、关注、匹配、反馈和待处理引荐都属于明确的 Space。
-- **联系方式延迟披露**：普通参与双方只有在引荐被接受后才能看到彼此的私密联系方式；授权 Admin 可为运营查看成员资料。
+- **Personal invitations only:** there is no public registration, shared invitation code, or anonymous community feed.
+- **Identity and authorization are separate:** Clerk manages identity, credentials, and sessions; Wavesparks and Neon manage accounts, roles, invitations, and Space access.
+- **The Main Community and Events are independent:** attending an Event does not grant Main Community access, and joining Main does not grant access to any Event.
+- **One global profile, many Space-specific intents:** the core Profile is reused across Spaces, while goals, needs, offers, and matching participation are stored independently for each Space.
+- **Data is Space-scoped by default:** posts, member directories, follows, matches, feedback, and pending introductions belong to an explicit Space.
+- **Contact details are disclosed late:** ordinary participants see each other's private contact details only after an introduction is accepted; authorized Admins may inspect member details for operations purposes.
 
-### 三个彼此独立的权限维度
+### Three independent permission dimensions
 
-| 维度 | 存储字段 | 状态 | 决定什么 |
+| Dimension | Stored field | States | Controls |
 | --- | --- | --- | --- |
-| 账号权限 | `memberships.role` | `member` / `org_admin` | 是否可进入 Admin 控制台 |
-| 导师资格 | `memberships.mentor_status` | `not_mentor` / `needs_review` / `approved` | 是否拥有导师徽标、服务资料、导师匹配与 Mentoring 工作台 |
-| Space 权限 | `space_memberships.access_status` | `active` / `waitlist` / `rejected` / `suspended` / `removed` | 是否可进入某一个 Main Community 或 Event |
+| Account role | `memberships.role` | `member` / `org_admin` | Access to the Admin console |
+| Mentor qualification | `memberships.mentor_status` | `not_mentor` / `needs_review` / `approved` | Mentor badge, service profile, mentor matching, and the Mentoring workspace |
+| Space access | `space_memberships.access_status` | `active` / `waitlist` / `rejected` / `suspended` / `removed` | Access to one specific Main Community or Event |
 
-`Approved mentor` 不等于 Admin，Admin 也不自动成为任何 Space 的社交成员。管理员若要出现在成员目录、发帖或参加匹配，仍需被明确加入对应 Space。
+An `approved` mentor is not an Admin, and an Admin does not automatically become a social participant in any Space. An administrator who needs to appear in the member directory, publish posts, or join matching must be explicitly added to that Space.
 
-有效的 Space 访问遵循统一规则：
+Valid Space access follows one consistent rule:
 
 ```text
-已由邀请流程绑定的 Clerk 身份
+Clerk identity bound through the invitation flow
 + account_status = connected
-+ 账号未被 suspended / deprovisioned
-+ 当前 Space entitlement = active
-+ 当前 Space 生命周期允许成员访问
-= 有效访问
++ account is not suspended or deprovisioned
++ current Space entitlement = active
++ current Space lifecycle permits member access
+= valid access
 ```
 
-历史字段 `memberships.status` 与旧 Cohort 记录仅为迁移兼容，不是 Main Community/Event 权限的最终依据。
+The legacy `memberships.status` field and old Cohort records exist only for migration compatibility. They are not the final authority for Main Community or Event access.
 
-## 角色与完整功能
+## Roles and complete feature set
 
 ### Member
 
-Member 的完整使用路径是：收到私人邀请 → 用被邀请邮箱创建或登录 Clerk → 完成账号绑定 → 从 My Spaces 进入获准 Space → 完善全局档案 → 参与内容与连接 → 为各 Space 配置匹配意图 → 管理引荐和通知。
+The complete Member journey is: receive a personal invitation, create or sign in to Clerk with the invited email, complete the local account binding, enter an authorized Space from My Spaces, complete the global Profile, participate in content and connections, configure matching intent for each Space, and manage introductions and notifications.
 
-已实现功能：
+Implemented capabilities:
 
-- 在 `/org/:slug` 查看 My Spaces，包括 Main Community、进行中/即将开始的 Events 和 Past Events。
-- 浏览 Space Feed，并按内容类型、标签等条件筛选。
-- 发布 7 类帖子：General update、Question、Opportunity、Looking for co-founder、Looking for mentor、Resource、Announcement。
-- 添加评论、关注/取消关注成员、收藏/取消收藏帖子。
-- 浏览当前 Space 的 People 目录与成员资料。
-- 通过成员资料、帖子或匹配结果发起普通引荐。
-- 在 Knowledge 和 Opportunities 视图浏览对应内容。
-- 完成一个跨 Space 共享的核心 Profile；头像、经历、技能、偏好等修改会在所有 Space 生效。
-- 为每个 Space 分别填写当前目标、正在寻找、可以提供以及是否参与匹配。
-- 查看每个 Space 的 AI 推荐，提交 Helpful / Not relevant 反馈并选择原因。
-- 在 Space Introductions 中处理当前 Space 请求，在账号级 Inbox 中查看跨 Space 的引荐历史和通知。
-- 接受引荐后，仅向双方解锁邮箱/WhatsApp 等私密联系方式。
+- View My Spaces at `/org/:slug`, including the Main Community, current and upcoming Events, and Past Events.
+- Browse a Space Feed and filter it by content type, tags, and other criteria.
+- Publish seven post types: General update, Question, Opportunity, Looking for co-founder, Looking for mentor, Resource, and Announcement.
+- Add comments, follow or unfollow members, and save or unsave posts.
+- Browse the People directory and member profiles in the current Space.
+- Request a standard introduction from a member profile, post, or match result.
+- Browse corresponding content in the Knowledge and Opportunities views.
+- Maintain one core Profile shared across Spaces; changes to the avatar, experience, skills, and preferences apply everywhere.
+- Record current goals, needs, offers, and matching participation separately for each Space.
+- Review AI recommendations in each Space and submit Helpful or Not relevant feedback with a reason.
+- Process current-Space requests under Space Introductions, and review cross-Space introduction history and notifications in the account-level Inbox.
+- Unlock email, WhatsApp, or other private contact details for both participants only after an introduction is accepted.
 
-完成 Profile 并解除互动限制需要以下 7 项：preferred name、headline、bio、current focus、至少一个 seeking match type、至少一个 skill tag、intro email。账号绑定且拥有有效 Space 权限后可先阅读；发帖、评论、People、关注、发起引荐和匹配需要完整 Profile。
+The Profile requires seven items before interaction restrictions are lifted: preferred name, headline, bio, current focus, at least one seeking match type, at least one skill tag, and an introduction email address. A bound account with valid Space access may read before completing the Profile; posting, commenting, People, following, requesting introductions, and matching require a complete Profile.
 
 ### Mentor
 
-Mentor 是 `mentor_status = approved` 的账号级资格，可与 Member/Admin 身份组合，但不会带来任何额外 Admin 权限或跨 Space 访问。
+Mentor is an account-level qualification represented by `mentor_status = approved`. It can be combined with either a Member or Admin role, but it grants no extra Admin rights and no cross-Space access.
 
-已实现功能：
+Implemented capabilities:
 
-- 展示 Approved mentor 标识和导师服务资料。
-- 配置导师简介、可提供形式、擅长领域、可用性和偏好 mentee 数量。
-- 在已获准进入的 Space 中进入导师发现和 mentor 类型匹配。
-- 发布 Mentor 来源的 Opportunities。
-- 接收从标准 mentor match 或成员资料“Request mentoring”入口产生的 mentoring request。
-- 在账号级 `/org/:slug/mentoring` 工作台按 All、Needs response、Accepted、Declined、Expired 管理请求。
-- 接受或拒绝 mentoring request；接受后双方才看到联系方式。
-- 关闭 mentor matching offering，暂停新的导师匹配和直接 mentoring request。
+- Display the Approved mentor marker and a mentor service profile.
+- Configure a mentor introduction, support formats, areas of expertise, availability, and preferred mentee capacity.
+- Appear in mentor discovery and mentor-type matching within authorized Spaces.
+- Publish Mentor-sourced Opportunities.
+- Receive mentoring requests created from either a standard mentor match or the Request mentoring action on a member profile.
+- Manage requests in the account-level `/org/:slug/mentoring` workspace using All, Needs response, Accepted, Declined, and Expired queues.
+- Accept or decline a mentoring request; contact details become visible to both parties only after acceptance.
+- Turn off the mentor matching offering to pause new mentor recommendations and direct mentoring requests.
 
-可用性与容量目前仅用于说明/排序，不会自动拒绝超额请求。导师仍需拥有来源 Space 的 active entitlement，并满足与普通成员相同的 Profile、隐私与生命周期限制。
+Availability and capacity are currently descriptive and ranking signals; they do not automatically reject excess requests. A mentor must still have an active entitlement to the source Space and remains subject to the same Profile, privacy, and lifecycle rules as every other member.
 
 ### Admin
 
-Admin 控制台位于 `/org/:slug/admin`，覆盖账号、邀请、Space、内容、连接、匹配和社区设置。
+The Admin console lives at `/org/:slug/admin` and covers accounts, invitations, Spaces, content, connections, matching, and community settings.
 
-| 工作区 | 主要能力 |
+| Workspace | Primary capabilities |
 | --- | --- |
-| Overview | 查看成员、内容、引荐和近期活动的汇总指标 |
-| Members | 搜索/筛选账号，单人邀请，CSV/XLSX/粘贴批量导入，查看逐行结果，重试/撤销邀请，调整角色、导师资格、账号状态和 Space 权限 |
-| Community & Events | 管理永久 Main Community，创建/更新/结束/归档/恢复 Event，维护参与者名单，显式执行 Add to Main Community，查看 Space 级活动和匹配审计 |
-| Profiles | 检查完整成员资料与私密联系方式，标记资料状态，导出 CSV |
-| Posts | 跨 Space 审核帖子和评论，归档/恢复帖子，移除/恢复评论、图片和链接预览 |
-| Requests | 按 Space 查看引荐状态和来源，为符合条件的成员创建人工引荐 |
-| Matches | 查看推荐结果，按组织手动刷新（相关资料变更会触发更小范围的重算），配置匹配类别、方向、最低分和权重，查看匿名化反馈与运行记录 |
-| Analytics | 查看连接账号、完整 Profile、引荐与团队等社区指标 |
-| Settings | 更新社区名称、介绍、品牌图片和邀请操作指引 |
+| Overview | Review summary metrics for members, content, introductions, and recent activity |
+| Members | Search and filter accounts; invite one person; import CSV, XLSX, or pasted rows in bulk; inspect row-level results; retry or revoke invitations; and change roles, mentor qualifications, account states, and Space access |
+| Community & Events | Manage the permanent Main Community; create, update, end, archive, or restore Events; maintain participant lists; explicitly run Add to Main Community; and inspect Space-level activity and matching audits |
+| Profiles | Inspect complete member Profiles and private contact details, flag Profile status, and export CSV |
+| Posts | Moderate posts and comments across Spaces; archive or restore posts; and remove or restore comments, images, and link previews |
+| Requests | Inspect introductions by Space and source, and create manual introductions for eligible members |
+| Matches | Inspect recommendations; manually refresh at organization level while relevant Profile changes trigger smaller recomputations; configure match categories, direction, minimum score, and weights; and review anonymized feedback and run history |
+| Analytics | Review community metrics for connected accounts, complete Profiles, introductions, teams, and related activity |
+| Settings | Update the community name, description, brand images, and invitation guidance |
 
-高影响操作（授予 Admin、全局暂停/关闭账号、拒绝/移除 Space 权限等）在 UI 中要求明确确认。Space 级移除不会重写其他 Space 的名单。
+The UI requires explicit confirmation for high-impact operations such as granting Admin access, globally suspending or closing an account, and rejecting or removing Space access. Removing access from one Space does not rewrite membership in any other Space.
 
-## 当前明确不包含的产品能力
+## Explicitly unsupported product capabilities
 
-以下能力当前没有实现；运营手册不应暗示其存在：
+The following capabilities are not implemented, and neither product nor operations documentation should imply otherwise:
 
-- 积分、声望、排行榜、可赚取徽章或证书（Approved mentor 是资格标识，不是游戏化徽章）。
-- Event RSVP、签到或现场票务。
-- 站内私信、帖子点赞、用户举报/拉黑。
-- 成员自助退出 Space、删除账号或导出个人数据。
-- 作者自助编辑/删除已发布帖子或评论；当前由 Admin 做归档/移除与恢复。
-- Event 与 Main Community 之间自动复制帖子、关注、匹配、反馈或引荐。
-- 按导师容量自动拒绝请求。
-- Resend webhook 回流、投递状态同步或产品内邮件告警。
+- Points, reputation, leaderboards, earnable badges, or certificates. Approved mentor is a qualification marker, not a gamification badge.
+- Event RSVP, check-in, or ticketing.
+- Direct messages, post likes, user reporting, or blocking.
+- Member self-service for leaving a Space, deleting an account, or exporting personal data.
+- Author self-service for editing or deleting published posts or comments; Admins currently archive, remove, or restore them.
+- Automatic copying of posts, follows, matches, feedback, or introductions between Events and the Main Community.
+- Automatic rejection of mentoring requests based on mentor capacity.
+- Resend webhook ingestion, delivery-state synchronization, or in-product email alerts.
 
-## Space 生命周期与隔离
+## Space lifecycle and isolation
 
-每个组织恰好有一个永久 Main Community。它始终为 `active`，不能结束或归档。Event 有以下生命周期：
+Every organization has exactly one permanent Main Community. It remains `active` and cannot be ended or archived. Events use the following lifecycle:
 
-| 状态 | 成员可见性 | 内容与互动 | 匹配 |
+| State | Member visibility | Content and interaction | Matching |
 | --- | --- | --- | --- |
-| `draft` | 不向成员开放 | 不开放 | 跳过 |
-| `upcoming` | 有 active entitlement 的成员可进入 | 开放 | 可运行 |
-| `active` | 有 active entitlement 的成员可进入 | 开放 | 可运行 |
-| `ended` | 显示为 Past Event | 仍可阅读和互动 | 仍可运行 |
-| `archived` | 从成员端隐藏 | 关闭成员访问，数据保留供 Admin 审计 | 跳过并清除该 Space 可见结果 |
+| `draft` | Not available to members | Disabled | Skipped |
+| `upcoming` | Available to members with an active entitlement | Enabled | Available |
+| `active` | Available to members with an active entitlement | Enabled | Available |
+| `ended` | Listed as a Past Event | Still readable and interactive | Still available |
+| `archived` | Hidden from members | Member access disabled; data retained for Admin audit | Skipped, and visible results for the Space are cleared |
 
-结束 Event 不等于关闭社区；只有 archive 才关闭成员访问。每个帖子只属于一个 Space，评论继承帖子边界，收藏链接与通知链接在打开时都会重新校验访问权限。
+Ending an Event does not close it. Only archiving disables member access. Every post belongs to one Space, comments inherit the post boundary, and saved-post and notification links revalidate access when opened.
 
-## 邀请、登录与账号生命周期
+## Invitations, sign-in, and the account lifecycle
 
-### 邀请流程
+### Invitation flow
 
-1. Admin 在 Wavesparks 选择账号权限、导师资格、目标 Space 和初始 Space 权限。
-2. Wavesparks 在 Neon 创建/更新本地用户、membership、Space entitlement 和一次性邀请。
-3. 本地原始 token 只出现在邀请 URL 中，数据库仅保存 SHA-256 hash；有效期为 7 天。
-4. Wavesparks 调用 Clerk application invitation；邀请邮件由 Clerk 发送，不依赖 Resend。
-5. 用户打开链接后，URL token 被换成 15 分钟、`HttpOnly` 的邀请 handoff cookie。
-6. 用户创建或登录 Clerk 账号；服务端重新读取 Clerk 用户并验证“已验证邮箱”与邀请邮箱完全一致。
-7. 接受事务原子写入 `users.clerk_user_id`、把 `account_status` 改为 `connected` 并消费邀请。
-8. 此后生产请求按 `clerk_user_id` 查找本地账号；普通 Clerk webhook 不允许按邮箱自动绑定。
+1. An Admin selects the account role, mentor qualification, destination Space, and initial Space access in Wavesparks.
+2. Wavesparks creates or updates the local user, membership, Space entitlement, and one-time invitation in Neon.
+3. The raw local token appears only in the invitation URL. The database stores only its SHA-256 hash, and the invitation expires after seven days.
+4. Wavesparks creates a Clerk application invitation. Clerk sends the invitation email; this path does not depend on Resend.
+5. Opening the link exchanges the URL token for a 15-minute, `HttpOnly` invitation handoff cookie.
+6. The invitee creates or signs in to a Clerk account. The server fetches the Clerk user again and requires an exact match between a verified Clerk email address and the invited email.
+7. The acceptance transaction atomically writes `users.clerk_user_id`, changes `account_status` to `connected`, and consumes the invitation.
+8. Production requests subsequently find the local account by `clerk_user_id`. Ordinary Clerk webhooks are not allowed to claim an account by email.
 
-邀请状态包括 `pending`、`accepted`、`revoked`、`expired`；投递失败会保留可审计错误供 Admin 重试。成功提示代表 Clerk 接受了发送请求，并不保证邮件已进入收件箱。
+Invitation states are `pending`, `accepted`, `revoked`, and `expired`. A delivery failure retains an auditable error so an Admin can retry it. A success message means Clerk accepted the send request; it does not guarantee delivery to the inbox.
 
-### 账号状态
+### Account states
 
-| `account_status` | 含义 | 效果 |
+| `account_status` | Meaning | Effect |
 | --- | --- | --- |
-| `invited` | 本地账号已创建但尚未完成身份绑定 | 不能进入任何 Space |
-| `connected` | Clerk 用户已通过邀请事务绑定 | 可使用自己拥有的 active Space entitlement |
-| `suspended` | 可恢复的全局安全暂停 | 覆盖所有 Space 权限 |
-| `deprovisioned` | 组织账号已关闭 | 覆盖所有 Space 权限，需 Admin 显式恢复 |
+| `invited` | A local account exists, but identity binding is incomplete | No Space can be accessed |
+| `connected` | A Clerk user was bound by the invitation transaction | Active Space entitlements can be used |
+| `suspended` | Reversible global security suspension | Overrides access to every Space |
+| `deprovisioned` | The organization account is closed | Overrides access to every Space until explicitly restored by an Admin |
 
-Clerk Organizations 在本项目中故意不使用。Clerk webhook 只同步已经绑定用户的身份字段，并在 `user.deleted` 时触发匿名化；它不会创建 membership、角色或 Space 权限。
+Clerk Organizations are intentionally not used in this project. The Clerk webhook only synchronizes identity fields for already-bound users and triggers anonymization on `user.deleted`; it never creates memberships, roles, or Space access.
 
-## 路由地图
+## Route map
 
-以下示例用 `wavesparks` 作为 `:slug`。
+The examples below use `wavesparks` as `:slug`.
 
-### 账号级路由
+### Account-level routes
 
-| 路由 | 用途 |
+| Route | Purpose |
 | --- | --- |
-| `/org/wavesparks` | My Spaces 首页 |
-| `/org/wavesparks/accept-invitation` | 私人邀请落地页 |
-| `/org/wavesparks/signin` | Clerk 登录 |
-| `/org/wavesparks/sign-up` | 邀请制 Clerk 注册 |
-| `/org/wavesparks/auth/complete` | 登录/邀请后的账号完成流程 |
-| `/org/wavesparks/pending` | 未连接或暂停状态说明 |
-| `/org/wavesparks/onboarding` | 核心 Profile 引导 |
-| `/org/wavesparks/profile` | 全局 Profile 设置 |
-| `/org/wavesparks/requests` | 跨 Space 引荐历史与通知 Inbox |
-| `/org/wavesparks/mentoring` | Approved mentor 的账号级工作台 |
+| `/org/wavesparks` | My Spaces home |
+| `/org/wavesparks/accept-invitation` | Personal invitation landing page |
+| `/org/wavesparks/signin` | Clerk sign-in |
+| `/org/wavesparks/sign-up` | Invitation-only Clerk sign-up |
+| `/org/wavesparks/auth/complete` | Account completion after sign-in or invitation acceptance |
+| `/org/wavesparks/pending` | Explanation for an unconnected or suspended account |
+| `/org/wavesparks/onboarding` | Core Profile onboarding |
+| `/org/wavesparks/profile` | Global Profile settings |
+| `/org/wavesparks/requests` | Cross-Space introduction history and notification Inbox |
+| `/org/wavesparks/mentoring` | Account-level workspace for an Approved mentor |
 
-### Space 级规范路由
+### Canonical Space-level routes
 
 ```text
 /org/:slug/s/:spaceSlug/feed
@@ -210,9 +210,9 @@ Clerk Organizations 在本项目中故意不使用。Clerk webhook 只同步已�
 /org/:slug/s/:spaceSlug/posts/:postId
 ```
 
-旧的组织级 Feed/People/Matches/Knowledge/Opportunities/Compose 路由只负责重定向到明确 Space 或 My Spaces；旧的 Admin Cohorts 路由重定向到 Community & Events。旧帖子直链会先重新授权其所属 Space，再决定是否重定向。
+Legacy organization-level Feed, People, Matches, Knowledge, Opportunities, and Compose routes only redirect to an explicit Space or My Spaces. Legacy Admin Cohorts routes redirect to Community & Events. A legacy post deep link first reauthorizes the post's Space, then decides whether to redirect.
 
-### Admin 路由
+### Admin routes
 
 ```text
 /org/:slug/admin
@@ -228,59 +228,59 @@ Clerk Organizations 在本项目中故意不使用。Clerk webhook 只同步已�
 /org/:slug/admin/settings
 ```
 
-## 系统架构
+## System architecture
 
 ```mermaid
 flowchart LR
   U["Member / Mentor / Admin"] --> N["Next.js 16 App Router"]
-  N --> C["Clerk\n身份、凭证、会话、身份邀请"]
-  N --> DB["Neon PostgreSQL + pgvector\n授权、档案、Space、内容、匹配、引荐"]
-  N --> O["OpenAI Embeddings\n语义向量"]
-  N --> B["Vercel Blob\n头像、Logo、私有帖子媒体"]
-  N --> R["Resend\n普通产品通知邮件"]
-  V["Vercel\n部署、函数、Cron、日志"] --> N
+  N --> C["Clerk\nidentity, credentials, sessions, identity invitations"]
+  N --> DB["Neon PostgreSQL + pgvector\nauthorization, Profiles, Spaces, content, matches, introductions"]
+  N --> O["OpenAI Embeddings\nsemantic vectors"]
+  N --> B["Vercel Blob\navatars, logos, private post media"]
+  N --> R["Resend\nordinary product notification email"]
+  V["Vercel\ndeployments, functions, Cron, logs"] --> N
   V --> DB
 ```
 
-### 技术栈
+### Technology stack
 
-- Next.js `16.2.4`（App Router）与 React `19.2.4`
-- TypeScript 5、Tailwind CSS 4
+- Next.js `16.2.4` with the App Router and React `19.2.4`
+- TypeScript 5 and Tailwind CSS 4
 - Clerk `@clerk/nextjs` 7
-- Neon PostgreSQL、Drizzle ORM/Kit、`pgvector`
+- Neon PostgreSQL, Drizzle ORM and Kit, and `pgvector`
 - OpenAI `text-embedding-3-large`
-- Vercel Blob、Resend
-- Vitest、Testing Library、Playwright
+- Vercel Blob and Resend
+- Vitest, Testing Library, and Playwright
 - pnpm `10.19.0`
 
-> 项目使用的 Next.js 版本包含破坏性 API 与约定变更。修改 Next.js 相关代码前，必须先阅读 `node_modules/next/dist/docs/` 中与目标功能对应的文档。
+> This project's Next.js version contains breaking API and convention changes. Before changing Next.js-related code, read the relevant guide under `node_modules/next/dist/docs/`.
 
-### 目录结构
+### Repository structure
 
 ```text
-src/app/                 App Router 页面与 API Route Handlers
-src/actions/             Member/Admin Server Actions
-src/components/          社区、Admin、布局与 UI 组件
-src/db/                  Drizzle client 与 schema
-src/lib/                 认证、权限、Profile、Space、配置等领域逻辑
-src/server/              Store、匹配、邀请、通知、媒体与 view model
-drizzle/                 SQL migrations 与元数据
-scripts/                 迁移、种子、bootstrap、环境审计、readiness、匹配任务
-tests/                   Vitest/组件/路由/领域测试与 Playwright E2E
-docs/                    生命周期、技术说明与三角色手册源文件
-output/pdf/              生成的三份 PDF 使用手册
+src/app/                 App Router pages and API Route Handlers
+src/actions/             Member and Admin Server Actions
+src/components/          Community, Admin, layout, and UI components
+src/db/                  Drizzle client and schema
+src/lib/                 Authentication, authorization, Profile, Space, and configuration logic
+src/server/              Stores, matching, invitations, notifications, media, and view models
+drizzle/                 SQL migrations and metadata
+scripts/                 Migration, seed, bootstrap, environment audit, readiness, and matching tasks
+tests/                   Vitest, component, route, domain, and Playwright E2E tests
+docs/                    Lifecycle and technical documentation plus manual sources for all three roles
+output/pdf/              Generated English and Simplified Chinese PDF manuals
 ```
 
-## 本地开发
+## Local development
 
-### 前置条件
+### Prerequisites
 
-- Node.js（与 Next.js 16 兼容的当前 LTS）
+- A current Node.js LTS release compatible with Next.js 16
 - pnpm `10.19.0`
-- 可选：本地或 Neon PostgreSQL（需要 `pgvector`）
-- 可选：Clerk test instance、OpenAI、Vercel Blob 与 Resend 凭证
+- Optional: local or Neon PostgreSQL with `pgvector`
+- Optional: Clerk test instance, OpenAI, Vercel Blob, and Resend credentials
 
-### 启动
+### Start the application
 
 ```bash
 pnpm install
@@ -288,62 +288,62 @@ cp .env.example .env.local
 pnpm dev
 ```
 
-打开 `http://localhost:3000/org/wavesparks/signin`。
+Open `http://localhost:3000/org/wavesparks/signin`.
 
-未配置 `DATABASE_URL` 时，应用使用供 UI 和测试使用的内存种子数据；这不是持久化开发环境。需要验证迁移、并发、约束或生产行为时必须使用 PostgreSQL。
+When `DATABASE_URL` is absent, the application uses in-memory seed data intended for UI work and tests. It is not a persistent development environment. PostgreSQL is required to validate migrations, concurrency, constraints, or production behavior.
 
-### 环境变量
+### Environment variables
 
-| 变量 | 生产要求 | 用途 |
+| Variable | Production requirement | Purpose |
 | --- | --- | --- |
-| `NEXT_PUBLIC_APP_URL` | 必需（也可由 Vercel system URL 回退） | 社区应用根 URL；必须指向 app 域名而非营销站 |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | 必需，使用 `pk_live_` | Clerk 前端身份配置 |
-| `CLERK_SECRET_KEY` | 必需，使用 `sk_live_` | Clerk 后端 API 与用户校验 |
-| `CLERK_JWT_KEY` | 可选、推荐 | 预览域 OAuth handoff 的本地 JWT 验证；未配置时可用 secret key |
-| `CLERK_WEBHOOK_SIGNING_SECRET` | 必需 | 验证 `/api/webhooks/clerk` 的 Svix 签名 |
-| `NEXT_PUBLIC_CLERK_PROXY_URL` | 可选 | 仅在 Clerk Dashboard 已启用相同代理域时设置 |
-| `NEXT_PUBLIC_CLERK_SIGN_IN_URL` | 可选 | 默认 `/org/wavesparks/signin` |
-| `NEXT_PUBLIC_CLERK_SIGN_UP_URL` | 可选 | 默认 `/org/wavesparks/sign-up` |
-| `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL` | 可选 | 默认 `/org/wavesparks` |
-| `NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL` | 可选 | 默认 `/org/wavesparks` |
-| `DATABASE_URL` | 必需 | Neon/PostgreSQL 连接串；需支持 `pgvector` |
-| `SPACE_SCOPED_READS_ENABLED` | 必须显式为 `true` | Space 读取总开关；生产缺失或非 true 会 fail closed |
-| `OPENAI_API_KEY` | readiness 必需 | 生产语义 embedding；失败时会降级为本地确定性 token hash |
-| `RESEND_API_KEY` | 可选但预期配置 | 普通产品通知邮件；不用于会员邀请 |
-| `RESEND_FROM_EMAIL` | 与 Resend key 成对配置 | 通知发件人 |
-| `CRON_SECRET` | 必需，建议至少 32 字符 | 保护匹配重算与媒体清理端点 |
-| `BLOB_READ_WRITE_TOKEN` | 可选但预期配置 | 头像、Logo、帖子图片与链接缩略图存储 |
-| `WAVESPARK_ADMIN_EMAILS` | readiness 必需 | bootstrap 管理员邮箱列表；**不会自动完成 Clerk 身份绑定** |
-| `E2E_CLERK_ADMIN_EMAIL` | 仅测试 | Clerk E2E Admin 测试账号 |
-| `E2E_CLERK_USER_EMAIL` | 仅测试 | Clerk E2E Member 测试账号 |
+| `NEXT_PUBLIC_APP_URL` | Required, although a Vercel system URL can be used as a fallback | Community application root URL; it must point to the app domain, not the marketing site |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Required; use `pk_live_` | Clerk browser identity configuration |
+| `CLERK_SECRET_KEY` | Required; use `sk_live_` | Clerk backend API and user verification |
+| `CLERK_JWT_KEY` | Optional but recommended | Local JWT verification for preview-domain OAuth handoff; the secret key is used if this is absent |
+| `CLERK_WEBHOOK_SIGNING_SECRET` | Required | Verifies Svix signatures at `/api/webhooks/clerk` |
+| `NEXT_PUBLIC_CLERK_PROXY_URL` | Optional | Set only when the same proxy domain is enabled in the Clerk Dashboard |
+| `NEXT_PUBLIC_CLERK_SIGN_IN_URL` | Optional | Defaults to `/org/wavesparks/signin` |
+| `NEXT_PUBLIC_CLERK_SIGN_UP_URL` | Optional | Defaults to `/org/wavesparks/sign-up` |
+| `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL` | Optional | Defaults to `/org/wavesparks` |
+| `NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL` | Optional | Defaults to `/org/wavesparks` |
+| `DATABASE_URL` | Required | Neon/PostgreSQL connection string with `pgvector` support |
+| `SPACE_SCOPED_READS_ENABLED` | Must explicitly equal `true` | Global switch for Space-scoped reads; production fails closed when it is missing or not true |
+| `OPENAI_API_KEY` | Required by readiness checks | Production semantic embeddings; failures degrade to a local deterministic token hash |
+| `RESEND_API_KEY` | Optional but expected | Ordinary product notification email; not used for membership invitations |
+| `RESEND_FROM_EMAIL` | Configure together with the Resend key | Notification sender |
+| `CRON_SECRET` | Required; at least 32 characters recommended | Protects matching recomputation and media-cleanup endpoints |
+| `BLOB_READ_WRITE_TOKEN` | Optional but expected | Storage for avatars, logos, post images, and link thumbnails |
+| `WAVESPARK_ADMIN_EMAILS` | Required by readiness checks | Bootstrap administrator email list; **does not complete Clerk identity binding** |
+| `E2E_CLERK_ADMIN_EMAIL` | Test only | Clerk E2E Admin test account |
+| `E2E_CLERK_USER_EMAIL` | Test only | Clerk E2E Member test account |
 
-脚本按优先级读取 `.env.<environment>.local`、`.env.local`、`.env.<environment>`、`.env`，且不会覆盖已经存在的进程变量。敏感变量不得提交到仓库；`NEXT_PUBLIC_*` 会暴露给浏览器，不能存放 secret。
+Scripts load `.env.<environment>.local`, `.env.local`, `.env.<environment>`, and `.env` in that priority order without replacing variables already present in the process. Never commit sensitive values. `NEXT_PUBLIC_*` values are exposed to the browser and must not contain secrets.
 
-## 数据库、迁移与种子
+## Database, migrations, and seed data
 
-生成 Drizzle SQL：
+Generate Drizzle SQL:
 
 ```bash
 pnpm db:generate
 ```
 
-开发迁移先 dry-run，再显式应用：
+Dry-run a development migration first, then apply it explicitly:
 
 ```bash
 pnpm db:migrate -- --environment=development
 pnpm db:migrate -- --environment=development --apply
 ```
 
-生产写操作必须同时提供 `--apply` 与 `--confirm-production`：
+Production writes require both `--apply` and `--confirm-production`:
 
 ```bash
 pnpm db:migrate -- --environment=production
 pnpm db:migrate -- --environment=production --apply --confirm-production
 ```
 
-Space 迁移采用 expand/backfill/compatibility 流程。预检会在重复 membership、孤儿记录、跨组织引用或冲突权限上中止，不会猜测应保留哪条生产记录。
+The Space migration uses an expand, backfill, and compatibility sequence. Preflight checks stop on duplicate memberships, orphaned rows, cross-organization references, or conflicting access states instead of guessing which production record to keep.
 
-开发数据与预览账号：
+Development data and preview accounts:
 
 ```bash
 pnpm db:seed -- --environment=development
@@ -353,34 +353,34 @@ pnpm db:preview-accounts -- --environment=development
 pnpm db:preview-accounts -- --environment=development --apply
 ```
 
-`db:preview-accounts` 创建 Member、Approved Mentor、Admin、Admin + Approved Mentor 的本地记录和 Main entitlement；仍需创建对应 Clerk test users 才能登录。摘要写入 `/tmp/wavesparks-preview-accounts.txt`。
+`db:preview-accounts` creates local records and Main entitlements for Member, Approved Mentor, Admin, and Admin plus Approved Mentor roles. Matching Clerk test users must still be created before they can sign in. A summary is written to `/tmp/wavesparks-preview-accounts.txt`.
 
-### 旧邀请迁移
+### Legacy invitation migration
 
 ```bash
 pnpm invitations:migrate -- --environment=production
 pnpm invitations:migrate -- --environment=production --apply --confirm-production
 ```
 
-该脚本默认 dry-run，把旧 Clerk Organization invitation 迁移为 Wavesparks 本地一次性邀请 + Clerk application invitation；成功后撤销旧邀请。日志只打印 membership ID 和计数，不打印邮箱或原始 token。
+This command defaults to a dry run. It migrates legacy Clerk Organization invitations to Wavesparks one-time invitations plus Clerk application invitations, then revokes the legacy invitations after success. Logs contain only membership IDs and counts, never email addresses or raw tokens.
 
-## AI 匹配引擎
+## AI matching engine
 
-当前算法版本为 `hybrid-v4`：
+The current algorithm version is `hybrid-v4`:
 
-- 只在同一个 Space 内匹配，要求账号/Profile/Space intent/opt-in/Space lifecycle 全部符合条件。
-- 支持 Admin 配置的 mutual 或 seeker → provider 匹配方向、最低质量分和权重；默认类别涵盖 co-founder、collaborator、mentor。
-- 生产 embedding 使用 `text-embedding-3-large` 的 1,024 维向量，存入 PostgreSQL `pgvector`。
-- 全局 Profile embedding 不包含 Space 私有活动；Space intent embedding 只使用当前 Space 的目标、供需和符合条件的近期意图帖子。
-- 私密联系方式、评论、收藏、关注、互动计数、审核历史和引荐内容不进入 embedding。
-- 分数为 `1..100` 的版本化 fit index，不是成功概率；稀疏证据会受覆盖率上限约束。
-- 每个 source member × match type × Space 最多保存 12 个候选。
-- OpenAI 缺失或失败时使用确定性多语言 token-hash fallback，并记录降级计数与错误；该结果不等同于生产语义质量。
-- Helpful / Not relevant 反馈按 Space 保存；Not relevant 会隐藏稳定匹配，反馈不会在线自动改权重。
+- Candidates are matched only inside the same Space, and their accounts, Profiles, Space intents, opt-in states, and the Space lifecycle must all be eligible.
+- Admin-configured matching supports mutual or seeker-to-provider direction, a minimum quality score, and configurable weights. Default categories cover co-founder, collaborator, and mentor.
+- Production embeddings use 1,024-dimensional vectors from `text-embedding-3-large` and are stored in PostgreSQL `pgvector`.
+- A global Profile embedding contains no Space-private activity. A Space intent embedding uses only goals, offers, needs, and eligible recent intent posts from that Space.
+- Private contact details, comments, saves, follows, interaction counts, moderation history, and introduction content are excluded from embeddings.
+- The score is a versioned `1..100` fit index, not a probability of success. Sparse evidence is constrained by coverage caps.
+- No more than 12 candidates are stored for each source member, match type, and Space combination.
+- If OpenAI is missing or fails, the engine uses a deterministic multilingual token-hash fallback and records degradation counts and errors. Fallback results do not provide production-level semantic quality.
+- Helpful and Not relevant feedback is stored per Space. Not relevant hides a stable match; feedback does not automatically retrain or change weights online.
 
-完整公式、证据质量、方向性比较、校准曲线和重算语义见 [AI matching engine](docs/ai-matching-engine.md)。
+See [AI matching engine](docs/ai-matching-engine.md) for the complete formula, evidence-quality rules, directional comparisons, calibration curve, and recomputation semantics.
 
-手动维护命令：
+Manual maintenance commands:
 
 ```bash
 pnpm cron:matches -- --environment=development
@@ -390,27 +390,27 @@ pnpm cron:matches -- --environment=production
 pnpm cron:matches -- --environment=production --apply --confirm-production
 ```
 
-## 媒体与邮件
+## Media and email
 
-- 头像和组织 Logo 使用 Vercel Blob public URL；支持 JPG/PNG/WebP，两者最大 2 MB。
-- 帖子图片使用 private Blob，经应用路由重新校验 Space 权限；每张最大 5 MB，支持 JPG/PNG/WebP，并由 Sharp 处理。
-- 链接预览会限制响应大小、校验内容类型并阻止本地/私网地址，缩略图同样通过私有读取路由提供。
-- 孤儿/失败的帖子媒体由 Cron 清理。
-- Clerk 发送身份邀请；Resend 只发送普通产品通知。未配置 Resend 时记录 `email skipped`，不影响邀请主流程。
-- 当前没有 Resend webhook 或投递状态入库，退信/投诉/送达只能在 Resend Dashboard 审计。
+- Avatars and organization logos use public Vercel Blob URLs. Both accept JPG, PNG, or WebP files up to 2 MB.
+- Post images use private Vercel Blob storage and are served through application routes that revalidate Space access. Each image may be up to 5 MB, accepts JPG, PNG, or WebP, and is processed with Sharp.
+- Link previews limit response size, validate content types, and block local or private-network addresses. Their thumbnails are also served through a private read route.
+- Cron removes orphaned or failed post media.
+- Clerk sends identity invitations. Resend sends ordinary product notifications only. If Resend is not configured, the application records `email skipped` without affecting the invitation flow.
+- There is currently no Resend webhook or delivery-state persistence. Delivery, bounce, and complaint information is available only in the Resend Dashboard.
 
-## 定时任务
+## Scheduled tasks
 
-Vercel 配置位于 `vercel.json`，时区为 UTC：
+Vercel configuration lives in `vercel.json`; all schedules use UTC:
 
-| UTC 时间 | 路径 | 作用 |
+| UTC schedule | Path | Purpose |
 | --- | --- | --- |
-| 每日 `08:00` | `/api/internal/matches/recompute` | 枚举组织和可匹配 Space，刷新推荐 |
-| 每日 `08:30` | `/api/internal/post-media/cleanup` | 清理未被帖子认领的过期媒体 |
+| Daily at `08:00` | `/api/internal/matches/recompute` | Enumerate organizations and eligible Spaces, then refresh recommendations |
+| Daily at `08:30` | `/api/internal/post-media/cleanup` | Remove expired media that was never claimed by a post |
 
-Vercel Cron 以 `GET` 调用，并用 `Authorization: Bearer <CRON_SECRET>` 授权。匹配端点另外兼容 `x-cron-secret`，媒体清理端点只接受 Bearer header。匹配 GET 不会回退到浏览器 session，以避免跨站顶层导航携带 Lax cookie 触发写操作。
+Vercel Cron invokes these routes with `GET` and authorizes them with `Authorization: Bearer <CRON_SECRET>`. The matching endpoint additionally accepts `x-cron-secret`; the media-cleanup endpoint accepts only the Bearer header. A matching `GET` never falls back to a browser session, preventing a cross-site top-level navigation with a Lax cookie from triggering a write.
 
-## 测试与质量门禁
+## Tests and quality gates
 
 ```bash
 pnpm typecheck
@@ -421,13 +421,13 @@ pnpm test:e2e:clerk
 pnpm build
 ```
 
-- `pnpm test`：Vitest 领域、组件、权限、迁移和 Route Handler 测试。
-- `pnpm test:e2e`：隔离的本地签名 cookie + 内存数据/邮件/媒体 Playwright 流程。
-- `pnpm test:e2e:clerk`：真实 Clerk test instance 登录/邀请流程。
-- `pnpm test:e2e:preview`：已部署 Preview 的浏览器验证。
-- `pnpm qa:prelaunch`：只允许开发环境的预发布匹配 QA；会拒绝生产 Vercel 环境和与生产数据库相同的 fingerprint。
+- `pnpm test`: Vitest domain, component, authorization, migration, and Route Handler tests.
+- `pnpm test:e2e`: isolated Playwright flows using local signed cookies and in-memory data, email, and media.
+- `pnpm test:e2e:clerk`: sign-in and invitation flows against a real Clerk test instance.
+- `pnpm test:e2e:preview`: browser verification against a deployed Preview.
+- `pnpm qa:prelaunch`: prelaunch matching QA restricted to development. It rejects a production Vercel environment or a database fingerprint matching production.
 
-生产配置与数据预检：
+Production configuration and data preflight:
 
 ```bash
 pnpm env:audit
@@ -435,106 +435,106 @@ pnpm readiness:prod -- --env-only
 pnpm readiness:prod
 ```
 
-`env:audit` 检查 development/production 数据库不是同一目标、开发 Clerk 使用 test key、生产 Clerk 使用 live key。完整 readiness 在迁移后执行只读 Space 审计，包括每个组织恰好一个 active Main、无重复/跨组织 Space 关系，以及帖子、关注、匹配、反馈、引荐和内容通知不存在空 `space_id`。
+`env:audit` verifies that development and production do not share a database, that development Clerk keys are test keys, and that production Clerk keys are live keys. After migrations, the full readiness check performs a read-only Space audit: every organization must have exactly one active Main Community; Space relationships must contain no duplicates or cross-organization references; and posts, follows, matches, feedback, introductions, and content notifications must not have a null `space_id`.
 
-## Vercel 部署与运营
+## Vercel deployment and operations
 
-推荐流程：
+Recommended workflow:
 
-1. 为 Preview 和 Production 分开配置 Vercel env；不要让开发与生产共用 Neon/Clerk 资源。
-2. 确认 `NEXT_PUBLIC_APP_URL` 是社区 app 域名，Clerk application home、sign-in/sign-up redirect 与邀请回调也指向该域名。
-3. 在 Clerk 生产 instance 使用 live keys，配置自定义域 DNS 与 `/api/webhooks/clerk` endpoint；保持 `force_organization_selection=false`。
-4. 在 Neon 启用 `pgvector`，先 dry-run migration，再用生产双确认开关应用。
-5. 先运行 `pnpm readiness:prod -- --env-only`，迁移后再运行完整 `pnpm readiness:prod`。
-6. 部署 Preview，完成 Member/Mentor/Admin、邀请、媒体、邮件、Cron 与权限边界 smoke test。
-7. 先解决本文的上线阻断项，再 promote 已验证的构建到 Production。
-8. 上线后检查 Vercel Runtime Logs、Cron 结果、Neon 连接/存储、Clerk webhook 与邀请投递、Resend bounce/complaint。
+1. Configure Preview and Production Vercel environments separately. Never share Neon or Clerk resources between development and production.
+2. Confirm that `NEXT_PUBLIC_APP_URL` is the community app domain. Clerk application home, sign-in and sign-up redirects, and invitation callbacks must also target that domain.
+3. Use live keys in the Clerk production instance, configure custom-domain DNS and the `/api/webhooks/clerk` endpoint, and keep `force_organization_selection=false`.
+4. Enable `pgvector` in Neon. Dry-run the migration, then apply it using both production confirmation flags.
+5. Run `pnpm readiness:prod -- --env-only` first, then run the full `pnpm readiness:prod` after migrations.
+6. Deploy a Preview and smoke-test Member, Mentor, and Admin paths together with invitations, media, email, Cron, and permission boundaries.
+7. Resolve the release blockers in this README before promoting the verified build to Production.
+8. After release, inspect Vercel Runtime Logs and Cron results, Neon connections and storage, Clerk webhooks and invitation delivery, and Resend bounces and complaints.
 
-环境变量变更只影响新 deployment，修改后需重新部署。数据库变更采用“向后兼容 migration → 部署代码 → 清理 migration”的分阶段方式；应用 rollback 不能自动回滚数据库。
+Environment variable changes affect new deployments only, so redeploy after each change. Use a staged database process of backward-compatible migration, application deployment, and cleanup migration. Rolling back the application does not roll back the database.
 
-各平台日常维护、密钥轮换、备份/恢复、回滚和故障排查步骤见 [Admin 运营与基础设施手册](docs/manuals/admin-guide.zh-CN.md)。官方入口：
+See the [Admin operations and infrastructure manual](docs/manuals/admin-guide.en.md) for routine maintenance, credential rotation, backup and restore, rollback, and incident-response procedures for every platform. Official references:
 
-- [Vercel Environment Variables](https://vercel.com/docs/environment-variables)、[Runtime Logs](https://vercel.com/docs/logs/runtime)、[Cron Jobs](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
-- [Clerk Production](https://clerk.com/docs/guides/development/deployment/production)、[API key rotation](https://clerk.com/docs/guides/secure/rotate-api-keys)、[Webhooks](https://clerk.com/docs/guides/development/webhooks/syncing)
-- [Neon branching](https://neon.com/docs/guides/branching-intro)、[restore](https://neon.com/docs/guides/branch-restore)、[connection pooling](https://neon.com/docs/connect/connection-pooling)
-- [Resend domains](https://resend.com/docs/dashboard/domains/introduction)、[API keys](https://resend.com/docs/dashboard/api-keys/introduction)、[email logs](https://resend.com/docs/dashboard/emails/introduction)
+- [Vercel Environment Variables](https://vercel.com/docs/environment-variables), [Runtime Logs](https://vercel.com/docs/logs/runtime), and [Cron Jobs](https://vercel.com/docs/cron-jobs/manage-cron-jobs)
+- [Clerk Production](https://clerk.com/docs/guides/development/deployment/production), [API key rotation](https://clerk.com/docs/guides/secure/rotate-api-keys), and [Webhooks](https://clerk.com/docs/guides/development/webhooks/syncing)
+- [Neon branching](https://neon.com/docs/guides/branching-intro), [restore](https://neon.com/docs/guides/branch-restore), and [connection pooling](https://neon.com/docs/connect/connection-pooling)
+- [Resend domains](https://resend.com/docs/dashboard/domains/introduction), [API keys](https://resend.com/docs/dashboard/api-keys/introduction), and [email logs](https://resend.com/docs/dashboard/emails/introduction)
 
-## 安全、隐私与删除
+## Security, privacy, and deletion
 
-- 所有社区读取、直链、收藏、通知和缓存读取都必须重新校验精确 Space 权限。
-- 生产 Clerk session 由 `clerk_user_id` 绑定；邮箱只作为经 Clerk 验证的邀请匹配条件，不应作为日常授权键。
-- Clerk webhook 使用签名验证和 `svix-id` 幂等记录；Organization 类事件被忽略。
-- Link preview 防 SSRF：阻止 loopback、私网和不安全跳转，并限制 HTML/图片大小。
-- 帖子媒体为 private Blob，响应使用 `private, no-store`；头像和 Logo 当前为 public Blob。
-- 联系方式不公开显示，也不进入 matching embedding；Admin 可在授权的 Profile 管理页查看，双方在 accepted introduction 后可见。
-- 当 Clerk `user.deleted` 到达时，Wavesparks 把身份匿名化为 Former member，删除认证绑定、Profile、匹配、关注、收藏和通知，终止待处理引荐；既有帖子/评论为保留社区历史而继续存在，但归属匿名作者。
-- 管理员 Profile CSV 含敏感资料，应按最小权限下载、加密保存并按保留策略删除。
-- Secret 只存于 Vercel/本地未提交 env；轮换 Clerk、Neon、Resend、Blob 与 Cron 凭证后要重新部署并做 smoke test。
+- Every community read, deep link, saved item, notification, and cached read must revalidate exact Space access.
+- Production Clerk sessions bind by `clerk_user_id`. Email is only an invitation-matching attribute verified by Clerk and must not become the routine authorization key.
+- The Clerk webhook verifies signatures and stores `svix-id` for idempotency. Organization-related events are ignored.
+- Link previews defend against SSRF by blocking loopback and private-network addresses, rejecting unsafe redirects, and limiting HTML and image sizes.
+- Post media uses private Blob storage with `private, no-store` responses. Avatars and logos currently use public Blob storage.
+- Contact details are not publicly displayed and never enter matching embeddings. Authorized Admins can inspect them in Profile management, and both participants can see them after an accepted introduction.
+- When Clerk sends `user.deleted`, Wavesparks anonymizes the identity as Former member, removes authentication binding, Profile, matches, follows, saves, and notifications, and terminates pending introductions. Existing posts and comments remain to preserve community history but are attributed to the anonymized author.
+- Admin Profile CSV exports contain sensitive data. Download them with least privilege, store them encrypted, and delete them according to the retention policy.
+- Store secrets only in Vercel or uncommitted local environment files. After rotating Clerk, Neon, Resend, Blob, or Cron credentials, redeploy and run smoke tests.
 
-## 上线阻断项与已知风险
+## Release blockers and known risks
 
-### P0：首次生产 bootstrap 无法产生可登录管理员
+### P0: A fresh production bootstrap cannot create a usable first Admin
 
-`pnpm db:bootstrap` 当前会按 `WAVESPARK_ADMIN_EMAILS` 创建 `users` 和 `org_admin` membership，但新记录仍是：
+`pnpm db:bootstrap` currently creates `users` and an `org_admin` membership for addresses in `WAVESPARK_ADMIN_EMAILS`, but every new record remains in this state:
 
 ```text
 users.clerk_user_id = NULL
 memberships.account_status = invited
-没有 membership_invitations 记录
-没有 Clerk application invitation
+no membership_invitations record
+no Clerk application invitation
 ```
 
-生产页面的统一认证路径只按 `clerk_user_id` 查找账号，明确禁止按邮箱自动绑定；唯一合法绑定点是一次性邀请接受事务。因此，空生产数据库执行 bootstrap 后，即使同邮箱的 Clerk 用户成功登录，也无法成为可用 viewer，更无法进入 Admin UI 给自己发送邀请。默认的 `letsbuild@wavesparks.co` 和 `WAVESPARK_ADMIN_EMAILS` 只是本地数据 bootstrap 配置，不是身份授权。
+The shared production authentication path finds accounts only by `clerk_user_id` and explicitly forbids automatic email claiming. The one-time invitation acceptance transaction is the only valid binding point. Consequently, after bootstrapping an empty production database, even a Clerk user with the same email cannot become a valid viewer or enter the Admin UI to invite themselves. The default `letsbuild@wavesparks.co` address and `WAVESPARK_ADMIN_EMAILS` are local data-bootstrap settings, not identity authorization.
 
-上线前必须实现并验证一个受控的 first-admin 绑定流程，例如让 bootstrap 生成并发送标准一次性邀请，或提供一次性、可审计、强确认的运维绑定命令；不得恢复“登录时按邮箱自动认领”。本文只记录问题，不修改当前实现。
+Before launch, implement and verify a controlled first-Admin binding flow. For example, bootstrap could generate and send the standard one-time invitation, or an operator-only command could perform a one-time, auditable binding behind strong confirmation. Do not restore automatic account claiming by email on sign-in. This README documents the problem without changing the current implementation.
 
-已有且其 membership 已处于 `connected` 的生产管理员再次运行 bootstrap 时可保留绑定，但这不能解决全新环境的首次管理员问题。
+Running bootstrap again preserves the binding for an existing production Admin whose membership is already `connected`, but that does not solve initial administration in a new environment.
 
-### P1：5 个路由仍以邮箱做管理员授权
+### P1: Five routes still authorize Admins by email
 
-下列路由直接用 `getCurrentAuthIdentity().email` 调用 `getViewerRecordByEmailAndSlug(...)`，没有遵循生产页面的 Clerk ID 绑定规则：
+The following routes pass `getCurrentAuthIdentity().email` directly to `getViewerRecordByEmailAndSlug(...)` instead of following the production Clerk ID binding rule:
 
-| 路由 | 风险动作 |
+| Route | Risky operation |
 | --- | --- |
-| `POST /api/internal/preview-accounts` | 创建/更新预览角色账号 |
-| `POST /api/internal/matches/recompute`（非 Cron 的 Admin session 分支） | 触发匹配写入 |
-| `POST /api/admin/member-import/parse` | 进入管理员批量导入流程并解析成员文件 |
-| `GET /org/:slug/admin/profiles/export` | 导出包含私密资料的 CSV |
-| `POST /api/uploads/org-logo` | 修改组织 Logo |
+| `POST /api/internal/preview-accounts` | Create or update preview-role accounts |
+| `POST /api/internal/matches/recompute` in the non-Cron Admin session branch | Trigger matching writes |
+| `POST /api/admin/member-import/parse` | Enter the Admin bulk-import flow and parse a member file |
+| `GET /org/:slug/admin/profiles/export` | Export a CSV containing private Profile data |
+| `POST /api/uploads/org-logo` | Change the organization logo |
 
-这会造成认证模型不一致：一个尚未通过邀请事务绑定、但 Clerk 已验证邮箱与本地 Admin 邮箱相同的 session，可能在无法打开正常 Admin 页面时仍命中这些直接路由。尤其 bootstrap 正好创建“邮箱存在但 Clerk ID 未绑定”的 Admin 记录，使两项 P0 风险相互放大。
+This creates an inconsistent authentication model: a session with a Clerk-verified email matching a local Admin address, but without a binding completed by the invitation transaction, may reach these direct routes even though it cannot open normal Admin pages. Bootstrap itself creates exactly such an email-present, Clerk-ID-unbound Admin record, so this P1 risk compounds the P0 bootstrap issue.
 
-上线前应让这些路由统一使用 `clerk_user_id`/共享 viewer context，并只对隔离 E2E provider 保留显式邮箱查找；同时增加“同邮箱、不同/未绑定 Clerk ID 必须拒绝”的路由测试。`/api/internal/preview-accounts` 还应在生产环境 fail closed。本文按要求仅记录风险，不修改代码。
+Before launch, migrate these routes to `clerk_user_id` and the shared viewer context, retaining explicit email lookup only for the isolated E2E provider. Add route tests proving that an equal email with a different or missing Clerk ID is rejected. `/api/internal/preview-accounts` must also fail closed in production. As requested, the current documentation records these risks without changing application code.
 
-### 其他运营边界
+### Additional operating boundaries
 
-- Resend 未配置时普通通知只写日志；当前无 webhook/投递状态同步。
-- OpenAI 失败会继续产生降级匹配，运营需监控 `degradedEmbeddingCount`，不能把 fallback 当作同质量服务。
-- Admin 可见所有 Space 的审计数据，但要作为社交成员参与仍需显式 entitlement。
-- `ended` Event 仍完全可互动；若运营期望只读或关闭，必须执行 archive。
-- 应用回滚不等于数据库回滚；生产 migration 必须保持前后版本兼容并先验证恢复方案。
+- Without Resend configuration, ordinary notifications are logged only. There is no webhook or delivery-state synchronization.
+- An OpenAI failure still produces degraded matching. Operations must monitor `degradedEmbeddingCount` and must not treat the fallback as an equal-quality service.
+- Admins can inspect audit data for every Space, but still need an explicit entitlement to participate socially.
+- An `ended` Event remains fully interactive. Archive it if operations intend to close access.
+- An application rollback is not a database rollback. Production migrations must remain compatible with both adjacent application versions, and recovery must be rehearsed first.
 
-## 常用命令速查
+## Command reference
 
 ```bash
-# 开发
+# Development
 pnpm dev
 pnpm build
 
-# 质量
+# Quality
 pnpm typecheck
 pnpm lint
 pnpm test
 pnpm test:e2e
 pnpm test:e2e:clerk
 
-# 数据库
+# Database
 pnpm db:generate
 pnpm db:migrate -- --environment=development
 pnpm db:seed -- --environment=development
 pnpm db:bootstrap -- --environment=production
 
-# 运维
+# Operations
 pnpm env:audit
 pnpm readiness:prod -- --env-only
 pnpm readiness:prod
@@ -542,4 +542,4 @@ pnpm cron:matches -- --environment=production
 pnpm invitations:migrate -- --environment=production
 ```
 
-所有修改型脚本默认 dry-run；开发写入加 `--apply`，生产写入必须加 `--apply --confirm-production`。在未解决 P0 bootstrap 阻断项前，不要把 `db:bootstrap` 的成功日志误认为首位管理员已能登录。
+All mutating scripts default to dry-run mode. Add `--apply` for development writes. Production writes require both `--apply` and `--confirm-production`. Until the P0 bootstrap blocker is resolved, never interpret a successful `db:bootstrap` log as proof that the first Admin can sign in.
