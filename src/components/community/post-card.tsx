@@ -160,7 +160,7 @@ export function PostCard({
         </Link>
       </div>
 
-      <PostImageGallery images={post.images} />
+      <PostImageGallery compact images={post.images} />
       <LinkPreviewCard compact preview={post.linkPreview} />
 
       <div className="flex flex-wrap gap-2 pl-1">

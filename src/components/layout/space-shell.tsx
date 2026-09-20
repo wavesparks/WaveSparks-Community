@@ -111,7 +111,7 @@ export function SpaceShell({
               className="flex shrink-0 items-center"
               href={`/org/${viewer.org.slug}`}
             >
-              <BrandLogo className="h-7 max-w-24 sm:h-8 sm:max-w-[150px]" />
+              <BrandLogo className="w-24 sm:w-[150px]" />
             </Link>
 
             <div className="min-w-0 flex-1 sm:min-w-[220px] sm:max-w-sm">

@@ -715,7 +715,16 @@ export interface MemberDirectoryFilters {
   skill?: string;
 }
 
-export interface MemberDirectoryProfileView extends LimitedProfileCard {
+export interface MemberDirectoryPlaceholderView {
+  profileStatus: "incomplete" | "missing";
+  membershipId: string;
+  displayName: string;
+  photo: string;
+  affiliationLabel: string;
+}
+
+export interface MemberDirectoryCompleteProfileView extends LimitedProfileCard {
+  profileStatus: "complete";
   isApprovedMentor: boolean;
   acceptingMentoringRequests: boolean;
   openToIntroductions: boolean;
@@ -744,6 +753,10 @@ export interface MemberDirectoryProfileView extends LimitedProfileCard {
   isFollowing: boolean;
   introStatus?: IntroStatus;
 }
+
+export type MemberDirectoryProfileView =
+  | MemberDirectoryCompleteProfileView
+  | MemberDirectoryPlaceholderView;
 
 export interface KnowledgePostView extends FeedPostView {
   knowledgeReason: "resource" | "featured" | "active_discussion" | "saved";

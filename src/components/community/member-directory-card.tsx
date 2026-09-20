@@ -20,7 +20,40 @@ import { Card } from "@/components/ui/card";
 import { LinkButton } from "@/components/ui/link-button";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { getActiveIntroStatusCopy } from "@/lib/intro-status";
-import type { MemberDirectoryProfileView } from "@/lib/domain";
+import type {
+  MemberDirectoryPlaceholderView,
+  MemberDirectoryProfileView,
+} from "@/lib/domain";
+
+function MemberDirectoryPlaceholderCard({
+  profile,
+}: {
+  profile: MemberDirectoryPlaceholderView;
+}) {
+  const statusLabel =
+    profile.profileStatus === "incomplete" ? "Profile in progress" : "Profile not started";
+
+  return (
+    <Card className="space-y-4 p-4">
+      <div className="flex items-start gap-3">
+        <Avatar className="size-12" name={profile.displayName} src={profile.photo} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-lg font-semibold text-[var(--ink)]">
+              {profile.displayName}
+            </h3>
+            <Badge variant="muted">{profile.affiliationLabel}</Badge>
+            <Badge variant="muted">{statusLabel}</Badge>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
+            This member is still setting up their profile. Details and connection actions will
+            appear when it is ready.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 export function MemberDirectoryCard({
   profile,
@@ -37,6 +70,10 @@ export function MemberDirectoryCard({
   spaceSlug?: string;
   viewerMembershipId?: string;
 }) {
+  if (profile.profileStatus !== "complete") {
+    return <MemberDirectoryPlaceholderCard profile={profile} />;
+  }
+
   const isSelf = Boolean(viewerMembershipId === profile.membershipId);
   const followAction = spaceId
     ? profile.isFollowing

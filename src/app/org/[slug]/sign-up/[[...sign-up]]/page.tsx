@@ -43,7 +43,7 @@ export default async function SignUpPage({
             className="ws-hero-art min-h-[350px] overflow-hidden border-0 p-0 text-[var(--surface)]"
           >
             <div className="flex min-h-[350px] flex-col justify-between p-6 sm:p-7">
-              <BrandLogo className="h-8 w-fit" tone="light" />
+              <BrandLogo className="w-[13.7rem]" tone="light" />
               <SectionHeading
                 eyebrow="Create account"
                 level={1}

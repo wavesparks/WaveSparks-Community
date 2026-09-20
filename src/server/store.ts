@@ -28,7 +28,9 @@ import {
 } from "@/lib/community-copy";
 import { sanitizeMatchFeedbackReasons } from "@/lib/match-feedback";
 import {
+  extractFirstExternalSafeHttpUrl,
   mentionLabelForProfile,
+  normalizeSafeHttpUrl,
   validateMentionRanges,
 } from "@/lib/post-content";
 import {
@@ -250,7 +252,7 @@ export interface AdminSpaceParticipantRecord {
   spaceMembership: Pick<SpaceMembership, "id">;
   membership: Pick<Membership, "id" | "role">;
   user?: Pick<User, "email" | "name">;
-  profile?: Pick<Profile, "onboardingComplete" | "preferredName">;
+  profile?: Pick<Profile, "onboardingComplete" | "preferredName" | "fullName">;
   intent?: Pick<SpaceIntent, "intentComplete" | "matchingOptIn">;
 }
 
@@ -4382,6 +4384,7 @@ export async function listAdminSpaceParticipantRecords(
         profile: profile
           ? {
               onboardingComplete: profile.onboardingComplete,
+              fullName: profile.fullName,
               preferredName: profile.preferredName,
             }
           : undefined,
@@ -4405,6 +4408,7 @@ export async function listAdminSpaceParticipantRecords(
       userName: dbSchema.users.name,
       profileId: dbSchema.profiles.id,
       profilePreferredName: dbSchema.profiles.preferredName,
+      profileFullName: dbSchema.profiles.fullName,
       profileOnboardingComplete: dbSchema.profiles.onboardingComplete,
       intentId: dbSchema.spaceIntents.id,
       intentComplete: dbSchema.spaceIntents.intentComplete,
@@ -4444,6 +4448,7 @@ export async function listAdminSpaceParticipantRecords(
     profile: row.profileId
       ? {
           onboardingComplete: row.profileOnboardingComplete!,
+          fullName: row.profileFullName!,
           preferredName: row.profilePreferredName!,
         }
       : undefined,
@@ -5097,7 +5102,10 @@ export async function listMemberWorkspaceForOrg(
         }
 
         const user = store.users.find((candidate) => candidate.id === membership.userId);
+        const profile = store.profiles.find((candidate) => candidate.membershipId === membership.id);
         return Boolean(
+          profile?.fullName.toLowerCase().includes(normalizedQuery) ||
+          profile?.preferredName.toLowerCase().includes(normalizedQuery) ||
           user &&
             (user.name.toLowerCase().includes(normalizedQuery) ||
               user.email.toLowerCase().includes(normalizedQuery)),
@@ -5184,6 +5192,8 @@ export async function listMemberWorkspaceForOrg(
       ? or(
           ilike(dbSchema.users.name, `%${queryText}%`),
           ilike(dbSchema.users.email, `%${queryText}%`),
+          ilike(dbSchema.profiles.fullName, `%${queryText}%`),
+          ilike(dbSchema.profiles.preferredName, `%${queryText}%`),
         )
       : undefined,
     invitationCondition,
@@ -5195,6 +5205,7 @@ export async function listMemberWorkspaceForOrg(
     .select({ total: sql<number>`count(*)`.mapWith(Number) })
     .from(dbSchema.memberships)
     .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
     .where(filters);
   const total = countRow?.total ?? 0;
   const pageCount = total ? Math.ceil(total / pageSize) : 0;
@@ -10619,6 +10630,34 @@ export interface RichMentionInput {
   end: number;
 }
 
+export interface PostContentScope {
+  orgId: string;
+  spaceId: string;
+  postId: string;
+}
+
+export type PostContentUpdate = Pick<
+  Post,
+  | "type"
+  | "opportunitySource"
+  | "title"
+  | "body"
+  | "tags"
+  | "relatedStartupName"
+  | "relatedRolesNeeded"
+>;
+
+function postLinkPreviewMatchesBody(
+  preview: Pick<PostLinkPreview, "originalUrl">,
+  body: string,
+) {
+  const firstExternalUrl = extractFirstExternalSafeHttpUrl(body, env.appUrl);
+  return Boolean(
+    firstExternalUrl &&
+      normalizeSafeHttpUrl(preview.originalUrl) === firstExternalUrl.href,
+  );
+}
+
 async function assertMentionLabelsMatchProfiles(
   orgId: string,
   mentions: RichMentionInput[],
@@ -10863,6 +10902,204 @@ export async function createRichPostInSpace(
   });
 
   return post;
+}
+
+export async function updatePostContent(
+  scope: PostContentScope,
+  input: PostContentUpdate,
+) {
+  const now = new Date().toISOString();
+
+  if (!usesDatabase) {
+    const store = getStore();
+    const space = store.spaces.find(
+      (candidate) =>
+        candidate.id === scope.spaceId && candidate.orgId === scope.orgId,
+    );
+    const post = store.posts.find(
+      (candidate) =>
+        candidate.id === scope.postId &&
+        candidate.orgId === scope.orgId &&
+        candidate.spaceId === scope.spaceId,
+    );
+    if (!space || !post) return null;
+
+    const hasVisibleImage = store.postImages.some(
+      (image) =>
+        image.postId === post.id &&
+        image.orgId === scope.orgId &&
+        image.spaceId === scope.spaceId &&
+        image.uploadStatus === "ready" &&
+        image.moderationStatus === "visible",
+    );
+    if (!input.body.trim() && !hasVisibleImage) {
+      throw new Error("A post with no text must keep at least one visible image.");
+    }
+
+    const bodyChanged = input.body !== post.body;
+    const preview = store.postLinkPreviews.find(
+      (candidate) =>
+        candidate.postId === post.id &&
+        candidate.orgId === scope.orgId &&
+        candidate.spaceId === scope.spaceId,
+    );
+    const shouldDeletePreview = Boolean(
+      bodyChanged &&
+        preview &&
+        !postLinkPreviewMatchesBody(preview, input.body),
+    );
+
+    Object.assign(post, input, { updatedAt: now });
+    if (bodyChanged) {
+      store.postMentions = store.postMentions.filter(
+        (mention) =>
+          mention.postId !== post.id ||
+          mention.orgId !== scope.orgId ||
+          mention.spaceId !== scope.spaceId,
+      );
+      store.notifications = store.notifications.filter(
+        (notification) =>
+          notification.type !== "post_mentioned" ||
+          notification.sourcePostId !== post.id ||
+          notification.orgId !== scope.orgId ||
+          notification.spaceId !== scope.spaceId,
+      );
+    }
+    if (preview && shouldDeletePreview) {
+      store.postLinkPreviews = store.postLinkPreviews.filter(
+        (candidate) => candidate.id !== preview.id,
+      );
+    }
+    return post;
+  }
+
+  return getTransactionDb().transaction(async (tx) => {
+    const [record] = await tx
+      .select({ post: dbSchema.posts, space: dbSchema.spaces })
+      .from(dbSchema.posts)
+      .innerJoin(
+        dbSchema.spaces,
+        and(
+          eq(dbSchema.spaces.id, dbSchema.posts.spaceId),
+          eq(dbSchema.spaces.orgId, dbSchema.posts.orgId),
+        ),
+      )
+      .where(
+        and(
+          eq(dbSchema.posts.id, scope.postId),
+          eq(dbSchema.posts.orgId, scope.orgId),
+          eq(dbSchema.posts.spaceId, scope.spaceId),
+          eq(dbSchema.spaces.id, scope.spaceId),
+          eq(dbSchema.spaces.orgId, scope.orgId),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!record) return null;
+
+    if (!input.body.trim()) {
+      const [visibleImage] = await tx
+        .select({ id: dbSchema.postImages.id })
+        .from(dbSchema.postImages)
+        .where(
+          and(
+            eq(dbSchema.postImages.postId, scope.postId),
+            eq(dbSchema.postImages.orgId, scope.orgId),
+            eq(dbSchema.postImages.spaceId, scope.spaceId),
+            eq(dbSchema.postImages.uploadStatus, "ready"),
+            eq(dbSchema.postImages.moderationStatus, "visible"),
+          ),
+        )
+        .limit(1);
+      if (!visibleImage) {
+        throw new Error("A post with no text must keep at least one visible image.");
+      }
+    }
+
+    const [previewRow] = await tx
+      .select()
+      .from(dbSchema.postLinkPreviews)
+      .where(
+        and(
+          eq(dbSchema.postLinkPreviews.postId, scope.postId),
+          eq(dbSchema.postLinkPreviews.orgId, scope.orgId),
+          eq(dbSchema.postLinkPreviews.spaceId, scope.spaceId),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    const preview = previewRow ? postLinkPreviewFromRow(previewRow) : undefined;
+    const bodyChanged = input.body !== record.post.body;
+    const shouldDeletePreview = Boolean(
+      bodyChanged &&
+        preview &&
+        !postLinkPreviewMatchesBody(preview, input.body),
+    );
+
+    const [updatedRow] = await tx
+      .update(dbSchema.posts)
+      .set({
+        type: input.type,
+        opportunitySource: input.opportunitySource ?? null,
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        relatedStartupName: input.relatedStartupName ?? null,
+        relatedRolesNeeded: input.relatedRolesNeeded,
+        updatedAt: new Date(now),
+      })
+      .where(
+        and(
+          eq(dbSchema.posts.id, scope.postId),
+          eq(dbSchema.posts.orgId, scope.orgId),
+          eq(dbSchema.posts.spaceId, scope.spaceId),
+        ),
+      )
+      .returning();
+    if (!updatedRow) {
+      throw new Error("The post could not be updated.");
+    }
+
+    if (bodyChanged) {
+      await tx
+        .delete(dbSchema.postMentions)
+        .where(
+          and(
+            eq(dbSchema.postMentions.postId, scope.postId),
+            eq(dbSchema.postMentions.orgId, scope.orgId),
+            eq(dbSchema.postMentions.spaceId, scope.spaceId),
+          ),
+        );
+      await tx
+        .delete(dbSchema.notifications)
+        .where(
+          and(
+            eq(dbSchema.notifications.type, "post_mentioned"),
+            eq(dbSchema.notifications.sourcePostId, scope.postId),
+            eq(dbSchema.notifications.orgId, scope.orgId),
+            eq(dbSchema.notifications.spaceId, scope.spaceId),
+          ),
+        );
+    }
+    if (previewRow && shouldDeletePreview) {
+      const detachedRows = await tx
+        .delete(dbSchema.postLinkPreviews)
+        .where(
+          and(
+            eq(dbSchema.postLinkPreviews.id, previewRow.id),
+            eq(dbSchema.postLinkPreviews.postId, scope.postId),
+            eq(dbSchema.postLinkPreviews.orgId, scope.orgId),
+            eq(dbSchema.postLinkPreviews.spaceId, scope.spaceId),
+          ),
+        )
+        .returning({ id: dbSchema.postLinkPreviews.id });
+      if (detachedRows.length !== 1) {
+        throw new Error("The old post link preview could not be removed safely.");
+      }
+    }
+
+    return postFromRow(updatedRow);
+  });
 }
 
 export async function createComment(

@@ -4,6 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { MatchCardView } from "@/lib/domain";
 
+const typeColors: Record<string, string> = {
+  cofounder_match: "text-violet-700 bg-violet-50",
+  collaborator_match: "text-blue-700 bg-blue-50",
+  mentor_match: "text-emerald-700 bg-emerald-50",
+};
+
 function matchScoreVariant(scoreBand: MatchCardView["scoreBand"]) {
   if (scoreBand === "high") return "accent";
   if (scoreBand === "good") return "default";
@@ -39,7 +45,7 @@ export function MatchCard({
             src={match.target.photo}
           />
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase text-[var(--accent)]">
+            <p className={`inline-block rounded px-2 py-1 text-xs font-semibold uppercase ${typeColors[match.matchType] ?? "text-[var(--accent)] bg-[var(--accent-soft)]"}`}>
               {match.matchTypeLabel}
             </p>
             <h3 className="mt-1 text-lg font-semibold leading-tight text-[var(--ink)]">
@@ -55,12 +61,12 @@ export function MatchCard({
           aria-valuemax={100}
           aria-valuemin={1}
           aria-valuenow={match.score}
-          aria-valuetext={`${match.score} out of 100`}
+          aria-valuetext={`${match.score}% match`}
           className="shrink-0 self-start whitespace-nowrap tabular-nums text-[var(--ink)]"
           role="meter"
           variant={matchScoreVariant(match.scoreBand)}
         >
-          {match.score}/100 match
+          {match.score}% match
         </Badge>
       </div>
       <div className="border-t border-[var(--line)] pt-4">

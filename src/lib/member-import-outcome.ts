@@ -15,8 +15,10 @@ export function getMemberImportOutcome(
 ): MemberImportOutcome {
   const { connected, failed, invited, skipped } = result.summary;
   const added = result.summary.spaceAdded ?? result.summary.cohortAdded;
-  const completed = invited + connected + added;
+  const profilesUpdated = result.summary.profilesUpdated ?? 0;
+  const completed = invited + connected + added + profilesUpdated;
   const completedParts = [
+    profilesUpdated ? `${countLabel(profilesUpdated, "profile")} updated` : null,
     invited ? `${countLabel(invited, "invitation")} sent` : null,
     connected ? `${countLabel(connected, "account")} connected` : null,
     added ? `${countLabel(added, "person", "people")} given access` : null,
@@ -67,7 +69,7 @@ export function getMemberImportOutcome(
           ? invited === 1
             ? "Invitation sent"
             : "Invitations sent"
-          : "Access updated",
+          : profilesUpdated && !added ? "Profiles updated" : "Access updated",
     tone: "success",
   };
 }

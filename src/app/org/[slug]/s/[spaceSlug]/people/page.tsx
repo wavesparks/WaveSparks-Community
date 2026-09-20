@@ -65,7 +65,6 @@ export default async function SpacePeoplePage({
   const profiles = await getMemberDirectoryViewsForSpace(space.id, viewer.org, {
     viewerMembershipId: viewer.membership.id,
     filters,
-    limit: 80,
   });
   const returnPath = pathWithQuery(basePath, query);
   const hasFilters = hasDirectoryFilters(filters);
@@ -188,7 +187,7 @@ export default async function SpacePeoplePage({
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
             {hasFilters
               ? "Try removing a filter or using a broader search."
-              : `New ${peopleLabel} will appear here after they create their profile.`}
+              : `New ${peopleLabel} will appear here after their account is connected and they join ${communityName}.`}
           </p>
         </Card>
       ) : null}

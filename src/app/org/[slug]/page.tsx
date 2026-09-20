@@ -7,12 +7,13 @@ export default async function OrganizationLanding({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { mainSpace, spaces, viewer } = await getMySpacesContext(slug);
+  const { mainSpace, managedSpaces, spaces, viewer } = await getMySpacesContext(slug);
 
   return (
     <MySpacesView
       accessibleSpaces={spaces.map(({ space }) => space)}
       mainSpace={mainSpace}
+      managedSpaces={managedSpaces}
       viewer={viewer}
     />
   );

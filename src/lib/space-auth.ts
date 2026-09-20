@@ -71,6 +71,7 @@ export async function getMySpacesContext(slug: string) {
     viewer,
     org: viewer.org,
     mainSpace,
+    managedSpaces: viewer.canAdmin ? allSpaces.filter((space) => space.kind === "event") : [],
     spaces: effectiveAccessRecords(viewer, visibleSpaces),
   };
 }

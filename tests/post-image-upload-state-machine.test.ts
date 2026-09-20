@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  afterCallbacks: [] as Array<() => Promise<void> | void>,
   handleUpload: vi.fn(),
   requireAccess: vi.fn(),
 }));
@@ -14,6 +15,12 @@ vi.mock("@vercel/blob/client", () => ({
 
 vi.mock("@/lib/space-auth", () => ({
   requireSpaceAccessForAction: mocks.requireAccess,
+}));
+
+vi.mock("next/server", () => ({
+  after: vi.fn((callback: () => Promise<void> | void) => {
+    mocks.afterCallbacks.push(callback);
+  }),
 }));
 
 interface UploadCallbacks {
@@ -28,7 +35,7 @@ interface UploadCallbacks {
 }
 
 const originalEnvironment = {
-  blobToken: process.env.BLOB_READ_WRITE_TOKEN,
+  postMediaToken: process.env.POST_MEDIA_READ_WRITE_TOKEN,
   databaseUrl: process.env.DATABASE_URL,
   e2eLocalAuth: process.env.E2E_LOCAL_AUTH_ENABLED,
   mediaStorage: process.env.POST_MEDIA_STORAGE,
@@ -47,7 +54,7 @@ const SLUG = "upload-state-test";
 
 function restoreEnvironment() {
   for (const [key, value] of Object.entries({
-    BLOB_READ_WRITE_TOKEN: originalEnvironment.blobToken,
+    POST_MEDIA_READ_WRITE_TOKEN: originalEnvironment.postMediaToken,
     DATABASE_URL: originalEnvironment.databaseUrl,
     E2E_LOCAL_AUTH_ENABLED: originalEnvironment.e2eLocalAuth,
     POST_MEDIA_STORAGE: originalEnvironment.mediaStorage,
@@ -108,7 +115,7 @@ function stagedImage(input: { id: string; membershipId?: string; pathname?: stri
 }
 
 beforeAll(async () => {
-  process.env.BLOB_READ_WRITE_TOKEN = "test_blob_token";
+  process.env.POST_MEDIA_READ_WRITE_TOKEN = "test_private_blob_token";
   delete process.env.DATABASE_URL;
   process.env.E2E_LOCAL_AUTH_ENABLED = "1";
   process.env.POST_MEDIA_STORAGE = "memory";
@@ -124,6 +131,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.afterCallbacks.length = 0;
   store.resetStore();
   storage.resetMemoryPostMediaStorage();
   mocks.requireAccess.mockResolvedValue(accessFor());
@@ -220,6 +228,11 @@ describe("post image upload state machine", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(observedStatuses).toEqual(["staged"]);
+    await expect(store.getPostImageById(imageId)).resolves.toMatchObject({
+      uploadStatus: "staged",
+    });
+    expect(mocks.afterCallbacks).toHaveLength(3);
+    await Promise.all(mocks.afterCallbacks.splice(0).map((callback) => callback()));
     const image = await store.getPostImageById(imageId);
     expect(image).toMatchObject({
       blobPathname: `post-images/${SPACE_ID}/${OWNER_ID}/${imageId}/__wavesparks_processed__.webp`,
@@ -283,6 +296,7 @@ describe("post image upload state machine", () => {
 
       const response = await route.POST(routeRequest("POST"), context());
       expect(response.status).toBe(200);
+      await Promise.all(mocks.afterCallbacks.splice(0).map((callback) => callback()));
       await expect(store.getPostImageById(scenario.id)).resolves.toMatchObject({
         uploadStatus: "failed",
         uploadError: expect.stringMatching(scenario.error),

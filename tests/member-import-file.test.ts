@@ -105,7 +105,7 @@ describe("member import file parser", () => {
       fileName: "members.csv",
       format: "csv",
       headers: ["Email", "Full Name", "Note"],
-      suggestedMapping: { emailColumn: 0, nameColumn: 1 },
+      suggestedMapping: { emailColumn: 0, nameColumn: 1, profileColumns: {} },
       rows: [
         {
           rowNumber: 2,
@@ -135,7 +135,7 @@ describe("member import file parser", () => {
       csvInput("Contact,Person\nalice@example.com,Alice"),
     );
 
-    expect(result.suggestedMapping).toEqual({ emailColumn: null, nameColumn: null });
+    expect(result.suggestedMapping).toEqual({ emailColumn: null, nameColumn: null, profileColumns: {} });
   });
 
   it("rejects a data-first CSV with no header row", async () => {

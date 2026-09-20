@@ -1,5 +1,6 @@
 import type { HandleUploadBody } from "@vercel/blob/client";
 import { handleUpload } from "@vercel/blob/client";
+import { after } from "next/server";
 import { z } from "zod";
 
 import { env } from "@/lib/env";
@@ -279,7 +280,7 @@ export async function POST(
       return privateJson({ error: "Image upload failed." }, { status: 400 });
     }
   }
-  if (!env.blobReadWriteToken) {
+  if (!env.postMediaReadWriteToken) {
     return privateJson({ error: "Image uploads are unavailable." }, { status: 503 });
   }
 
@@ -288,7 +289,7 @@ export async function POST(
     const result = await handleUpload({
       body,
       request,
-      token: env.blobReadWriteToken,
+      token: env.postMediaReadWriteToken,
       onBeforeGenerateToken: async (pathname, clientPayload) => {
         const access = await requireSpaceAccessForAction({
           slug,
@@ -357,7 +358,25 @@ export async function POST(
         if (blob.pathname !== payload.rawPathname) {
           throw new Error("The completed upload path does not match its token.");
         }
-        await finishUpload(payload);
+        after(async () => {
+          console.info("[wavesparks] post image processing started", {
+            imageId: payload.imageId,
+            spaceId: payload.spaceId,
+          });
+          try {
+            await finishUpload(payload);
+            console.info("[wavesparks] post image processing completed", {
+              imageId: payload.imageId,
+              spaceId: payload.spaceId,
+            });
+          } catch (error) {
+            console.error("[wavesparks] post image processing failed", {
+              error,
+              imageId: payload.imageId,
+              spaceId: payload.spaceId,
+            });
+          }
+        });
       },
     });
     return privateJson(result);

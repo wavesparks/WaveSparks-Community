@@ -12,7 +12,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   confirmMemberImportAction,
@@ -21,7 +21,6 @@ import {
 } from "@/actions/admin";
 import {
   adminFriendlyMessage,
-  adminSpaceName,
   adminSpaceOptionLabel,
 } from "@/components/admin/admin-community-copy";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { importProfileFields, isImportRowActionable, type ImportProfileField } from "@/lib/member-import-profile";
 import type {
   MemberImportAccessStatus,
   MemberImportClassification,
@@ -88,6 +88,7 @@ const classificationLabels: Record<MemberImportClassification, string> = {
 };
 
 const resultLabels: Record<MemberImportResultStatus, string> = {
+  profile_updated: "Profile updated",
   invited: "Invitation sent",
   connected: "Account connected",
   space_added: "Added",
@@ -119,6 +120,7 @@ function downloadCsv(fileName: string, rows: Array<Array<string | number>>) {
 function summarizeResult(rows: MemberImportResultRow[]): MemberImportResult["summary"] {
   return rows.reduce<MemberImportResult["summary"]>(
     (summary, row) => {
+      if (row.status === "profile_updated") summary.profilesUpdated = (summary.profilesUpdated ?? 0) + 1;
       if (row.status === "invited") summary.invited += 1;
       if (row.status === "connected") summary.connected += 1;
       if (row.status === "space_added" || row.status === "cohort_added") {
@@ -157,6 +159,8 @@ export function MemberImportWorkflow({
     defaultDestinationSpaceId ?? defaultCohortId ?? availableSpaces[0]?.id ?? "";
   const [step, setStep] = useState<WorkflowStep>("source");
   const [sourceMode, setSourceMode] = useState<SourceMode>("file");
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [profileColumns, setProfileColumns] = useState<Partial<Record<ImportProfileField, number>>>({});
   const [file, setFile] = useState<File | null>(null);
   const [pastedList, setPastedList] = useState("");
   const [parsed, setParsed] = useState<MemberImportParseResult | null>(null);
@@ -218,6 +222,7 @@ export function MemberImportWorkflow({
       setParsed(payload);
       setEmailColumn(payload.suggestedMapping.emailColumn);
       setNameColumn(payload.suggestedMapping.nameColumn);
+      setProfileColumns(payload.suggestedMapping.profileColumns ?? {});
       setStep("mapping");
     } catch (parseError) {
       setError(errorMessage(parseError));
@@ -259,7 +264,7 @@ export function MemberImportWorkflow({
       return;
     }
 
-    const mappedColumns = [emailColumn, nameColumn].filter(
+    const mappedColumns = [emailColumn, nameColumn, ...Object.values(profileColumns)].filter(
       (column): column is number => column != null,
     );
     const formulaRow = parsed.rows.find((row) =>
@@ -276,6 +281,7 @@ export function MemberImportWorkflow({
       rowNumber: row.rowNumber,
       email: stringValue(row.values[emailColumn]),
       name: nameColumn == null ? "" : stringValue(row.values[nameColumn]),
+      profile: Object.fromEntries(Object.entries(profileColumns).flatMap(([key, column]) => column == null ? [] : [[key, stringValue(row.values[column])]])),
     }));
     await runPreview(nextRows);
   }
@@ -308,18 +314,12 @@ export function MemberImportWorkflow({
   const spaceOnlyCount =
     preview?.rows.filter(
       (row) =>
-        (row.spaceAction === "grant" || row.spaceAction === "activate_waitlist") &&
+        isImportRowActionable(row) &&
         ["already_connected", "already_invited", "existing_member"].includes(
           row.classification,
         ),
     ).length ?? 0;
   const actionableCount = (preview?.canInviteCount ?? 0) + spaceOnlyCount;
-  const destination = availableSpaces.find((space) => space.id === destinationSpaceId);
-  const destinationName = destination
-    ? adminSpaceName(destination)
-    : preview?.destinationSpaceName
-      ? adminFriendlyMessage(preview.destinationSpaceName)
-      : "the selected community or Event";
 
   async function confirmImport() {
     if (!invitationsEnabled || !preview || previewDirty || !actionableCount) {
@@ -481,6 +481,7 @@ export function MemberImportWorkflow({
               onClick={() => {
                 setSourceMode("file");
                 setError(null);
+                fileInput.current?.click();
               }}
               type="button"
               variant={sourceMode === "file" ? "primary" : "ghost"}
@@ -501,12 +502,12 @@ export function MemberImportWorkflow({
             </Button>
           </div>
 
-          {sourceMode === "file" ? (
-            <div>
+          <div hidden={sourceMode !== "file"}>
               <Label htmlFor="member-import-file">CSV or Excel file</Label>
               <Input
                 accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 id="member-import-file"
+                ref={fileInput}
                 onChange={(event) => {
                   setFile(event.target.files?.[0] ?? null);
                   setError(null);
@@ -515,10 +516,10 @@ export function MemberImportWorkflow({
               />
               <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)]">
                 You can add up to 100 people from the first sheet. The file must be 2 MB or less
-                and include an email column; names are optional.
+                and include an email column; names and profile details are optional. Separate multiple skills or match types with semicolons.
               </p>
             </div>
-          ) : (
+          {sourceMode === "paste" ? (
             <div>
               <Label htmlFor="member-import-paste">Paste email and name</Label>
               <Textarea
@@ -535,13 +536,13 @@ export function MemberImportWorkflow({
                 Add one person per line as email, name. Put quotation marks around names that contain a comma.
               </p>
             </div>
-          )}
+          ) : null}
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4">
             <Button asChild size="sm" variant="ghost">
               <a
                 download="member-import-template.csv"
-                href="data:text/csv;charset=utf-8,email%2Cname%0Amember%40example.com%2CMember%20Name"
+                href={`data:text/csv;charset=utf-8,${encodeURIComponent(["email", "name", ...importProfileFields.map((field) => field.key)].join(",") + "\r\n")}`}
               >
                 <Download aria-hidden className="size-4" />
                 Download template
@@ -632,6 +633,27 @@ export function MemberImportWorkflow({
               </tbody>
             </table>
           </div>
+
+          <details className="rounded-lg border border-[var(--line)] p-4" open={Object.keys(profileColumns).length > 0}>
+            <summary className="cursor-pointer font-semibold">Optional profile columns</summary>
+            <p className="my-3 text-sm text-[var(--ink-soft)]">These details prefill profiles. Existing answers are kept; members can edit their profiles after signing in. Mentor fields apply only to approved mentors.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {importProfileFields.map(({ key, label }) => (
+                <div key={key}>
+                  <Label htmlFor={`import-${key}`}>{label}</Label>
+                  <Select id={`import-${key}`} value={profileColumns[key] ?? ""} onChange={(event) => {
+                    const next = { ...profileColumns };
+                    if (event.target.value === "") delete next[key];
+                    else next[key] = Number(event.target.value);
+                    setProfileColumns(next);
+                  }}>
+                    <option value="">Do not import</option>
+                    {parsed.headers.map((header, index) => <option key={index} value={index}>{header || `Column ${index + 1}`}</option>)}
+                  </Select>
+                </div>
+              ))}
+            </div>
+          </details>
 
           <BatchSettings
             accessStatus={accessStatus}
@@ -821,7 +843,7 @@ export function MemberImportWorkflow({
                 {busy ? <LoaderCircle aria-hidden className="size-4 animate-spin" /> : null}
                 {preview.canInviteCount
                   ? `Invite ${preview.canInviteCount} ${preview.canInviteCount === 1 ? "person" : "people"}${spaceOnlyCount ? ` and add ${spaceOnlyCount} existing ${spaceOnlyCount === 1 ? "member" : "members"}` : ""}`
-                  : `Add ${spaceOnlyCount} ${spaceOnlyCount === 1 ? "person" : "people"} to ${destinationName}`}
+                  : `Update ${spaceOnlyCount} ${spaceOnlyCount === 1 ? "person" : "people"}`}
               </Button>
             )}
           </div>

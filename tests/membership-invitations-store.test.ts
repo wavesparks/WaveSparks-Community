@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seedOrganization } from "@/data/seed-data";
 import {
@@ -32,7 +32,10 @@ async function createInvitedMember(email = "invitation.store@example.com") {
 }
 
 describe("app-owned membership invitation store", () => {
+  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-21T12:00:00.000Z"));
     resetStore();
   });
 

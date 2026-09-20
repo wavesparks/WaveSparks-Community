@@ -4,6 +4,7 @@ import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight } from "lucide-rea
 import { useEffect, useRef, useState } from "react";
 
 import {
+  formatProfileReadinessFieldList,
   getProfileReadiness,
   getProfileReadinessFromFormData,
 } from "@/lib/activation";
@@ -152,7 +153,7 @@ export function OnboardingForm({
 
         event.preventDefault();
         setValidationNotice(
-          `Add ${next.missingFields.map((field) => field.label).join(", ")} before completing your profile.`,
+          `Add ${formatProfileReadinessFieldList(next.missingFields, { continueSentence: true })} before completing your profile.`,
         );
         const firstMissing = [...next.missingFields].sort(
           (left, right) =>
@@ -183,8 +184,9 @@ export function OnboardingForm({
                 : "Add the essentials before completing your profile"}
             </h2>
             <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-              You can save a draft at any time. Your profile is shared across Wavesparks;
-              Wavesparks Community and each Event have their own goals and matching preferences.
+              You can save a draft at any time. Your profile is shared across Wavesparks. Goals
+              and matching preferences are set separately for Wavesparks Community and each
+              programme or cohort.
             </p>
           </div>
           <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-right">
@@ -212,7 +214,7 @@ export function OnboardingForm({
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
                 {readiness.isReady
                   ? "Your profile is ready. You can add more detail at any time."
-                  : readiness.missingFields.map((field) => field.label).join(", ")}
+                  : formatProfileReadinessFieldList(readiness.missingFields)}
               </p>
               {validationNotice ? (
                 <p className="mt-2 text-sm font-medium text-[var(--accent)]" role="alert">
@@ -525,7 +527,7 @@ export function OnboardingForm({
           </legend>
           <p className="text-xs leading-5 text-[var(--ink-soft)]">
             Choose at least one under “I am looking for.” You can set a more specific goal for
-            Wavesparks Community and each Event.
+            Wavesparks Community and for each programme or cohort.
           </p>
           <div className="grid gap-5 md:grid-cols-2">
             <div className="space-y-3">

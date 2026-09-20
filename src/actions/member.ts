@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+
+import { withSpaceRecomputeLock } from "@/server/space-recompute-lock";
 import { nanoid } from "nanoid";
 
 import { getViewerContextForAction } from "@/lib/auth";
@@ -22,7 +24,10 @@ import {
   getPostListRevalidationPaths,
 } from "@/lib/post-action-routing";
 import { profileFromFormData, validateProfileFormData } from "@/lib/profile-form";
-import { getProfileReadiness } from "@/lib/activation";
+import {
+  formatProfileReadinessFieldList,
+  getProfileReadiness,
+} from "@/lib/activation";
 import { sanitizeMatchFeedbackReasons } from "@/lib/match-feedback";
 import { parseTags } from "@/lib/utils";
 import { env } from "@/lib/env";
@@ -422,7 +427,7 @@ export async function saveOnboardingAction(slug: string, membershipId: string, f
         return 3;
       }),
     );
-    const missing = readiness.missingFields.map((field) => field.label).join(", ");
+    const missing = formatProfileReadinessFieldList(readiness.missingFields);
     redirect(
       onboardingStatePath(
         slug,
@@ -500,12 +505,20 @@ export async function saveSpaceIntentAction(
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
-  await upsertSpaceIntent(intent);
-  enqueueSpaceMatchRecompute(slug, spaceId, space.slug);
+  const refreshed = await withSpaceRecomputeLock(spaceId, async () => {
+    await upsertSpaceIntent(intent);
+    try {
+      await recomputeMatchesForSpace(spaceId);
+      return true;
+    } catch (error) {
+      console.error("[wavesparks] matching preferences refresh failed", spaceId, error);
+      return false;
+    }
+  });
   revalidatePath(`${spaceRoot(slug, space.slug)}/matches`);
   redirect(
     `${spaceRoot(slug, space.slug)}/matches?status=${
-      intentComplete ? "space_intent_saved" : "space_intent_incomplete"
+      !refreshed ? "space_matches_failed" : intentComplete ? "space_intent_saved" : "space_intent_incomplete"
     }`,
   );
 }
@@ -608,6 +621,10 @@ function plainTextFormValue(formData: FormData, name: string) {
   return String(formData.get(name) ?? "").replace(/\r\n?/gu, "\n");
 }
 
+function relatedRolesNeededForPost(type: PostType, formData: FormData) {
+  return type === "resource" ? [] : parseTags(formData.get("related_roles_needed"));
+}
+
 function validationState(
   fieldErrors: Record<string, string[] | undefined>,
   error = "Check the highlighted fields and try again.",
@@ -700,7 +717,7 @@ export async function createPostInSpaceAction(
         body: parsed.data.body,
         tags: parseTags(formData.get("tags")),
         relatedStartupName: String(formData.get("related_startup_name") ?? ""),
-        relatedRolesNeeded: parseTags(formData.get("related_roles_needed")),
+        relatedRolesNeeded: relatedRolesNeededForPost(type, formData),
         status: "active",
         featured: false,
         hidden: false,
@@ -802,7 +819,7 @@ export async function createPostAction(slug: string, membershipId: string, formD
       body: String(formData.get("body") ?? ""),
       tags: parseTags(formData.get("tags")),
       relatedStartupName: String(formData.get("related_startup_name") ?? ""),
-      relatedRolesNeeded: parseTags(formData.get("related_roles_needed")),
+      relatedRolesNeeded: relatedRolesNeededForPost(type, formData),
       status: "active",
       featured: false,
       hidden: false,

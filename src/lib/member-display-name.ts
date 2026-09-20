@@ -31,3 +31,14 @@ export function getMemberDisplayName({
 }: MemberDisplayNameInput) {
   return usableName(preferredName) ?? usableName(name) ?? (nameFromEmail(email) || "Member");
 }
+export function getAdminMemberDisplayName(record: {
+  profile?: { fullName?: string; preferredName?: string };
+  user?: { name?: string; email?: string };
+}) {
+  const full = record.profile?.fullName?.trim() || record.user?.name?.trim();
+  const preferred = record.profile?.preferredName?.trim();
+  if (full && preferred && full.toLocaleLowerCase() !== preferred.toLocaleLowerCase()) {
+    return `${full} (${preferred})`;
+  }
+  return full || preferred || record.user?.email || "Unnamed member";
+}

@@ -17,6 +17,7 @@ const baseProductionEnv: NodeJS.ProcessEnv = {
   WAVESPARK_ADMIN_EMAILS: "letsbuild@wavesparks.co",
   SPACE_SCOPED_READS_ENABLED: "true",
   BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_production_token_with_enough_entropy",
+  POST_MEDIA_READ_WRITE_TOKEN: "vercel_blob_rw_private_post_media_token_with_enough_entropy",
   NEXT_PUBLIC_CLERK_SIGN_IN_URL: "/org/wavesparks/signin",
   NEXT_PUBLIC_CLERK_SIGN_UP_URL: "/org/wavesparks/sign-up",
   NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL: "/org/wavesparks",
@@ -163,6 +164,20 @@ describe("production readiness checks", () => {
     expect(result.warnings).toEqual(
       expect.arrayContaining([
         "BLOB_READ_WRITE_TOKEN is not configured; related production features may be unavailable.",
+      ]),
+    );
+  });
+
+  it("warns when private post media storage is not configured", () => {
+    const result = checkProductionReadiness({
+      ...baseProductionEnv,
+      POST_MEDIA_READ_WRITE_TOKEN: undefined,
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        "POST_MEDIA_READ_WRITE_TOKEN is not configured; related production features may be unavailable.",
       ]),
     );
   });

@@ -83,7 +83,7 @@ export function AppShell({
           <div className="flex h-full flex-col gap-3 p-3 sm:p-4 lg:gap-6 lg:p-5">
             <div className="overflow-hidden rounded-lg border border-[var(--cyan)] bg-[var(--blue)] p-3 shadow-[0_22px_60px_rgba(0,0,0,0.22)] lg:p-4">
               <div className="space-y-3">
-                <BrandLogo className="h-7 max-w-[190px]" tone="light" />
+                <BrandLogo className="w-[190px]" tone="light" />
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-[var(--surface)]">
                     {WAVESPARKS_COMMUNITY_NAME}

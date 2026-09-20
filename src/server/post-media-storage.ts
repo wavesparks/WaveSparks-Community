@@ -45,7 +45,7 @@ function memoryStore() {
 
 export function isPostMediaStorageConfigured() {
   return (
-    Boolean(env.blobReadWriteToken) ||
+    Boolean(env.postMediaReadWriteToken) ||
     (process.env.POST_MEDIA_STORAGE === "memory" && memoryMediaStorageIsIsolated())
   );
 }
@@ -58,7 +58,7 @@ export function getPostMediaStorageMode() {
   if (process.env.POST_MEDIA_STORAGE === "memory" && memoryMediaStorageIsIsolated()) {
     return "memory" as const;
   }
-  return env.blobReadWriteToken ? ("blob" as const) : undefined;
+  return env.postMediaReadWriteToken ? ("blob" as const) : undefined;
 }
 
 export async function putPrivateMedia(input: {
@@ -75,7 +75,7 @@ export async function putPrivateMedia(input: {
     return { pathname: input.pathname };
   }
 
-  if (!env.blobReadWriteToken) {
+  if (!env.postMediaReadWriteToken) {
     throw new Error("Private media storage is unavailable.");
   }
   const { put } = await import("@vercel/blob");
@@ -84,7 +84,7 @@ export async function putPrivateMedia(input: {
     addRandomSuffix: false,
     allowOverwrite: false,
     contentType: input.contentType,
-    token: env.blobReadWriteToken,
+    token: env.postMediaReadWriteToken,
   });
   return { pathname: blob.pathname };
 }
@@ -100,7 +100,7 @@ export async function listPrivateMedia(
         uploadedAt: new Date(media.uploadedAt),
       }));
   }
-  if (!env.blobReadWriteToken) return [];
+  if (!env.postMediaReadWriteToken) return [];
 
   const { list } = await import("@vercel/blob");
   const media: PrivateMediaListing[] = [];
@@ -110,7 +110,7 @@ export async function listPrivateMedia(
       cursor,
       limit: 1_000,
       prefix,
-      token: env.blobReadWriteToken,
+      token: env.postMediaReadWriteToken,
     });
     media.push(
       ...page.blobs.map((blob) => ({
@@ -140,11 +140,11 @@ export async function getPrivateMedia(pathname: string): Promise<PrivateMediaRea
     };
   }
 
-  if (!env.blobReadWriteToken) return null;
+  if (!env.postMediaReadWriteToken) return null;
   const { get } = await import("@vercel/blob");
   const result = await get(pathname, {
     access: "private",
-    token: env.blobReadWriteToken,
+    token: env.postMediaReadWriteToken,
   });
   if (!result || result.statusCode === 304 || !result.stream) return null;
   return {
@@ -159,9 +159,9 @@ export async function deletePrivateMedia(pathname: string) {
     memoryStore().delete(pathname);
     return;
   }
-  if (!env.blobReadWriteToken) return;
+  if (!env.postMediaReadWriteToken) return;
   const { del } = await import("@vercel/blob");
-  await del(pathname, { token: env.blobReadWriteToken });
+  await del(pathname, { token: env.postMediaReadWriteToken });
 }
 
 export function resetMemoryPostMediaStorage() {

@@ -7,6 +7,7 @@ import {
   updatePostModerationAction,
 } from "@/actions/admin";
 import { adminSpaceName } from "@/components/admin/admin-community-copy";
+import { PostEditorDialog } from "@/components/admin/post-editor-dialog";
 import { AppShell } from "@/components/layout/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -166,6 +167,23 @@ export default async function AdminPostsPage({
                   </div>
                 ) : null}
                 <div className="flex flex-wrap gap-3">
+                  <PostEditorDialog
+                    key={`${post.id}:${post.updatedAt}`}
+                    post={{
+                      body: post.body,
+                      hasImages: post.images.length > 0,
+                      hasLinkPreview: Boolean(post.linkPreview),
+                      id: post.id,
+                      mentionCount: post.mentions.length,
+                      opportunitySource: post.opportunitySource,
+                      relatedRolesNeeded: post.relatedRolesNeeded,
+                      relatedStartupName: post.relatedStartupName,
+                      tags: post.tags,
+                      title: post.title,
+                      type: post.type,
+                    }}
+                    slug={slug}
+                  />
                   <form action={updatePostModerationAction.bind(null, slug, post.id)}>
                     <input name="hidden" type="hidden" value={String(!post.hidden)} />
                     <SubmitButton pendingLabel="Updating" variant="secondary">

@@ -1,3 +1,4 @@
+import { normalizeImportedProfile, parseImportedMatchTypes } from "@/lib/member-import-profile";
 import type { Organization } from "@/lib/domain";
 import { getCommunityDisplayName } from "@/lib/community-copy";
 import {
@@ -12,6 +13,7 @@ import { getSpaceAccessStatusLabel } from "@/lib/member-copy";
 import {
   listMemberImportCandidatesForOrg,
   listSpacesForOrg,
+  listMatchTypeConfigsForOrg,
 } from "@/server/store";
 
 const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -55,7 +57,8 @@ export async function buildMemberImportPreview(
   if (!Array.isArray(input.rows) || input.rows.length > MEMBER_IMPORT_MAX_ROWS) {
     throw new Error(`Import no more than ${MEMBER_IMPORT_MAX_ROWS} rows at a time.`);
   }
-  const spaces = await listSpacesForOrg(org.id);
+  const [spaces, configs] = await Promise.all([listSpacesForOrg(org.id), listMatchTypeConfigsForOrg(org.id)]);
+  const allowedTypes = new Set(configs.filter((config) => config.active).map((config) => config.slug));
   const requestedSpaceId = input.destinationSpaceId.trim();
   if (!requestedSpaceId) {
     throw new Error("Choose Wavesparks Community or an event.");
@@ -83,18 +86,24 @@ export async function buildMemberImportPreview(
     email: String(row.email ?? "").trim(),
     normalizedEmail: String(row.email ?? "").trim().toLowerCase(),
     name: String(row.name ?? "").trim(),
+    ...normalizeImportedProfile(row.profile),
   }));
   const firstRowsByEmail = new Map<string, number>();
   const validUniqueEmails: string[] = [];
   const preliminary = prepared.map((row) => {
-    const invalidReason =
+    const invalidMatchType = row.profile?.seeking_match_types &&
+      parseImportedMatchTypes(row.profile.seeking_match_types).some((type) => !allowedTypes.has(type));
+    const profileError = row.error || (invalidMatchType
+      ? "Choose valid match types: Co-founder, Collaborator, Mentor, or an active custom type."
+      : undefined);
+    const invalidReason = profileError || (
       !row.normalizedEmail ||
       row.normalizedEmail.length > 320 ||
       !emailPattern.test(row.normalizedEmail)
         ? "Enter a valid email address."
         : row.name.length > 120
           ? "Name must be 120 characters or fewer."
-          : undefined;
+          : undefined);
     if (invalidReason) {
       return { row, classification: "invalid" as const, message: invalidReason };
     }
@@ -127,10 +136,11 @@ export async function buildMemberImportPreview(
       rowNumber: entry.row.rowNumber,
       email: entry.row.email,
       name: entry.row.name,
+      ...(entry.row.profile ? { profile: entry.row.profile } : {}),
       normalizedEmail: entry.row.normalizedEmail,
       warnings: entry.classification
         ? []
-        : domainWarnings(org, entry.row.normalizedEmail),
+        : [...domainWarnings(org, entry.row.normalizedEmail), ...(entry.row.profile ? ["Profile details fill empty fields only. Existing answers and mentor approval are preserved."] : [])],
     };
     if (entry.classification) {
       return {

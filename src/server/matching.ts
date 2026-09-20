@@ -17,8 +17,9 @@ import { stableDefaultMatchTypeConfigs } from "@/lib/match-config";
 import { canonicalLegacyBio, distinctLegacyProfileText } from "@/lib/profile-bio";
 import { buildLocalEmbedding, LOCAL_EMBEDDING_MODEL } from "@/server/embeddings";
 import { isApprovedMentor } from "@/server/permissions";
+import { intentMatchTypes, matchesExplicitIntent } from "@/server/matching-intent";
 
-export const MATCHING_ALGORITHM_VERSION = "hybrid-v4";
+export const MATCHING_ALGORITHM_VERSION = "hybrid-v5";
 export const SPACE_INTENT_EMBEDDING_WEIGHT = 0.6;
 
 const MATCH_SCORE_MIN = 1;
@@ -1060,12 +1061,11 @@ function profileWithSpaceIntent(profile: Profile, intent: SpaceIntent): Profile 
   );
   return {
     ...profile,
+    seekingMatchTypes: intentMatchTypes(intent, profile.seekingMatchTypes),
     currentFocus: intent.currentGoal || profile.currentFocus,
-    idealMatchDescription: [intent.currentGoal, profile.idealMatchDescription]
-      .filter(Boolean)
-      .join("\n"),
-    desiredRoles: uniqueValues([...intent.lookingFor, ...profile.desiredRoles]),
-    helpNeededTags: uniqueValues([...intent.lookingFor, ...profile.helpNeededTags]),
+    idealMatchDescription: intent.currentGoal || profile.idealMatchDescription,
+    desiredRoles: intent.lookingFor.length ? uniqueValues(intent.lookingFor) : profile.desiredRoles,
+    helpNeededTags: intent.lookingFor.length ? uniqueValues(intent.lookingFor) : profile.helpNeededTags,
     skillTags: uniqueValues([...intent.offers, ...profile.skillTags]),
     canContribute: uniqueValues([...intent.offers, ...profile.canContribute]),
     seekingEmbeddingText: [intent.seekingText, profile.seekingEmbeddingText]
@@ -1212,6 +1212,8 @@ export function computeSpaceMatch(
   scoreContext?: MatchingScoreContext,
 ): MatchRecord | null {
   const config = typeof configOrType === "string" ? fallbackConfig(configOrType) : configOrType;
+  const source = profileWithSpaceIntent(sourceRecord.profile, sourceRecord.intent);
+  const target = profileWithSpaceIntent(targetRecord.profile, targetRecord.intent);
   if (
     sourceRecord.profile.id === targetRecord.profile.id ||
     !isSpaceMatchingMemberEligible(space, sourceRecord) ||
@@ -1219,15 +1221,17 @@ export function computeSpaceMatch(
     !targetRecord.profile.introOptIn ||
     !config.active ||
     !mentorProviderIsEligible(config, targetRecord.membership) ||
-    !participates(sourceRecord.profile, targetRecord.profile, config)
+    !participates(source, target, config) ||
+    !matchesExplicitIntent(sourceRecord.intent, targetRecord.profile, targetRecord.intent) ||
+    (config.direction === "mutual" && !matchesExplicitIntent(targetRecord.intent, sourceRecord.profile, sourceRecord.intent))
   ) {
     return null;
   }
 
   return buildMatchRecord(
     organization,
-    profileWithSpaceIntent(sourceRecord.profile, sourceRecord.intent),
-    profileWithSpaceIntent(targetRecord.profile, targetRecord.intent),
+    source,
+    target,
     config,
     { runId, scoreContext, spaceId: space.id },
   );

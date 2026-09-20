@@ -30,11 +30,13 @@ vi.mock("@/lib/auth", () => ({
 
 import {
   createPostAction,
+  createPostInSpaceAction,
   followMembershipAction,
   requestIntroAction,
   respondIntroAction,
   savePostAction,
   saveOnboardingAction,
+  saveSpaceIntentAction,
   unfollowMembershipAction,
   unsavePostAction,
 } from "@/actions/member";
@@ -179,6 +181,19 @@ describe("member server actions", () => {
     viewerRef.current = null;
   });
 
+  it("finishes recomputing before redirecting after Space preferences change", async () => {
+    await setViewer("mem_jules");
+    const store = getStore();
+    const main = store.spaces.find((space) => space.kind === "main")!;
+    const prior = store.matchRuns.length;
+    await expect(saveSpaceIntentAction(seedOrganization.slug, main.id, "mem_jules", formDataFromEntries({
+      current_goal: "Meet people", looking_for: "collaborators", offers: "Product strategy", matching_opt_in: "on",
+    }))).rejects.toThrow("space_intent_saved");
+    expect(store.matchRuns.length).toBeGreaterThan(prior);
+    expect(store.matchRuns.at(-1)?.status).toBe("completed");
+    expect(afterMock).not.toHaveBeenCalled();
+  });
+
   it("rejects account and social writes until the organization account is connected", async () => {
     await setViewer("mem_jules");
     viewerRef.current = {
@@ -319,6 +334,34 @@ describe("member server actions", () => {
     await Promise.all(backgroundTasks.map((task) => task()));
     expect(hasPostAnalytics()).toBe(true);
     expect(getStore().matchRuns).not.toHaveLength(0);
+  });
+
+  it("drops submitted Roles needed values from resource posts", async () => {
+    await setViewer("mem_jules");
+    const mainSpace = getStore().spaces.find((space) => space.kind === "main")!;
+    const formData = formDataFromEntries({
+      type: "resource",
+      title: "Resource without role targeting",
+      body: "A useful guide for the community.",
+      images: "[]",
+      mentions: "[]",
+      related_roles_needed: "design, GTM",
+    });
+
+    await expect(
+      createPostInSpaceAction(
+        "wavesparks",
+        mainSpace.id,
+        "mem_jules",
+        formData,
+      ),
+    ).rejects.toThrow(/NEXT_REDIRECT:.*\/knowledge\?status=post_created/);
+
+    expect(
+      getStore().posts.find(
+        (post) => post.title === "Resource without role targeting",
+      )?.relatedRolesNeeded,
+    ).toEqual([]);
   });
 
   it("refreshes profile activation surfaces after follow and unfollow actions", async () => {

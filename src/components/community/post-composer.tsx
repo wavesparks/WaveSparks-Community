@@ -126,7 +126,13 @@ export function PostComposer({
         <Select
           id="type"
           name="type"
-          onChange={(event) => setPostType(event.target.value as PostType)}
+          onChange={(event) => {
+            const nextType = event.target.value as PostType;
+            setPostType(nextType);
+            if (nextType === "resource") {
+              setRelatedRolesNeeded("");
+            }
+          }}
           value={postType}
         >
           {opportunityMode ? null : (
@@ -284,16 +290,18 @@ export function PostComposer({
             value={relatedStartupName}
           />
         </div>
-        <div className="md:col-span-2">
-          <Label htmlFor="related_roles_needed">Roles needed</Label>
-          <Input
-            id="related_roles_needed"
-            name="related_roles_needed"
-            onChange={(event) => setRelatedRolesNeeded(event.target.value)}
-            placeholder="technical, design, GTM"
-            value={relatedRolesNeeded}
-          />
-        </div>
+        {postType === "resource" ? null : (
+          <div className="md:col-span-2">
+            <Label htmlFor="related_roles_needed">Roles needed</Label>
+            <Input
+              id="related_roles_needed"
+              name="related_roles_needed"
+              onChange={(event) => setRelatedRolesNeeded(event.target.value)}
+              placeholder="technical, design, GTM"
+              value={relatedRolesNeeded}
+            />
+          </div>
+        )}
       </div>
 
       {!hasContent ? (

@@ -45,6 +45,9 @@ interface ProcessedImageResponse {
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGES = 4;
+const STATUS_POLL_INTERVAL_MS = 750;
+const UPLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+const STATUS_POLL_ATTEMPTS = Math.ceil(UPLOAD_TIMEOUT_MS / STATUS_POLL_INTERVAL_MS);
 
 function sanitizeFileName(name: string) {
   const normalized = name.normalize("NFKD").toLowerCase();
@@ -109,11 +112,20 @@ export function PostImageUploadField({
     );
   }
 
-  async function pollUntilReady(image: StagedPostImage, signal: AbortSignal) {
-    updateImage(image.id, { progress: 100, status: "processing" });
+  function markImageProcessing(id: string) {
+    setImages((current) =>
+      current.map((image) =>
+        image.id === id &&
+        (image.status === "uploading" || image.status === "processing")
+          ? { ...image, error: undefined, progress: 100, status: "processing" }
+          : image,
+      ),
+    );
+  }
 
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      if (attempt > 0) await wait(750, signal);
+  async function pollUntilReady(image: StagedPostImage, signal: AbortSignal) {
+    for (let attempt = 0; attempt < STATUS_POLL_ATTEMPTS; attempt += 1) {
+      if (attempt > 0) await wait(STATUS_POLL_INTERVAL_MS, signal);
       const response = await fetch(`${endpoint}?imageId=${encodeURIComponent(image.id)}`, {
         cache: "no-store",
         signal,
@@ -123,12 +135,15 @@ export function PostImageUploadField({
         | undefined;
       const record = payload?.image ?? payload ?? {};
 
-      if (response.status === 404 && attempt < 8) continue;
+      if (response.status === 404) continue;
       if (!response.ok) {
         throw new Error(record.error || "We couldn't finish processing this image.");
       }
       if (record.status === "failed") {
         throw new Error(record.error || "This image could not be processed.");
+      }
+      if (record.status === "processing" || record.status === "uploaded") {
+        markImageProcessing(image.id);
       }
       if (record.status === "ready" && record.readUrl) {
         updateImage(image.id, {
@@ -149,6 +164,11 @@ export function PostImageUploadField({
 
   async function uploadImage(image: StagedPostImage) {
     const controller = new AbortController();
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, UPLOAD_TIMEOUT_MS);
     abortControllers.current.set(image.id, controller);
     updateImage(image.id, { error: undefined, progress: 0, status: "uploading" });
 
@@ -182,7 +202,7 @@ export function PostImageUploadField({
         return;
       }
       const pathname = `post-images/${spaceId}/${membershipId}/${image.id}/${sanitizeFileName(image.file.name)}`;
-      await upload(pathname, image.file, {
+      const uploadPromise = upload(pathname, image.file, {
         abortSignal: controller.signal,
         access: "private",
         clientPayload: JSON.stringify({
@@ -198,15 +218,30 @@ export function PostImageUploadField({
             progress: Math.max(0, Math.min(100, Math.round(percentage))),
           });
         },
+      }).then(() => {
+        markImageProcessing(image.id);
       });
-      await pollUntilReady(image, controller.signal);
+      const statusPromise = pollUntilReady(image, controller.signal);
+      await Promise.race([
+        statusPromise,
+        uploadPromise.then(() => statusPromise),
+      ]);
     } catch (error) {
+      if (timedOut) {
+        updateImage(image.id, {
+          error: "Image upload timed out. Check your connection and try again.",
+          status: "failed",
+        });
+        return;
+      }
       if (controller.signal.aborted) return;
       updateImage(image.id, {
         error: error instanceof Error ? error.message : "Image upload failed.",
         status: "failed",
       });
     } finally {
+      window.clearTimeout(timeout);
+      controller.abort();
       abortControllers.current.delete(image.id);
     }
   }

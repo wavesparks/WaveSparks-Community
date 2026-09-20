@@ -1,3 +1,4 @@
+import { getAdminMemberDisplayName } from "@/lib/member-display-name";
 import Link from "next/link";
 
 import {
@@ -277,7 +278,7 @@ export default async function AdminMembersPage({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="font-semibold text-[var(--ink)]">
-                          {profile?.preferredName || user?.name || "Unnamed member"}
+                          {getAdminMemberDisplayName({ profile, user })}
                         </h3>
                         {membership.role === "org_admin" ? <Badge variant="accent">Administrator</Badge> : null}
                         {membership.mentorStatus === "approved" ? (
@@ -330,7 +331,7 @@ export default async function AdminMembersPage({
                     member={{
                       email: user?.email || "Email unavailable",
                       headline: profile?.headline || undefined,
-                      name: profile?.preferredName || user?.name || "Unnamed member",
+                      name: getAdminMemberDisplayName({ profile, user }),
                     }}
                     membership={{
                       accountStatus: membership.accountStatus,

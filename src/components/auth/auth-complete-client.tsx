@@ -176,7 +176,7 @@ export function AuthCompleteClient({ slug }: { slug: string }) {
   return (
     <main className="ws-page-shell grid min-h-screen place-items-center px-4 py-8">
       <Card className="w-full max-w-lg space-y-5 text-center">
-        <BrandLogo className="mx-auto h-9 w-fit" />
+        <BrandLogo className="mx-auto w-60" />
         <SectionHeading
           eyebrow="Signing in"
           level={1}

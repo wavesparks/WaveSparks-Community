@@ -1,3 +1,4 @@
+import { getAdminMemberDisplayName } from "@/lib/member-display-name";
 import {
   CalendarDays,
   CheckCircle2,
@@ -79,7 +80,7 @@ function lifecycleExplanation(space: Space) {
 }
 
 function participantName(record: AdminSpaceParticipantRecord) {
-  return record.profile?.preferredName || record.user?.name || "Unnamed person";
+  return getAdminMemberDisplayName(record);
 }
 
 function introductionStatusLabel(status: string) {
@@ -361,7 +362,7 @@ export default async function AdminSpaceDetailPage({
               participants={participantRecords.map(({ membership, profile, user }) => ({
                 email: user?.email || "Email unavailable",
                 membershipId: membership.id,
-                name: profile?.preferredName || user?.name || "Unnamed member",
+                name: getAdminMemberDisplayName({ profile, user }),
               }))}
               slug={slug}
               sourceSpaceId={space.id}

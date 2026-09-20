@@ -10,9 +10,13 @@ vi.mock("@/actions/member", () => ({
 
 import { MatchCard } from "@/components/community/match-card";
 import { MemberDirectoryCard } from "@/components/community/member-directory-card";
-import type { MatchCardView, MemberDirectoryProfileView } from "@/lib/domain";
+import type {
+  MatchCardView,
+  MemberDirectoryCompleteProfileView,
+} from "@/lib/domain";
 
-const profile: MemberDirectoryProfileView = {
+const profile: MemberDirectoryCompleteProfileView = {
+  profileStatus: "complete",
   acceptingMentoringRequests: false,
   affiliationLabel: "Participant",
   bio: "Building better tools for community organizers.",
@@ -89,6 +93,34 @@ describe("member experience copy", () => {
     expect(document.querySelector('input[name="suggested_first_message"]')).toBeNull();
     expect(screen.getByText("Not added yet")).toBeInTheDocument();
   });
+
+  it.each(["missing", "incomplete"] as const)(
+    "renders a safe %s profile placeholder without social actions",
+    (profileStatus) => {
+      render(
+        <MemberDirectoryCard
+          profile={{
+            profileStatus,
+            membershipId: `membership-${profileStatus}`,
+            displayName: "Taylor Member",
+            photo: "",
+            affiliationLabel: "Participant",
+          }}
+          returnPath="/org/wavesparks/s/event-alpha/people"
+          slug="wavesparks"
+          spaceId="space-event-alpha"
+          spaceSlug="event-alpha"
+          viewerMembershipId="membership-viewer"
+        />,
+      );
+
+      expect(screen.getByText("Taylor Member")).toBeInTheDocument();
+      expect(screen.getByText(/still setting up their profile/i)).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "View profile" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Follow/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /introduction/i })).not.toBeInTheDocument();
+    },
+  );
 
   it("shows an approved mentor badge independently from affiliation", () => {
     render(
@@ -200,22 +232,22 @@ describe("member experience copy", () => {
     render(<MatchCard match={{ ...match, scoreBand }} />);
 
     const score = screen.getByRole("meter", { name: "Match score" });
-    expect(score).toHaveTextContent("98/100 match");
+    expect(score).toHaveTextContent("98% match");
     expect(score).toHaveAttribute("aria-valuemin", "1");
     expect(score).toHaveAttribute("aria-valuemax", "100");
     expect(score).toHaveAttribute("aria-valuenow", "98");
-    expect(score).toHaveAttribute("aria-valuetext", "98 out of 100");
+    expect(score).toHaveAttribute("aria-valuetext", "98% match");
     expect(score).toHaveClass(variantClass);
     expect(screen.queryByText("Possible match")).not.toBeInTheDocument();
-    expect(score).not.toHaveTextContent("98%");
+    expect(score).not.toHaveTextContent("98/100");
   });
 
   it.each([1, 100])("renders the %i/100 score boundary", (scoreValue) => {
     render(<MatchCard match={{ ...match, score: scoreValue }} />);
 
     const score = screen.getByRole("meter", { name: "Match score" });
-    expect(score).toHaveTextContent(`${scoreValue}/100 match`);
+    expect(score).toHaveTextContent(`${scoreValue}% match`);
     expect(score).toHaveAttribute("aria-valuenow", String(scoreValue));
-    expect(score).toHaveAttribute("aria-valuetext", `${scoreValue} out of 100`);
+    expect(score).toHaveAttribute("aria-valuetext", `${scoreValue}% match`);
   });
 });
