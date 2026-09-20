@@ -36,6 +36,7 @@ import {
   respondIntroAction,
   savePostAction,
   saveOnboardingAction,
+  saveSpaceIntentAction,
   unfollowMembershipAction,
   unsavePostAction,
 } from "@/actions/member";
@@ -178,6 +179,19 @@ describe("member server actions", () => {
     resetStore();
     vi.clearAllMocks();
     viewerRef.current = null;
+  });
+
+  it("finishes recomputing before redirecting after Space preferences change", async () => {
+    await setViewer("mem_jules");
+    const store = getStore();
+    const main = store.spaces.find((space) => space.kind === "main")!;
+    const prior = store.matchRuns.length;
+    await expect(saveSpaceIntentAction(seedOrganization.slug, main.id, "mem_jules", formDataFromEntries({
+      current_goal: "Meet people", looking_for: "collaborators", offers: "Product strategy", matching_opt_in: "on",
+    }))).rejects.toThrow("space_intent_saved");
+    expect(store.matchRuns.length).toBeGreaterThan(prior);
+    expect(store.matchRuns.at(-1)?.status).toBe("completed");
+    expect(afterMock).not.toHaveBeenCalled();
   });
 
   it("rejects account and social writes until the organization account is connected", async () => {

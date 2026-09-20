@@ -59,3 +59,18 @@ describe("IntroRequestCard member copy", () => {
     expect(screen.queryByText("Contact details")).not.toBeInTheDocument();
   });
 });
+
+
+describe("accepted introduction replies", () => {
+  afterEach(() => cleanup());
+  it("links to the recipient with the original message and only exposes contacts after acceptance", () => {
+    const contacts = { email: "morgan+intro@example.com", whatsapp: "+65 9123 4567" };
+    const { rerender } = render(<IntroRequestCard request={{ ...request, contactDetails: contacts }} />);
+    expect(screen.queryByRole("link", { name: "Reply by email" })).not.toBeInTheDocument();
+    rerender(<IntroRequestCard request={{ ...request, status: "accepted", contactDetails: contacts }} />);
+    const email = screen.getByRole("link", { name: "Reply by email" }).getAttribute("href")!;
+    expect(decodeURIComponent(email)).toContain("mailto:morgan+intro@example.com");
+    expect(decodeURIComponent(email)).toContain(request.suggestedFirstMessage);
+    expect(screen.getByRole("link", { name: "Reply on WhatsApp" })).toHaveAttribute("href", "https://wa.me/6591234567");
+  });
+});

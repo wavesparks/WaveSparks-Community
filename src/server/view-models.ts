@@ -7,6 +7,7 @@ import { getCommunityDisplayName } from "@/lib/community-copy";
 import {
   getMembershipById,
   getSpaceById,
+  getSpaceIntent,
   getMemberActivationSignals,
   getPostThreadRecord,
   getPostThreadRecordForSpace,
@@ -1268,7 +1269,7 @@ export async function getMatchCardViewsForProfile(
   membershipId: string,
   options: { matchType?: string; spaceId?: string } = {},
 ) {
-  const [records, introStatusByReceiver] = await Promise.all([
+  const [records, introStatusByReceiver, sourceIntent] = await Promise.all([
     listMatchTargetRecordsForProfile(profileId, membershipId, {
       matchType: options.matchType,
       spaceId: options.spaceId,
@@ -1279,6 +1280,7 @@ export async function getMatchCardViewsForProfile(
           membershipId,
         )
       : listActiveIntroRequestStatusesForRequester(membershipId),
+    options.spaceId ? getSpaceIntent(options.spaceId, membershipId) : Promise.resolve(undefined),
   ]);
   const configs = records[0]
     ? await listMatchTypeConfigsForOrg(records[0].match.orgId, { includeInactive: true })
@@ -1291,6 +1293,7 @@ export async function getMatchCardViewsForProfile(
   }> = [];
 
   for (const record of records) {
+    if (sourceIntent && (sourceIntent.embeddingStatus === "pending" || record.match.updatedAt < sourceIntent.updatedAt)) continue;
     if (
       !record.targetProfile ||
       !record.targetMembership ||

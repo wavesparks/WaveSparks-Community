@@ -291,6 +291,24 @@ describe("admin server actions", () => {
     viewerRef.current = null;
   });
 
+  it("imports profile answers and can fill an existing member without re-inviting", async () => {
+    await setAdminViewer();
+    const destination = mainSpace();
+    const input = { accessStatus: "active" as const, destinationSpaceId: destination.id,
+      rows: [{ rowNumber: 2, name: "Imported Person", email: "full-profile@example.com", profile: { headline: "Student builder", bio: "Interested in learning", current_focus: "EdTech", skill_tags: "Python;Research", seeking_match_types: "Collaborator" } }] };
+    const result = await confirmMemberImportAction(seedOrganization.slug, input);
+    expect(result.rows[0].status).toBe("invited");
+    const profile = (await getProfileByMembershipId(result.rows[0].membershipId!))!;
+    expect(profile.onboardingComplete).toBe(true);
+    expect(profile.skillTags).toEqual(["Python", "Research"]);
+    const inviteCalls = createClerkIdentityInvitationMock.mock.calls.length;
+    const updated = await confirmMemberImportAction(seedOrganization.slug, { ...input, rows: [{ ...input.rows[0], profile: { headline: "Do not overwrite", industry_tags: "Education" } }] });
+    expect(updated.rows[0].status).toBe("profile_updated");
+    expect(updated.summary.profilesUpdated).toBe(1);
+    expect(profile.headline).toBe("Student builder");
+    expect(createClerkIdentityInvitationMock).toHaveBeenCalledTimes(inviteCalls);
+  });
+
   it("persists and emails a local invitation before reporting success", async () => {
     await setAdminViewer();
     const destination = await createEventDestination("Clerk invitation destination");

@@ -252,7 +252,7 @@ export interface AdminSpaceParticipantRecord {
   spaceMembership: Pick<SpaceMembership, "id">;
   membership: Pick<Membership, "id" | "role">;
   user?: Pick<User, "email" | "name">;
-  profile?: Pick<Profile, "onboardingComplete" | "preferredName">;
+  profile?: Pick<Profile, "onboardingComplete" | "preferredName" | "fullName">;
   intent?: Pick<SpaceIntent, "intentComplete" | "matchingOptIn">;
 }
 
@@ -4384,6 +4384,7 @@ export async function listAdminSpaceParticipantRecords(
         profile: profile
           ? {
               onboardingComplete: profile.onboardingComplete,
+              fullName: profile.fullName,
               preferredName: profile.preferredName,
             }
           : undefined,
@@ -4407,6 +4408,7 @@ export async function listAdminSpaceParticipantRecords(
       userName: dbSchema.users.name,
       profileId: dbSchema.profiles.id,
       profilePreferredName: dbSchema.profiles.preferredName,
+      profileFullName: dbSchema.profiles.fullName,
       profileOnboardingComplete: dbSchema.profiles.onboardingComplete,
       intentId: dbSchema.spaceIntents.id,
       intentComplete: dbSchema.spaceIntents.intentComplete,
@@ -4446,6 +4448,7 @@ export async function listAdminSpaceParticipantRecords(
     profile: row.profileId
       ? {
           onboardingComplete: row.profileOnboardingComplete!,
+          fullName: row.profileFullName!,
           preferredName: row.profilePreferredName!,
         }
       : undefined,
@@ -5099,7 +5102,10 @@ export async function listMemberWorkspaceForOrg(
         }
 
         const user = store.users.find((candidate) => candidate.id === membership.userId);
+        const profile = store.profiles.find((candidate) => candidate.membershipId === membership.id);
         return Boolean(
+          profile?.fullName.toLowerCase().includes(normalizedQuery) ||
+          profile?.preferredName.toLowerCase().includes(normalizedQuery) ||
           user &&
             (user.name.toLowerCase().includes(normalizedQuery) ||
               user.email.toLowerCase().includes(normalizedQuery)),
@@ -5186,6 +5192,8 @@ export async function listMemberWorkspaceForOrg(
       ? or(
           ilike(dbSchema.users.name, `%${queryText}%`),
           ilike(dbSchema.users.email, `%${queryText}%`),
+          ilike(dbSchema.profiles.fullName, `%${queryText}%`),
+          ilike(dbSchema.profiles.preferredName, `%${queryText}%`),
         )
       : undefined,
     invitationCondition,
@@ -5197,6 +5205,7 @@ export async function listMemberWorkspaceForOrg(
     .select({ total: sql<number>`count(*)`.mapWith(Number) })
     .from(dbSchema.memberships)
     .leftJoin(dbSchema.users, eq(dbSchema.users.id, dbSchema.memberships.userId))
+    .leftJoin(dbSchema.profiles, eq(dbSchema.profiles.membershipId, dbSchema.memberships.id))
     .where(filters);
   const total = countRow?.total ?? 0;
   const pageCount = total ? Math.ceil(total / pageSize) : 0;

@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
 import type { IntroRequestView } from "@/lib/domain";
 import { formatDate } from "@/lib/utils";
 
@@ -27,6 +28,8 @@ export function IntroRequestCard({
   sourceName?: string;
 }) {
   const displaySourceName = sourceName ?? request.spaceName;
+  const contact = request.status === "accepted" ? request.contactDetails : undefined;
+  const whatsapp = contact?.whatsapp?.replace(/[^\d]/g, "");
 
   return (
     <Card className="space-y-5" data-testid="intro-request-card">
@@ -57,13 +60,26 @@ export function IntroRequestCard({
           {request.isIncoming ? "Received" : "Sent"} {formatDate(request.createdAt)}
         </p>
       </div>
-      {request.contactDetails ? (
+      {contact ? (
         <div className="rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] p-4 text-sm text-[var(--ink)]">
           <p className="font-semibold">Contact details</p>
-          <p className="mt-2">{request.contactDetails.email}</p>
-          {request.contactDetails.whatsapp ? (
-            <p>{request.contactDetails.whatsapp}</p>
+          <p className="mt-2">{contact.email}</p>
+          {contact.whatsapp ? (
+            <p>{contact.whatsapp}</p>
           ) : null}
+          <p className="mt-2">Your introduction is accepted. Continue the conversation by email or WhatsApp.</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {contact.email ? (
+              <LinkButton href={`mailto:${encodeURIComponent(contact.email)}?subject=${encodeURIComponent(`Re: ${request.introPurpose}`)}&body=${encodeURIComponent(`Hi ${request.otherParty.displayName},\n\nThanks for connecting on Wavesparks!\n\n\n--- Opening message ---\n${request.suggestedFirstMessage}`)}`} size="sm" variant="secondary">
+                Reply by email
+              </LinkButton>
+            ) : null}
+            {whatsapp && whatsapp.length >= 7 && whatsapp.length <= 15 ? (
+              <LinkButton href={`https://wa.me/${whatsapp}`} rel="noopener noreferrer" size="sm" target="_blank" variant="secondary">
+                Reply on WhatsApp
+              </LinkButton>
+            ) : null}
+          </div>
         </div>
       ) : null}
       <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm leading-6 text-[var(--ink-soft)]">

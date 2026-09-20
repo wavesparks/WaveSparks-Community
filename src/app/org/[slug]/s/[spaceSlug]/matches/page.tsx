@@ -35,8 +35,13 @@ import { getSpaceViewerContext } from "@/lib/space-auth";
 import { listMatchTypeConfigsForOrg } from "@/server/store";
 import { getMatchCardViewsForProfileInSpace } from "@/server/view-models";
 
+export const maxDuration = 60;
+
 function IntentStatus({ status }: { status?: string }) {
   if (status !== "space_intent_saved" && status !== "space_intent_incomplete") {
+    if (status === "space_matches_failed") return (
+      <Card role="alert"><p className="font-semibold">Preferences saved; matches could not be refreshed</p><p className="mt-1 text-sm">Please save again to retry. Previous suggestions are hidden until the update succeeds.</p></Card>
+    );
     return null;
   }
   const complete = status === "space_intent_saved";
@@ -91,7 +96,7 @@ export default async function SpaceMatchesPage({
   const selectedMatchType = configs.some((config) => config.slug === requestedMatchType)
     ? requestedMatchType
     : undefined;
-  const matchCards = context.canMatch && viewer.profile
+  const matchCards = context.canMatch && viewer.profile && singleQueryValue(query.status) !== "space_matches_failed"
     ? await getMatchCardViewsForProfileInSpace(
         space.id,
         viewer.profile.id,
@@ -153,15 +158,17 @@ export default async function SpaceMatchesPage({
 
       <SpaceIntentForm
         intent={intent}
+        profile={viewer.profile}
         membershipId={viewer.membership.id}
         slug={slug}
         spaceId={space.id}
         spaceName={communityName}
       />
 
-      {context.canMatch ? (
+      {context.canMatch && status !== "space_matches_failed" ? (
         <>
           <div className="flex flex-wrap gap-2" aria-label="Match type filters">
+            <p className="w-full text-xs text-[var(--ink-soft)]">A person may fit more than one category. Percentages indicate profile fit, not a guarantee of a successful connection.</p>
             <LinkButton
               href={basePath}
               size="sm"
@@ -356,10 +363,10 @@ export default async function SpaceMatchesPage({
           {!matchCards.length ? (
             <Card>
               <p className="font-semibold text-[var(--ink)]">
-                No matches to show yet
+                No matches for your current preferences
               </p>
               <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
-                Check back after more {peopleLabel} have shared what they are looking for.
+                Try another match type or update your goals and skills. Only opted-in {peopleLabel} with complete profiles and relevant experience appear here; new participants may need to finish their setup.
               </p>
             </Card>
           ) : null}

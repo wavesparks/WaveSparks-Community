@@ -14,6 +14,8 @@ interface LinkButtonProps
   prefetch?: LinkProps["prefetch"];
   replace?: LinkProps["replace"];
   scroll?: LinkProps["scroll"];
+  target?: React.HTMLAttributeAnchorTarget;
+  rel?: string;
 }
 
 function LinkButtonContent({
@@ -40,11 +42,13 @@ export function LinkButton({
   prefetch,
   replace,
   scroll,
+  target,
+  rel,
   ...buttonProps
 }: LinkButtonProps) {
   return (
     <Button asChild {...buttonProps}>
-      <Link href={href} prefetch={prefetch} replace={replace} scroll={scroll}>
+      <Link href={href} prefetch={prefetch} replace={replace} scroll={scroll} target={target} rel={rel}>
         <LinkButtonContent pendingLabel={pendingLabel}>{children}</LinkButtonContent>
       </Link>
     </Button>

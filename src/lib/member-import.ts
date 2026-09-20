@@ -9,6 +9,7 @@ export interface MemberImportRow {
   rowNumber: number;
   email: string;
   name: string;
+  profile?: MemberImportProfile;
 }
 
 export interface MemberImportPreviewInput {
@@ -63,6 +64,7 @@ export interface MemberImportPreview {
 }
 
 export type MemberImportResultStatus =
+  | "profile_updated"
   | "invited"
   | "connected"
   | "space_added"
@@ -89,6 +91,7 @@ export interface MemberImportResult {
     cohortAdded: number;
     skipped: number;
     failed: number;
+    profilesUpdated?: number;
   };
 }
 
@@ -104,6 +107,7 @@ export interface MemberImportRawRow {
 }
 
 export interface MemberImportFieldMapping {
+  profileColumns?: Partial<Record<ImportProfileField, number>>;
   /** Zero-based column index, or null when no confident suggestion exists. */
   emailColumn: number | null;
   /** Zero-based column index, or null when no confident suggestion exists. */
@@ -122,3 +126,4 @@ export interface MemberImportErrorResponse {
   error: string;
   code?: string;
 }
+import type { MemberImportProfile, ImportProfileField } from "@/lib/member-import-profile";

@@ -77,6 +77,7 @@ import {
   listMembershipRecordsByIds,
   listSpaceMembershipRecordsByMembershipIds,
   listSpacesForOrg,
+  listVisibleSpacesForMembership,
   listMatchTypeConfigsForOrg,
   listPostImagesForPostIds,
   recomputeMatchesForProfile,
@@ -98,6 +99,8 @@ import {
   updatePostContent,
   updateProfileFlags,
 } from "@/server/store";
+import { isImportRowActionable } from "@/lib/member-import-profile";
+import { fillImportedProfile } from "@/server/member-import-profile";
 import { buildMemberImportPreview } from "@/server/member-import";
 
 async function requireAdminForAction(slug: string) {
@@ -278,7 +281,7 @@ function memberImportResult(
   };
   return {
     rows,
-    summary: { ...summary, spaceAdded },
+    summary: { ...summary, spaceAdded, profilesUpdated: rows.filter((row) => row.status === "profile_updated").length },
   };
 }
 
@@ -297,15 +300,7 @@ export async function confirmMemberImportAction(
   const admin = await requireAdminForAction(slug);
   const { org } = admin;
   const preview = await buildMemberImportPreview(org, input);
-  const actionableRows = preview.rows.filter(
-    (row) =>
-      row.classification === "ready" ||
-      row.classification === "retryable" ||
-      ((row.spaceAction === "grant" || row.spaceAction === "activate_waitlist") &&
-        (row.classification === "already_connected" ||
-          row.classification === "already_invited" ||
-          row.classification === "existing_member")),
-  );
+  const actionableRows = preview.rows.filter(isImportRowActionable);
 
   if (!actionableRows.length) {
     return memberImportResult(
@@ -334,8 +329,23 @@ export async function confirmMemberImportAction(
     accessStatus: preview.accessStatus,
     invitedByUserId: admin.user.id,
   });
+  const profileUpdated = new Set<string>();
+  const profileErrors = new Set<string>();
+  const profileByEmail = new Map(actionableRows.map((row) => [row.normalizedEmail, row.profile]));
+  for (const result of imported) {
+    const profile = profileByEmail.get(result.input.email);
+    if (!profile || !Object.keys(profile).length || result.classification === "conflict") continue;
+    try {
+      if (await fillImportedProfile({ profile, user: result.user, membership: result.membership })) {
+        profileUpdated.add(result.membership.id);
+      }
+    } catch (error) {
+      console.error("[wavesparks] imported profile could not be saved", result.membership.id, error);
+      profileErrors.add(result.membership.id);
+    }
+  }
   const invitationInputs = imported.filter(
-    (result) => result.shouldInvite && result.classification !== "conflict",
+    (result) => result.shouldInvite && result.classification !== "conflict" && !profileErrors.has(result.membership.id),
   );
   const invitationRequests = invitationInputs.map((result) => ({
     forceNew: true,
@@ -402,12 +412,15 @@ export async function confirmMemberImportAction(
       };
     }
 
+    if (profileErrors.has(importResult.membership.id)) {
+      return { ...row, status: "failed", membershipId: importResult.membership.id,
+        message: "Access was processed, but profile details could not be saved. Import this row again to finish.", retryable: false };
+    }
     const outcome = outcomesByMembershipId.get(importResult.membership.id);
     const spaceChanged =
       importResult.spaceMembershipCreated || importResult.spaceMembershipUpdated;
-    const spaceMessage = spaceChanged
-      ? ` Access to ${preview.destinationSpaceName} added.`
-      : "";
+    const spaceMessage = (spaceChanged ? ` Access to ${preview.destinationSpaceName} added.` : "")
+      + (profileUpdated.has(importResult.membership.id) ? " Empty profile fields filled." : "");
     if (outcome?.error) {
       return {
         rowNumber: row.rowNumber,
@@ -456,6 +469,10 @@ export async function confirmMemberImportAction(
         retryable: false,
       };
     }
+    if (profileUpdated.has(importResult.membership.id)) {
+      return { ...row, status: "profile_updated", membershipId: importResult.membership.id,
+        message: "Empty profile fields filled. Existing answers were kept.", retryable: false };
+    }
     return {
       rowNumber: row.rowNumber,
       email: row.email,
@@ -473,7 +490,21 @@ export async function confirmMemberImportAction(
   revalidatePath(`/org/${slug}/admin/spaces`);
   revalidatePath(`/org/${slug}/admin/spaces/${preview.destinationSpaceId}`);
   if (preview.cohortId) revalidatePath(`/org/${slug}/admin/cohorts/${preview.cohortId}`);
-  enqueueSpaceMatchRecompute(slug, preview.destinationSpaceId);
+  after(async () => {
+    const affectedSpaces = new Set([preview.destinationSpaceId]);
+    for (const membershipId of profileUpdated) {
+      const records = await listVisibleSpacesForMembership(membershipId);
+      for (const { space } of records) affectedSpaces.add(space.id);
+    }
+    for (const spaceId of affectedSpaces) {
+      try {
+        await recomputeMatchesForSpace(spaceId);
+        revalidatePath(`/org/${slug}/admin/spaces/${spaceId}`);
+      } catch (error) {
+        console.error("[wavesparks] imported profile match refresh failed", spaceId, error);
+      }
+    }
+  });
   return memberImportResult(
     rows,
     imported.filter(

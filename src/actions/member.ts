@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+
+import { withSpaceRecomputeLock } from "@/server/space-recompute-lock";
 import { nanoid } from "nanoid";
 
 import { getViewerContextForAction } from "@/lib/auth";
@@ -503,12 +505,20 @@ export async function saveSpaceIntentAction(
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
-  await upsertSpaceIntent(intent);
-  enqueueSpaceMatchRecompute(slug, spaceId, space.slug);
+  const refreshed = await withSpaceRecomputeLock(spaceId, async () => {
+    await upsertSpaceIntent(intent);
+    try {
+      await recomputeMatchesForSpace(spaceId);
+      return true;
+    } catch (error) {
+      console.error("[wavesparks] matching preferences refresh failed", spaceId, error);
+      return false;
+    }
+  });
   revalidatePath(`${spaceRoot(slug, space.slug)}/matches`);
   redirect(
     `${spaceRoot(slug, space.slug)}/matches?status=${
-      intentComplete ? "space_intent_saved" : "space_intent_incomplete"
+      !refreshed ? "space_matches_failed" : intentComplete ? "space_intent_saved" : "space_intent_incomplete"
     }`,
   );
 }

@@ -1,3 +1,4 @@
+import { importProfileFields, normalizeImportHeader } from "@/lib/member-import-profile";
 import path from "node:path";
 
 import { parse as parseCsv } from "csv-parse/sync";
@@ -157,7 +158,6 @@ function suggestMapping(headers: string[]): MemberImportFieldMapping {
     "name",
     "fullname",
     "displayname",
-    "preferredname",
     "membername",
     "姓名",
     "名字",
@@ -169,6 +169,10 @@ function suggestMapping(headers: string[]): MemberImportFieldMapping {
   return {
     emailColumn: emailColumn >= 0 ? emailColumn : null,
     nameColumn: nameColumn >= 0 ? nameColumn : null,
+    profileColumns: Object.fromEntries(importProfileFields.flatMap(({ key, aliases }) => {
+      const index = headers.findIndex((header) => (aliases as readonly string[]).includes(normalizeImportHeader(header)));
+      return index < 0 ? [] : [[key, index]];
+    })),
   };
 }
 
@@ -253,7 +257,8 @@ function validateAndBuildResult(
   const mappedColumns = [
     suggestedMapping.emailColumn,
     suggestedMapping.nameColumn,
-  ].filter((column): column is number => column !== null);
+    ...Object.values(suggestedMapping.profileColumns ?? {}),
+  ].filter((column): column is number => column != null);
   const formulaRow = rows.find((row) =>
     row.formulaColumns.some((column) => mappedColumns.includes(column)),
   );

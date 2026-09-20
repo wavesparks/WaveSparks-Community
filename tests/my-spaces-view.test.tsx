@@ -101,10 +101,8 @@ describe("MySpacesView member copy", () => {
     expect(
       screen.getByRole("heading", { name: "Welcome back, Alex Chen" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Wavesparks Community")).not.toHaveLength(0);
-    expect(
-      screen.getByText("A private community for Wavesparks members."),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Wavesparks Community")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Visit community/ })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Your events" })).toBeInTheDocument();
     expect(screen.getByText("View event")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/\bAI\b/i);
@@ -205,4 +203,13 @@ describe("AppShell member copy", () => {
     );
     expect(screen.getByText("Approved mentor")).toBeInTheDocument();
   });
+});
+
+
+it("lets admins manage a draft without granting participant access", () => {
+  render(<MySpacesView accessibleSpaces={[]} mainSpace={mainCommunity} managedSpaces={[{ ...event, lifecycle: "draft" }]} viewer={{ ...viewer, canAdmin: true }} />);
+  expect(screen.getByRole("heading", { name: "Events you manage" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Manage event" })).toHaveAttribute("href", "/org/wavesparks/admin/spaces/event-founder-lab");
+  expect(screen.queryByRole("link", { name: /View event/ })).not.toBeInTheDocument();
+  cleanup();
 });

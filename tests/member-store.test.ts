@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { seedOrganization } from "@/data/seed-data";
 import {
@@ -21,8 +21,22 @@ import {
 } from "@/server/store";
 
 describe("admin member workspace store", () => {
+  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-21T12:00:00.000Z"));
     resetStore();
+  });
+
+  it("finds members by their updated profile names", async () => {
+    const profile = getStore().profiles[0];
+    profile.fullName = "Updated Full Name";
+    profile.preferredName = "New Preferred Name";
+    for (const query of ["Updated Full", "New Preferred"]) {
+      const result = await listMemberWorkspaceForOrg(seedOrganization.id, { query });
+      expect(result.total).toBe(1);
+      expect(result.records[0].membership.id).toBe(profile.membershipId);
+    }
   });
 
   it("imports idempotently without overwriting existing member data", async () => {

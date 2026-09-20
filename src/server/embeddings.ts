@@ -64,7 +64,7 @@ export async function generateEmbeddingVectors(texts: string[]) {
     };
   }
 
-  const client = new OpenAI({ apiKey: env.openAiApiKey });
+  const client = new OpenAI({ apiKey: env.openAiApiKey, timeout: 10_000, maxRetries: 0 });
   const vectors: number[][] = [];
   let responseModel = MATCHING_EMBEDDING_MODEL;
   for (let offset = 0; offset < input.length; offset += EMBEDDING_BATCH_SIZE) {

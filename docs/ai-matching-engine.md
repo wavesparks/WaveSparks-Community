@@ -4,7 +4,7 @@
 
 Matching is computed inside one explicit Space. Main Community and each Event have independent candidate pools, intents, posts, results, feedback, and run history.
 
-The engine is an explainable, calibrated hybrid (`hybrid-v4`): explicit matching-type direction is a hard gate, six structured and semantic factors determine fit, evidence coverage limits how high a result can score, and private feedback suppresses unwanted recommendations. It never treats organization membership alone as eligibility.
+The engine is an explainable, calibrated hybrid (`hybrid-v5`): explicit matching-type direction is a hard gate, six structured and semantic factors determine fit, evidence coverage limits how high a result can score, and private feedback suppresses unwanted recommendations. It never treats organization membership alone as eligibility.
 
 ## Isolation invariants
 
@@ -38,6 +38,12 @@ Global Admin authority is not eligibility. An Admin must explicitly join the Spa
 
 Each Space stores its own current goal, `looking for` list, `can offer` list, and matching opt-in. Updating these values in one Event cannot affect Main Community or another Event.
 
+An unsaved intent form starts from the member's profile; saved values remain authoritative. Recognized co-founder, collaborator, and mentor choices in the current Space override older global seeking categories. Offering permissions and mentor approval still come from the profile and membership.
+
+Explicit English requests for a counterpart in the goal (for example, “someone good with computer science and Python”) must have matching evidence in the target's profile or Space offers. Common CS/programming and education-technology aliases are normalized; “and” requires every requirement and “or” permits alternatives. This is a conservative phrase parser, not unrestricted natural-language understanding. General goals remain ranking signals. For mutual types, both members' explicit requirements must be met.
+
+Saving preferences persists and recomputes under the Space lock before redirecting. If recompute fails, the page keeps the saved preferences and shows a retry message instead of stale results. Embedding-provider calls time out after 10 seconds and use the existing local fallback.
+
 Organization-defined matching types retain two directions:
 
 - `mutual`: both profiles must participate on both seeking and offering sides.
@@ -47,7 +53,7 @@ There is no automatic co-founder, mentor, collaborator, activity, featured-profi
 
 ## Score and calibration
 
-Every visible recommendation has an integer score from `1..100`. The number is a versioned fit index, not a claim that the introduction has that percentage chance of succeeding. Member cards render it as `82/100 match`, never `82% compatible`.
+Every visible recommendation has an integer score from `1..100`. The number is a versioned fit index, not a claim that the introduction has that percentage chance of succeeding. Member cards render it as `82% match`; the page explains that this is a fit score, not a guarantee of success.
 
 Each factor produces both fit and evidence quality:
 

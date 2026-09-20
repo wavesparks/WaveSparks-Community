@@ -6,21 +6,25 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { Textarea } from "@/components/ui/textarea";
-import type { SpaceIntent } from "@/lib/domain";
+import type { Profile, SpaceIntent } from "@/lib/domain";
+import { spaceIntentDefaults } from "@/lib/space-intent-defaults";
 
 export function SpaceIntentForm({
   intent,
+  profile,
   membershipId,
   slug,
   spaceId,
   spaceName,
 }: {
   intent?: SpaceIntent;
+  profile?: Profile;
   membershipId: string;
   slug: string;
   spaceId: string;
   spaceName: string;
 }) {
+  const defaults = spaceIntentDefaults(profile, intent);
   return (
     <Card className="space-y-5 border-[var(--accent)]/20 p-5">
       <div className="flex items-start gap-3">
@@ -33,7 +37,7 @@ export function SpaceIntentForm({
           </h2>
           <p className="mt-1 text-sm leading-6 text-[var(--ink-soft)]">
             Tell us your goals, what you need, and what you can offer. Update this when
-            your priorities change.
+            your priorities change. We start with your profile details; you can edit them for this community or event.
           </p>
         </div>
       </div>
@@ -46,7 +50,7 @@ export function SpaceIntentForm({
           <Label htmlFor="space-current-goal">What are you working toward here?</Label>
           <Textarea
             className="mt-2 min-h-24"
-            defaultValue={intent?.currentGoal}
+            defaultValue={defaults.currentGoal}
             id="space-current-goal"
             name="current_goal"
             placeholder="For example: validate our climate-finance pilot and meet two design partners."
@@ -58,7 +62,7 @@ export function SpaceIntentForm({
             <Label htmlFor="space-looking-for">Looking for</Label>
             <Input
               className="mt-2"
-              defaultValue={intent?.lookingFor.join(", ")}
+              defaultValue={defaults.lookingFor.join(", ")}
               id="space-looking-for"
               name="looking_for"
               placeholder="Design partners, mentor, co-founder"
@@ -69,7 +73,7 @@ export function SpaceIntentForm({
             <Label htmlFor="space-offers">I can offer</Label>
             <Input
               className="mt-2"
-              defaultValue={intent?.offers.join(", ")}
+              defaultValue={defaults.offers.join(", ")}
               id="space-offers"
               name="offers"
               placeholder="Growth experience, product feedback"
@@ -80,7 +84,7 @@ export function SpaceIntentForm({
         <label className="flex min-h-11 items-start gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--ink)]">
           <input
             className="mt-1 size-4 shrink-0 accent-[var(--accent)]"
-            defaultChecked={intent?.matchingOptIn ?? true}
+            defaultChecked={defaults.matchingOptIn}
             name="matching_opt_in"
             type="checkbox"
             value="on"

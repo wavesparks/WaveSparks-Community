@@ -244,6 +244,7 @@ describe("Space-scoped admin audit data", () => {
     const participantCards = await listAdminSpaceParticipantRecords(alpha.id);
     expect(participantCards).toHaveLength(2);
     expect(Object.keys(participantCards[0].profile ?? {}).sort()).toEqual([
+      "fullName",
       "onboardingComplete",
       "preferredName",
     ]);

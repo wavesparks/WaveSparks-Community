@@ -164,10 +164,12 @@ function SpaceCard({
 export function MySpacesView({
   accessibleSpaces,
   mainSpace,
+  managedSpaces = [],
   viewer,
 }: {
   accessibleSpaces: SpaceShellSpace[];
   mainSpace: SpaceShellSpace;
+  managedSpaces?: SpaceShellSpace[];
   viewer: ViewerContext;
 }) {
   const theme = wavesparksBrand.theme;
@@ -257,13 +259,14 @@ export function MySpacesView({
       <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
         <div className="max-w-3xl">
           <SectionHeading
-            description={`${WAVESPARKS_COMMUNITY_NAME} and your events each have their own people, conversations and matches.`}
+            description={mainAccess ? `${WAVESPARKS_COMMUNITY_NAME} and your events each have their own people, conversations and matches.` : "Your events, conversations and people to meet, all in one place."}
             eyebrow="Wavesparks"
             level={1}
             title={`Welcome back, ${memberName}`}
           />
         </div>
 
+        {mainAccess || accountUnavailable ? (
         <section aria-labelledby="main-community-heading" className="mt-10 space-y-4">
           <div>
             <h2 className="text-xl font-semibold text-[var(--ink)]" id="main-community-heading">
@@ -282,6 +285,8 @@ export function MySpacesView({
             />
           </div>
         </section>
+
+        ) : null}
 
         <section aria-labelledby="active-events-heading" className="mt-10 space-y-4">
           <div>
@@ -307,6 +312,25 @@ export function MySpacesView({
             </Card>
           )}
         </section>
+
+        {viewer.canAdmin ? (
+          <section aria-labelledby="managed-events-heading" className="mt-10 space-y-4">
+            <div>
+              <h2 className="text-xl font-semibold" id="managed-events-heading">Events you manage</h2>
+              <p className="mt-1 text-sm text-[var(--ink-soft)]">All created events appear here, including drafts and archived events. To join an event feed, add yourself as a participant in its settings.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {managedSpaces.map((event) => (
+                <Card key={event.id} className="space-y-3">
+                  <Badge variant="muted">{event.lifecycle}</Badge>
+                  <h3 className="text-lg font-semibold">{event.name}</h3>
+                  <LinkButton href={`/org/${viewer.org.slug}/admin/spaces/${event.id}`} size="sm" variant="secondary">Manage event</LinkButton>
+                </Card>
+              ))}
+            </div>
+            <LinkButton href={`/org/${viewer.org.slug}/admin/spaces`} variant="secondary">Community & events</LinkButton>
+          </section>
+        ) : null}
 
         {pastEvents.length ? (
           <section aria-labelledby="past-events-heading" className="mt-10 space-y-4">

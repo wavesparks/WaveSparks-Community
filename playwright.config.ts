@@ -37,6 +37,7 @@ const webServerEnv = runClerkBrowserTests
       NEXT_PUBLIC_APP_URL: "http://localhost:3000",
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "",
       POST_MEDIA_STORAGE: "memory",
+      OPENAI_API_KEY: "",
       RESEND_API_KEY: "re_e2e_memory_transport",
       RESEND_FROM_EMAIL: "Wavesparks E2E <noreply@example.invalid>",
       SPACE_SCOPED_READS_ENABLED: "true",
